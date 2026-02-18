@@ -1,24 +1,27 @@
-import type { Metadata } from "next";
-import { Geist } from "next/font/google";
+"use client";
+
 import "./globals.css";
-
-const geist = Geist({ subsets: ["latin"] });
-
-export const metadata: Metadata = {
-  title: "Clearline",
-  description: "Real-time market intelligence",
-};
+import Navbar from "@/src/components/Navbar";
+import { useState } from "react";
 
 export default function RootLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
+
   return (
-    <html lang="en">
-      <body className={`${geist.className} bg-gray-50 min-h-screen`}>
-        {children}
-      </body>
-    </html>
+    <>
+      <html lang="en">
+        <body>
+          <Navbar
+            isLoggedIn={isLoggedIn}
+            onAuthAction={() => setIsLoggedIn((prev) => !prev)}
+          />
+          <main>{children}</main>
+        </body>
+      </html>
+    </>
   );
 }
