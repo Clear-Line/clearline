@@ -8,14 +8,19 @@
   --color-primary-subtle: #eff6ff; /* blue-50  — very light bg tints */
 
   /* ─── Hero / Banner ─── */
-  --color-hero-bg: #2563eb; /* solid blue hero panel */
-  --color-hero-stat-bg: rgba(
-    255,
-    255,
-    255,
-    0.15
-  ); /* frosted stat chips on hero */
-  --color-hero-stat-border: rgba(255, 255, 255, 0.2);
+  --color-hero-bg-from: #1e40af;   /* deep blue start */
+  --color-hero-bg-mid:  #2563eb;   /* brand blue mid  */
+  --color-hero-bg-to:   #4f46e5;   /* indigo end      */
+  --color-hero-stat-bg: rgba(255, 255, 255, 0.12);
+  --color-hero-stat-border: rgba(255, 255, 255, 0.25);
+  --color-hero-stat-hover-bg: rgba(255, 255, 255, 0.2);
+
+  /* ─── Navbar ─── */
+  --nav-height: 64px;
+  --nav-blur: blur(12px);
+  --nav-bg: rgba(255, 255, 255, 0.92);
+  --nav-border: rgba(229, 231, 235, 0.8);
+  --nav-active-indicator: #2563eb;
 
   /* ─── Neutrals ─── */
   --color-white: #ffffff;
@@ -62,11 +67,11 @@
   --color-tab-active-text: #2563eb;
   --color-tab-idle-text: #6b7280;
 
-  /* ─── Navbar ─── */
-  --color-nav-bg: #ffffff;
-  --color-nav-border: #e5e7eb;
-  --color-nav-active-bg: #f3f4f6; /* gray-100 pill behind active nav item */
-  --color-nav-active-text: #111827;
+  /* ─── Navbar (legacy aliases kept for compat) ─── */
+  --color-nav-bg: var(--nav-bg);
+  --color-nav-border: var(--nav-border);
+  --color-nav-active-bg: #eff6ff;  /* blue-50 pill */
+  --color-nav-active-text: #1d4ed8; /* blue-700 */
   --color-nav-idle-text: #6b7280;
 
   /* ─── Upgrade Button ─── */
@@ -108,6 +113,54 @@ html {
 body {
   background-color: var(--color-bg);
   color: var(--color-text-primary);
+}
+
+html, body {
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+}
+
+/* ─── Navbar glass effect ─── */
+.navbar-glass {
+  background: var(--nav-bg);
+  backdrop-filter: var(--nav-blur);
+  -webkit-backdrop-filter: var(--nav-blur);
+  border-bottom: 1px solid var(--nav-border);
+}
+
+/* ─── Hero gradient ─── */
+.hero-gradient {
+  background: linear-gradient(
+    135deg,
+    var(--color-hero-bg-from) 0%,
+    var(--color-hero-bg-mid) 50%,
+    var(--color-hero-bg-to) 100%
+  );
+}
+
+/* ─── Stat chip on hero ─── */
+.hero-stat-chip {
+  background: var(--color-hero-stat-bg);
+  border: 1px solid var(--color-hero-stat-border);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  transition: background 0.2s ease;
+}
+.hero-stat-chip:hover {
+  background: var(--color-hero-stat-hover-bg);
+}
+
+/* ─── Nav active item ─── */
+.nav-item-active {
+  color: var(--color-nav-active-text);
+  background-color: var(--color-nav-active-bg);
+  font-weight: 600;
+}
+.nav-item-idle {
+  color: var(--color-nav-idle-text);
+}
+.nav-item-idle:hover {
+  color: var(--color-text-primary);
+  background-color: #f9fafb;
 }
 
 /* ─── Tailwind shorthand utilities using CSS vars ─── */
