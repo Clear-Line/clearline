@@ -2,26 +2,20 @@
 
 import "./globals.css";
 import Navbar from "@/src/components/Navbar";
-import { useState } from "react";
+import Footer from "@/src/components/Footer";
 
 export default function RootLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
-
   return (
-    <>
-      <html lang="en">
-        <body>
-          <Navbar
-            isLoggedIn={isLoggedIn}
-            onAuthAction={() => setIsLoggedIn((prev) => !prev)}
-          />
-          <main>{children}</main>
-        </body>
-      </html>
-    </>
+    <html lang="en">
+      <body className="flex flex-col min-h-screen">
+        <Navbar />
+        <main className="flex-1">{children}</main>
+        <Footer />
+      </body>
+    </html>
   );
 }
