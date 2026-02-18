@@ -1,0 +1,196 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* ─── Brand / Primary ─── */
+  --color-primary: #2563eb; /* blue-600 — nav active bg, CTA button, hero bg */
+  --color-primary-dark: #1d4ed8; /* blue-700 — hover states */
+  --color-primary-light: #3b82f6; /* blue-500 — lighter accents */
+  --color-primary-subtle: #eff6ff; /* blue-50  — very light bg tints */
+
+  /* ─── Hero / Banner ─── */
+  --color-hero-bg: #2563eb; /* solid blue hero panel */
+  --color-hero-stat-bg: rgba(
+    255,
+    255,
+    255,
+    0.15
+  ); /* frosted stat chips on hero */
+  --color-hero-stat-border: rgba(255, 255, 255, 0.2);
+
+  /* ─── Neutrals ─── */
+  --color-white: #ffffff;
+  --color-bg: #f9fafb; /* gray-50  — page background */
+  --color-surface: #ffffff; /* card / panel background */
+  --color-border: #e5e7eb; /* gray-200 — dividers, card borders */
+  --color-border-light: #f3f4f6; /* gray-100 — subtle separators */
+
+  /* ─── Text ─── */
+  --color-text-primary: #111827; /* gray-900 — headings, bold labels */
+  --color-text-secondary: #374151; /* gray-700 — body copy */
+  --color-text-muted: #6b7280; /* gray-500 — meta, timestamps */
+  --color-text-placeholder: #9ca3af; /* gray-400 — placeholders */
+  --color-text-on-primary: #ffffff; /* text on blue surfaces */
+
+  /* ─── Signal / Status ─── */
+  --color-signal-high: #16a34a; /* green-600 — "High signal" badge text */
+  --color-signal-high-bg: #f0fdf4; /* green-50  — "High signal" badge bg */
+  --color-signal-high-dot: #22c55e; /* green-500 — dot indicator */
+
+  --color-signal-up: #16a34a; /* green — positive % change */
+  --color-signal-down: #dc2626; /* red-600 — negative % change */
+
+  /* ─── Category Pill / Tag ─── */
+  --color-tag-crypto-text: #7c3aed; /* violet-600 — Crypto tag text */
+  --color-tag-crypto-bg: #f5f3ff; /* violet-50  — Crypto tag bg */
+
+  --color-tag-political-text: #1d4ed8;
+  --color-tag-political-bg: #eff6ff;
+
+  --color-tag-default-text: #374151;
+  --color-tag-default-bg: #f3f4f6;
+
+  /* ─── Filter Chips ─── */
+  --color-chip-active-bg: #2563eb;
+  --color-chip-active-text: #ffffff;
+  --color-chip-idle-bg: #ffffff;
+  --color-chip-idle-text: #374151;
+  --color-chip-idle-border: #d1d5db; /* gray-300 */
+  --color-chip-hover-bg: #f9fafb;
+
+  /* ─── Tab Underline ─── */
+  --color-tab-active: #2563eb;
+  --color-tab-active-text: #2563eb;
+  --color-tab-idle-text: #6b7280;
+
+  /* ─── Navbar ─── */
+  --color-nav-bg: #ffffff;
+  --color-nav-border: #e5e7eb;
+  --color-nav-active-bg: #f3f4f6; /* gray-100 pill behind active nav item */
+  --color-nav-active-text: #111827;
+  --color-nav-idle-text: #6b7280;
+
+  /* ─── Upgrade Button ─── */
+  --color-upgrade-bg: #2563eb;
+  --color-upgrade-text: #ffffff;
+
+  /* ─── Cards ─── */
+  --color-card-bg: #ffffff;
+  --color-card-border: #e5e7eb;
+  --color-card-shadow:
+    0 1px 3px 0 rgba(0, 0, 0, 0.07), 0 1px 2px -1px rgba(0, 0, 0, 0.05);
+
+  /* ─── Sort Dropdown ─── */
+  --color-select-bg: #ffffff;
+  --color-select-border: #d1d5db;
+  --color-select-text: #374151;
+
+  /* ─── Help FAB ─── */
+  --color-fab-bg: #374151; /* dark gray circle bottom-right */
+  --color-fab-text: #ffffff;
+
+  /* ─── Misc ─── */
+  --color-volume-label: #9ca3af;
+  --color-volume-value: #111827;
+}
+
+/* ─── Base resets ─── */
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  background-color: var(--color-bg);
+  color: var(--color-text-primary);
+}
+
+/* ─── Tailwind shorthand utilities using CSS vars ─── */
+@layer utilities {
+  .bg-primary {
+    background-color: var(--color-primary);
+  }
+  .bg-primary-dark {
+    background-color: var(--color-primary-dark);
+  }
+  .bg-primary-subtle {
+    background-color: var(--color-primary-subtle);
+  }
+  .bg-surface {
+    background-color: var(--color-surface);
+  }
+  .bg-page {
+    background-color: var(--color-bg);
+  }
+
+  .text-primary {
+    color: var(--color-primary);
+  }
+  .text-on-primary {
+    color: var(--color-text-on-primary);
+  }
+  .text-body {
+    color: var(--color-text-secondary);
+  }
+  .text-muted {
+    color: var(--color-text-muted);
+  }
+
+  .border-default {
+    border-color: var(--color-border);
+  }
+  .border-light {
+    border-color: var(--color-border-light);
+  }
+
+  .card-shadow {
+    box-shadow: var(--color-card-shadow);
+  }
+
+  /* Signal badges */
+  .badge-high-signal {
+    color: var(--color-signal-high);
+    background-color: var(--color-signal-high-bg);
+  }
+
+  /* Category tags */
+  .tag-crypto {
+    color: var(--color-tag-crypto-text);
+    background-color: var(--color-tag-crypto-bg);
+  }
+  .tag-political {
+    color: var(--color-tag-political-text);
+    background-color: var(--color-tag-political-bg);
+  }
+  .tag-default {
+    color: var(--color-tag-default-text);
+    background-color: var(--color-tag-default-bg);
+  }
+
+  /* Filter chips */
+  .chip-active {
+    background-color: var(--color-chip-active-bg);
+    color: var(--color-chip-active-text);
+    border-color: var(--color-chip-active-bg);
+  }
+  .chip-idle {
+    background-color: var(--color-chip-idle-bg);
+    color: var(--color-chip-idle-text);
+    border-color: var(--color-chip-idle-border);
+  }
+
+  /* Change indicators */
+  .text-up {
+    color: var(--color-signal-up);
+  }
+  .text-down {
+    color: var(--color-signal-down);
+  }
+}
