@@ -54,12 +54,6 @@ export default function Navbar({ isLoggedIn = false, onAuthAction }: NavbarProps
         <div className="flex items-center justify-between h-16">
 
           {/* Logo */}
-          <Image 
-            src="/logo.png"
-            width={50}
-            height={50}
-            alt="clearline logo"
-            />
           <Link href="/" className="flex items-center gap-2.5 flex-shrink-0 group">
             <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center shadow-sm group-hover:bg-blue-700 transition-colors">
               <svg className="w-4 h-4 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}>
