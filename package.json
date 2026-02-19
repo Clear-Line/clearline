@@ -2,6 +2,7 @@
   "name": "clear-line",
   "version": "1.0.0",
   "scripts": {
+    "preinstall": "npx only-allow pnpm",
     "dev": "next dev"
   },
   "dependencies": {
@@ -23,6 +24,7 @@
   "packageManager": "pnpm@10.30.0",
   "engines": {
     "npm": "please-use-pnpm",
+    "yarn": "please-use-pnpm",
     "pnpm": ">=8"
   }
 }

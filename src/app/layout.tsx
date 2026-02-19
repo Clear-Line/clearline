@@ -1,5 +1,3 @@
-"use client";
-
 import "./globals.css";
 import Navbar from "@/src/components/Navbar";
 import Footer from "@/src/components/Footer";
@@ -19,9 +17,9 @@ export default function RootLayout({
           rel="stylesheet"
         />
       </head>
-      <body className="flex flex-col min-h-screen">
+      <body className="flex min-h-screen flex-col bg-gray-50 antialiased">
         <Navbar />
-        <main className="flex-1 w-full">{children}</main>
+        <main className="w-full flex-1">{children}</main>
         <Footer />
       </body>
     </html>
