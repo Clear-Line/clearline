@@ -1,6 +1,12 @@
-import "./globals.css";
-import Navbar from "@/src/components/Navbar";
-import Footer from "@/src/components/Footer";
+import type { Metadata } from 'next';
+import './globals.css';
+import { Navbar } from './components/Navbar';
+import { Activity } from 'lucide-react';
+
+export const metadata: Metadata = {
+  title: 'Clearline',
+  description: 'The intelligence layer for prediction markets',
+};
 
 export default function RootLayout({
   children,
@@ -9,18 +15,24 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <head>
-        <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
-        <link
-          href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
-          rel="stylesheet"
-        />
-      </head>
-      <body className="flex min-h-screen flex-col bg-gray-50 antialiased">
+      <body className="min-h-screen bg-gray-50">
         <Navbar />
-        <main className="w-full flex-1">{children}</main>
-        <Footer />
+        <main>{children}</main>
+        <footer className="bg-white border-t border-gray-200 mt-16">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+            <div className="flex flex-col md:flex-row justify-between items-center gap-4">
+              <div className="flex items-center gap-2">
+                <div className="h-6 w-6 bg-blue-600 rounded flex items-center justify-center">
+                  <Activity className="h-4 w-4 text-white" />
+                </div>
+                <span className="font-semibold">Clearline</span>
+              </div>
+              <div className="text-sm text-gray-500">
+                The intelligence layer for prediction markets
+              </div>
+            </div>
+          </div>
+        </footer>
       </body>
     </html>
   );

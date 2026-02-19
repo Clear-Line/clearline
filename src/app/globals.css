@@ -1,290 +1,179 @@
 @import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
 
 :root {
-  /* ─── Brand / Primary ─── */
-  --color-primary: #2563eb; /* blue-600 — nav active bg, CTA button, hero bg */
-  --color-primary-dark: #1d4ed8; /* blue-700 — hover states */
-  --color-primary-light: #3b82f6; /* blue-500 — lighter accents */
-  --color-primary-subtle: #eff6ff; /* blue-50  — very light bg tints */
-
-  /* ─── Hero / Banner ─── */
-  --color-hero-bg-from: #1e40af;   /* deep blue start */
-  --color-hero-bg-mid:  #2563eb;   /* brand blue mid  */
-  --color-hero-bg-to:   #4f46e5;   /* indigo end      */
-  --color-hero-stat-bg: rgba(255, 255, 255, 0.12);
-  --color-hero-stat-border: rgba(255, 255, 255, 0.25);
-  --color-hero-stat-hover-bg: rgba(255, 255, 255, 0.2);
-
-  /* ─── Navbar ─── */
-  --nav-height: 64px;
-  --nav-blur: blur(12px);
-  --nav-bg: rgba(255, 255, 255, 0.92);
-  --nav-border: rgba(229, 231, 235, 0.8);
-  --nav-active-indicator: #2563eb;
-
-  /* ─── Neutrals ─── */
-  --color-white: #ffffff;
-  --color-bg: #f9fafb; /* gray-50  — page background */
-  --color-surface: #ffffff; /* card / panel background */
-  --color-border: #e5e7eb; /* gray-200 — dividers, card borders */
-  --color-border-light: #f3f4f6; /* gray-100 — subtle separators */
-
-  /* ─── Text ─── */
-  --color-text-primary: #111827; /* gray-900 — headings, bold labels */
-  --color-text-secondary: #374151; /* gray-700 — body copy */
-  --color-text-muted: #6b7280; /* gray-500 — meta, timestamps */
-  --color-text-placeholder: #9ca3af; /* gray-400 — placeholders */
-  --color-text-on-primary: #ffffff; /* text on blue surfaces */
-
-  /* ─── Signal / Status ─── */
-  --color-signal-high: #16a34a; /* green-600 — "High signal" badge text */
-  --color-signal-high-bg: #f0fdf4; /* green-50  — "High signal" badge bg */
-  --color-signal-high-dot: #22c55e; /* green-500 — dot indicator */
-
-  --color-signal-up: #16a34a; /* green — positive % change */
-  --color-signal-down: #dc2626; /* red-600 — negative % change */
-
-  /* ─── Category Pill / Tag ─── */
-  --color-tag-crypto-text: #7c3aed; /* violet-600 — Crypto tag text */
-  --color-tag-crypto-bg: #f5f3ff; /* violet-50  — Crypto tag bg */
-
-  --color-tag-political-text: #1d4ed8;
-  --color-tag-political-bg: #eff6ff;
-
-  --color-tag-default-text: #374151;
-  --color-tag-default-bg: #f3f4f6;
-
-  /* ─── Filter Chips ─── */
-  --color-chip-active-bg: #2563eb;
-  --color-chip-active-text: #ffffff;
-  --color-chip-idle-bg: #ffffff;
-  --color-chip-idle-text: #374151;
-  --color-chip-idle-border: #d1d5db; /* gray-300 */
-  --color-chip-hover-bg: #f9fafb;
-
-  /* ─── Tab Underline ─── */
-  --color-tab-active: #2563eb;
-  --color-tab-active-text: #2563eb;
-  --color-tab-idle-text: #6b7280;
-
-  /* ─── Navbar (legacy aliases kept for compat) ─── */
-  --color-nav-bg: var(--nav-bg);
-  --color-nav-border: var(--nav-border);
-  --color-nav-active-bg: #eff6ff;  /* blue-50 pill */
-  --color-nav-active-text: #1d4ed8; /* blue-700 */
-  --color-nav-idle-text: #6b7280;
-
-  /* ─── Upgrade Button ─── */
-  --color-upgrade-bg: #2563eb;
-  --color-upgrade-text: #ffffff;
-
-  /* ─── Cards ─── */
-  --color-card-bg: #ffffff;
-  --color-card-border: #e5e7eb;
-  --color-card-shadow:
-    0 1px 3px 0 rgba(0, 0, 0, 0.07), 0 1px 2px -1px rgba(0, 0, 0, 0.05);
-
-  /* ─── Sort Dropdown ─── */
-  --color-select-bg: #ffffff;
-  --color-select-border: #d1d5db;
-  --color-select-text: #374151;
-
-  /* ─── Help FAB ─── */
-  --color-fab-bg: #374151; /* dark gray circle bottom-right */
-  --color-fab-text: #ffffff;
-
-  /* ─── Misc ─── */
-  --color-volume-label: #9ca3af;
-  --color-volume-value: #111827;
+  --font-size: 16px;
+  --background: #ffffff;
+  --foreground: oklch(0.145 0 0);
+  --card: #ffffff;
+  --card-foreground: oklch(0.145 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.145 0 0);
+  --primary: #030213;
+  --primary-foreground: oklch(1 0 0);
+  --secondary: oklch(0.95 0.0058 264.53);
+  --secondary-foreground: #030213;
+  --muted: #ececf0;
+  --muted-foreground: #717182;
+  --accent: #e9ebef;
+  --accent-foreground: #030213;
+  --destructive: #d4183d;
+  --destructive-foreground: #ffffff;
+  --border: rgba(0, 0, 0, 0.1);
+  --input: transparent;
+  --input-background: #f3f3f5;
+  --switch-background: #cbced4;
+  --font-weight-medium: 500;
+  --font-weight-normal: 400;
+  --ring: oklch(0.708 0 0);
+  --chart-1: oklch(0.646 0.222 41.116);
+  --chart-2: oklch(0.6 0.118 184.704);
+  --chart-3: oklch(0.398 0.07 227.392);
+  --chart-4: oklch(0.828 0.189 84.429);
+  --chart-5: oklch(0.769 0.188 70.08);
+  --radius: 0.625rem;
+  --sidebar: oklch(0.985 0 0);
+  --sidebar-foreground: oklch(0.145 0 0);
+  --sidebar-primary: #030213;
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.97 0 0);
+  --sidebar-accent-foreground: oklch(0.205 0 0);
+  --sidebar-border: oklch(0.922 0 0);
+  --sidebar-ring: oklch(0.708 0 0);
 }
 
-/* ─── Base resets ─── */
-* {
-  box-sizing: border-box;
-  margin: 0;
-  padding: 0;
+.dark {
+  --background: oklch(0.145 0 0);
+  --foreground: oklch(0.985 0 0);
+  --card: oklch(0.145 0 0);
+  --card-foreground: oklch(0.985 0 0);
+  --popover: oklch(0.145 0 0);
+  --popover-foreground: oklch(0.985 0 0);
+  --primary: oklch(0.985 0 0);
+  --primary-foreground: oklch(0.205 0 0);
+  --secondary: oklch(0.269 0 0);
+  --secondary-foreground: oklch(0.985 0 0);
+  --muted: oklch(0.269 0 0);
+  --muted-foreground: oklch(0.708 0 0);
+  --accent: oklch(0.269 0 0);
+  --accent-foreground: oklch(0.985 0 0);
+  --destructive: oklch(0.396 0.141 25.723);
+  --destructive-foreground: oklch(0.637 0.237 25.331);
+  --border: oklch(0.269 0 0);
+  --input: oklch(0.269 0 0);
+  --ring: oklch(0.439 0 0);
+  --font-weight-medium: 500;
+  --font-weight-normal: 400;
+  --chart-1: oklch(0.488 0.243 264.376);
+  --chart-2: oklch(0.696 0.17 162.48);
+  --chart-3: oklch(0.769 0.188 70.08);
+  --chart-4: oklch(0.627 0.265 303.9);
+  --chart-5: oklch(0.645 0.246 16.439);
+  --sidebar: oklch(0.205 0 0);
+  --sidebar-foreground: oklch(0.985 0 0);
+  --sidebar-primary: oklch(0.488 0.243 264.376);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.269 0 0);
+  --sidebar-accent-foreground: oklch(0.985 0 0);
+  --sidebar-border: oklch(0.269 0 0);
+  --sidebar-ring: oklch(0.439 0 0);
 }
 
-html {
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-input-background: var(--input-background);
+  --color-switch-background: var(--switch-background);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
 }
 
-body {
-  background-color: var(--color-bg);
-  color: var(--color-text-primary);
-}
-
-html, body {
-  font-family: 'Inter', system-ui, -apple-system, sans-serif;
-  overflow-x: hidden;
-}
-
-/* ─── Navbar glass effect ─── */
-.navbar-glass {
-  background: var(--nav-bg);
-  backdrop-filter: var(--nav-blur);
-  -webkit-backdrop-filter: var(--nav-blur);
-  border-bottom: 1px solid var(--nav-border);
-}
-
-/* ─── Hero gradient ─── */
-.hero-gradient {
-  background: linear-gradient(
-    135deg,
-    var(--color-hero-bg-from) 0%,
-    var(--color-hero-bg-mid) 50%,
-    var(--color-hero-bg-to) 100%
-  );
-}
-
-/* ─── Stat chip on hero ─── */
-.hero-stat-chip {
-  background: var(--color-hero-stat-bg);
-  border: 1px solid var(--color-hero-stat-border);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-  transition: background 0.2s ease;
-}
-.hero-stat-chip:hover {
-  background: var(--color-hero-stat-hover-bg);
-}
-
-/* ─── Nav active item ─── */
-.nav-item-active {
-  color: var(--color-nav-active-text);
-  background-color: var(--color-nav-active-bg);
-  font-weight: 600;
-}
-.nav-item-idle {
-  color: var(--color-nav-idle-text);
-  font-weight: 500;
-}
-.nav-item-idle:hover {
-  color: var(--color-text-primary);
-  background-color: #f3f4f6;
-}
-
-/* ─── Auth buttons ─── */
-.btn-signin {
-  font-size: 0.875rem;
-  font-weight: 500;
-  color: var(--color-text-secondary);
-  padding: 0.5rem 1.125rem;
-  border-radius: 8px;
-  white-space: nowrap;
-  transition: background 0.15s ease, color 0.15s ease;
-  background: transparent;
-  border: none;
-  cursor: pointer;
-}
-.btn-signin:hover {
-  color: var(--color-text-primary);
-  background-color: #f3f4f6;
-}
-
-.btn-upgrade {
-  background: linear-gradient(135deg, var(--color-primary) 0%, #4f46e5 100%);
-  color: #ffffff;
-  font-size: 0.875rem;
-  font-weight: 600;
-  padding: 0.5rem 1.25rem;
-  border-radius: 8px;
-  white-space: nowrap;
-  border: none;
-  cursor: pointer;
-  box-shadow: 0 1px 4px rgba(37, 99, 235, 0.3);
-  transition: box-shadow 0.2s ease, transform 0.15s ease, opacity 0.15s ease;
-}
-.btn-upgrade:hover {
-  opacity: 0.93;
-  box-shadow: 0 4px 14px rgba(37, 99, 235, 0.4);
-  transform: translateY(-1px);
-}
-.btn-upgrade:active {
-  transform: scale(0.97);
-  opacity: 1;
-}
-
-/* ─── Tailwind shorthand utilities using CSS vars ─── */
-@layer utilities {
-  .bg-primary {
-    background-color: var(--color-primary);
-  }
-  .bg-primary-dark {
-    background-color: var(--color-primary-dark);
-  }
-  .bg-primary-subtle {
-    background-color: var(--color-primary-subtle);
-  }
-  .bg-surface {
-    background-color: var(--color-surface);
-  }
-  .bg-page {
-    background-color: var(--color-bg);
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
   }
 
-  .text-primary {
-    color: var(--color-primary);
-  }
-  .text-on-primary {
-    color: var(--color-text-on-primary);
-  }
-  .text-body {
-    color: var(--color-text-secondary);
-  }
-  .text-muted {
-    color: var(--color-text-muted);
+  body {
+    @apply bg-background text-foreground;
   }
 
-  .border-default {
-    border-color: var(--color-border);
-  }
-  .border-light {
-    border-color: var(--color-border-light);
+  html {
+    font-size: var(--font-size);
   }
 
-  .card-shadow {
-    box-shadow: var(--color-card-shadow);
+  h1 {
+    font-size: var(--text-2xl);
+    font-weight: var(--font-weight-medium);
+    line-height: 1.5;
   }
 
-  /* Signal badges */
-  .badge-high-signal {
-    color: var(--color-signal-high);
-    background-color: var(--color-signal-high-bg);
+  h2 {
+    font-size: var(--text-xl);
+    font-weight: var(--font-weight-medium);
+    line-height: 1.5;
   }
 
-  /* Category tags */
-  .tag-crypto {
-    color: var(--color-tag-crypto-text);
-    background-color: var(--color-tag-crypto-bg);
-  }
-  .tag-political {
-    color: var(--color-tag-political-text);
-    background-color: var(--color-tag-political-bg);
-  }
-  .tag-default {
-    color: var(--color-tag-default-text);
-    background-color: var(--color-tag-default-bg);
+  h3 {
+    font-size: var(--text-lg);
+    font-weight: var(--font-weight-medium);
+    line-height: 1.5;
   }
 
-  /* Filter chips */
-  .chip-active {
-    background-color: var(--color-chip-active-bg);
-    color: var(--color-chip-active-text);
-    border-color: var(--color-chip-active-bg);
-  }
-  .chip-idle {
-    background-color: var(--color-chip-idle-bg);
-    color: var(--color-chip-idle-text);
-    border-color: var(--color-chip-idle-border);
+  h4 {
+    font-size: var(--text-base);
+    font-weight: var(--font-weight-medium);
+    line-height: 1.5;
   }
 
-  /* Change indicators */
-  .text-up {
-    color: var(--color-signal-up);
+  label {
+    font-size: var(--text-base);
+    font-weight: var(--font-weight-medium);
+    line-height: 1.5;
   }
-  .text-down {
-    color: var(--color-signal-down);
+
+  button {
+    font-size: var(--text-base);
+    font-weight: var(--font-weight-medium);
+    line-height: 1.5;
+  }
+
+  input {
+    font-size: var(--text-base);
+    font-weight: var(--font-weight-normal);
+    line-height: 1.5;
   }
 }
