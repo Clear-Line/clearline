@@ -9,5 +9,5 @@ node_modules
 CLAUDE.md
 .claude
 
-# Clerk configuration (can include secrets)
+# Clerk configuration (can include secrets) 
 /.clerk/
