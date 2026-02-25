@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Activity, Wallet, Newspaper, Bell, BarChart3, Menu, X } from 'lucide-react';
+import { Activity, Wallet, Newspaper, Bell, BarChart3, Users, Menu, X } from 'lucide-react';
 import { useState } from 'react';
 
 export function Navbar() {
@@ -15,6 +15,7 @@ export function Navbar() {
     { name: 'News Feed', href: '/news', icon: Newspaper },
     { name: 'Alerts', href: '/alerts', icon: Bell },
     { name: 'Accuracy Tracker', href: '/accuracy', icon: BarChart3 },
+    { name: 'About Us', href: '/about', icon: Users },
   ];
 
   return (
