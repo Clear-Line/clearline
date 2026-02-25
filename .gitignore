@@ -8,3 +8,6 @@ node_modules
 # Claude code
 CLAUDE.md
 .claude
+
+# Clerk configuration (can include secrets)
+/.clerk/
