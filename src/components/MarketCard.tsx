@@ -1,25 +1,25 @@
-import { TrendingUp, TrendingDown, DollarSign } from 'lucide-react';
-import { Market } from '../data/mockData';
-import { ConfidenceBadge } from './ConfidenceBadge';
-import { formatDistanceToNow } from 'date-fns';
-import Link from 'next/link';
+import { TrendingUp, TrendingDown, DollarSign } from "lucide-react";
+import { Market } from "../data/mockData";
+import { ConfidenceBadge } from "./ConfidenceBadge";
+import { formatDistanceToNow } from "date-fns";
+import Link from "next/link";
 
 interface MarketCardProps {
   market: Market;
 }
 
-const getCategoryColor = (category: Market['category']) => {
+const getCategoryColor = (category: Market["category"]) => {
   switch (category) {
-    case 'crypto':
-      return 'bg-purple-100 text-purple-700';
-    case 'economic':
-      return 'bg-green-100 text-green-700';
-    case 'weather':
-      return 'bg-cyan-100 text-cyan-700';
-    case 'sports':
-      return 'bg-orange-100 text-orange-700';
+    case "crypto":
+      return "bg-purple-100 text-purple-700";
+    case "economic":
+      return "bg-green-100 text-green-700";
+    case "weather":
+      return "bg-cyan-100 text-cyan-700";
+    case "sports":
+      return "bg-orange-100 text-orange-700";
     default:
-      return 'bg-gray-100 text-gray-700';
+      return "bg-gray-100 text-gray-700";
   }
 };
 
@@ -34,13 +34,19 @@ export function MarketCard({ market }: MarketCardProps) {
     >
       <div className="flex items-start justify-between gap-4 mb-3">
         <div className="flex-1">
-          <h3 className="font-medium text-gray-900 mb-1 line-clamp-2">{market.title}</h3>
+          <h3 className="font-medium text-gray-900 mb-1 line-clamp-2">
+            {market.title}
+          </h3>
           <div className="flex items-center gap-2 text-sm text-gray-500">
-            <span className={`px-2 py-0.5 rounded-full text-xs capitalize ${getCategoryColor(market.category)}`}>
+            <span
+              className={`px-2 py-0.5 rounded-full text-xs capitalize ${getCategoryColor(market.category)}`}
+            >
               {market.category}
             </span>
             <span>·</span>
-            <span>{formatDistanceToNow(market.lastUpdated, { addSuffix: true })}</span>
+            <span>
+              {formatDistanceToNow(market.lastUpdated, { addSuffix: true })}
+            </span>
           </div>
         </div>
         <ConfidenceBadge confidence={market.confidence} size="sm" />
@@ -51,9 +57,16 @@ export function MarketCard({ market }: MarketCardProps) {
           <div className="text-3xl font-semibold text-gray-900 mb-1">
             {(market.currentOdds * 100).toFixed(0)}%
           </div>
-          <div className={`flex items-center gap-1 text-sm font-medium ${isPositive ? 'text-green-600' : 'text-red-600'}`}>
-            {isPositive ? <TrendingUp className="h-4 w-4" /> : <TrendingDown className="h-4 w-4" />}
-            {isPositive ? '+' : ''}{changePercent}%
+          <div
+            className={`flex items-center gap-1 text-sm font-medium ${isPositive ? "text-green-600" : "text-red-600"}`}
+          >
+            {isPositive ? (
+              <TrendingUp className="h-4 w-4" />
+            ) : (
+              <TrendingDown className="h-4 w-4" />
+            )}
+            {isPositive ? "+" : ""}
+            {changePercent}%
           </div>
         </div>
 

@@ -1,11 +1,27 @@
-'use client';
+"use client";
 
-import { useParams } from 'next/navigation';
-import Link from 'next/link';
-import { ArrowLeft, Users, DollarSign, TrendingUp, ExternalLink } from 'lucide-react';
-import { mockMarkets, mockMarketMove } from '../../data/mockData';
-import { ConfidenceBadge } from '../../components/ConfidenceBadge';
-import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import { useParams } from "next/navigation";
+import Link from "next/link";
+import {
+  ArrowLeft,
+  Users,
+  DollarSign,
+  TrendingUp,
+  ExternalLink,
+} from "lucide-react";
+import { mockMarkets, mockMarketMove } from "../../../data/mockData";
+import { ConfidenceBadge } from "../../../components/ConfidenceBadge";
+import {
+  LineChart,
+  Line,
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+} from "recharts";
 
 export default function MarketDetail() {
   const params = useParams();
@@ -17,7 +33,10 @@ export default function MarketDetail() {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className="text-center">
           <p className="text-gray-500">Market not found</p>
-          <Link href="/" className="text-blue-600 hover:underline mt-2 inline-block">
+          <Link
+            href="/"
+            className="text-blue-600 hover:underline mt-2 inline-block"
+          >
             Return to dashboard
           </Link>
         </div>
@@ -46,7 +65,9 @@ export default function MarketDetail() {
               </span>
               <ConfidenceBadge confidence={market.confidence} size="md" />
             </div>
-            <h1 className="text-3xl font-semibold text-gray-900 mb-4">{market.title}</h1>
+            <h1 className="text-3xl font-semibold text-gray-900 mb-4">
+              {market.title}
+            </h1>
             <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
               <p className="text-sm text-blue-900">{mockMarketMove.summary}</p>
             </div>
@@ -59,11 +80,11 @@ export default function MarketDetail() {
             </div>
             <div
               className={`inline-flex items-center gap-1 text-lg font-medium ${
-                market.change > 0 ? 'text-green-600' : 'text-red-600'
+                market.change > 0 ? "text-green-600" : "text-red-600"
               }`}
             >
               <TrendingUp className="h-5 w-5" />
-              {market.change > 0 ? '+' : ''}
+              {market.change > 0 ? "+" : ""}
               {(market.change * 100).toFixed(1)}% today
             </div>
           </div>
@@ -86,7 +107,10 @@ export default function MarketDetail() {
           <div>
             <div className="text-sm text-gray-500 mb-1">Top Wallet Share</div>
             <div className="text-xl font-semibold text-gray-900">
-              {(mockMarketMove.volumeProfile.topWalletConcentration * 100).toFixed(0)}%
+              {(
+                mockMarketMove.volumeProfile.topWalletConcentration * 100
+              ).toFixed(0)}
+              %
             </div>
           </div>
           <div>
@@ -101,7 +125,9 @@ export default function MarketDetail() {
       {/* Charts */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
         <div className="bg-white rounded-lg border border-gray-200 p-6">
-          <h2 className="text-lg font-semibold text-gray-900 mb-4">Odds Movement</h2>
+          <h2 className="text-lg font-semibold text-gray-900 mb-4">
+            Odds Movement
+          </h2>
           <ResponsiveContainer width="100%" height={250}>
             <LineChart data={mockMarketMove.chartData}>
               <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
@@ -109,18 +135,26 @@ export default function MarketDetail() {
               <YAxis stroke="#6b7280" fontSize={12} />
               <Tooltip
                 contentStyle={{
-                  backgroundColor: 'white',
-                  border: '1px solid #e5e7eb',
-                  borderRadius: '8px',
+                  backgroundColor: "white",
+                  border: "1px solid #e5e7eb",
+                  borderRadius: "8px",
                 }}
               />
-              <Line type="monotone" dataKey="odds" stroke="#2563eb" strokeWidth={2} dot={{ r: 4 }} />
+              <Line
+                type="monotone"
+                dataKey="odds"
+                stroke="#2563eb"
+                strokeWidth={2}
+                dot={{ r: 4 }}
+              />
             </LineChart>
           </ResponsiveContainer>
         </div>
 
         <div className="bg-white rounded-lg border border-gray-200 p-6">
-          <h2 className="text-lg font-semibold text-gray-900 mb-4">Trading Volume</h2>
+          <h2 className="text-lg font-semibold text-gray-900 mb-4">
+            Trading Volume
+          </h2>
           <ResponsiveContainer width="100%" height={250}>
             <BarChart data={mockMarketMove.chartData}>
               <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
@@ -128,9 +162,9 @@ export default function MarketDetail() {
               <YAxis stroke="#6b7280" fontSize={12} />
               <Tooltip
                 contentStyle={{
-                  backgroundColor: 'white',
-                  border: '1px solid #e5e7eb',
-                  borderRadius: '8px',
+                  backgroundColor: "white",
+                  border: "1px solid #e5e7eb",
+                  borderRadius: "8px",
                 }}
               />
               <Bar dataKey="volume" fill="#2563eb" radius={[4, 4, 0, 0]} />
@@ -143,7 +177,9 @@ export default function MarketDetail() {
       <div className="bg-white rounded-lg border border-gray-200 p-6 mb-6">
         <div className="flex items-center gap-2 mb-4">
           <Users className="h-5 w-5 text-gray-600" />
-          <h2 className="text-lg font-semibold text-gray-900">Wallet Breakdown</h2>
+          <h2 className="text-lg font-semibold text-gray-900">
+            Wallet Breakdown
+          </h2>
         </div>
         <div className="space-y-3">
           {mockMarketMove.walletBreakdown.map((wallet, index) => (
@@ -151,7 +187,9 @@ export default function MarketDetail() {
               <div className="flex-1">
                 <div className="flex items-center justify-between mb-1">
                   <div className="flex items-center gap-2">
-                    <span className="font-mono text-sm text-gray-900">{wallet.walletId}</span>
+                    <span className="font-mono text-sm text-gray-900">
+                      {wallet.walletId}
+                    </span>
                     {index < 3 && (
                       <Link
                         href="/wallets"
@@ -164,10 +202,16 @@ export default function MarketDetail() {
                   </div>
                   <div className="flex items-center gap-4 text-sm">
                     <span className="text-gray-600">
-                      Accuracy: <span className="font-medium text-gray-900">{wallet.accuracy}%</span>
+                      Accuracy:{" "}
+                      <span className="font-medium text-gray-900">
+                        {wallet.accuracy}%
+                      </span>
                     </span>
                     <span className="text-gray-600">
-                      Specialization: <span className="font-medium text-gray-900">{wallet.specialization}</span>
+                      Specialization:{" "}
+                      <span className="font-medium text-gray-900">
+                        {wallet.specialization}
+                      </span>
                     </span>
                   </div>
                 </div>
@@ -190,7 +234,9 @@ export default function MarketDetail() {
 
       {/* External Catalysts */}
       <div className="bg-white rounded-lg border border-gray-200 p-6 mb-6">
-        <h2 className="text-lg font-semibold text-gray-900 mb-4">External Catalysts</h2>
+        <h2 className="text-lg font-semibold text-gray-900 mb-4">
+          External Catalysts
+        </h2>
         <div className="space-y-3">
           {mockMarketMove.externalCatalysts.map((catalyst, index) => (
             <div key={index} className="flex gap-4 p-3 bg-gray-50 rounded-lg">
@@ -201,11 +247,13 @@ export default function MarketDetail() {
               </div>
               <div className="flex-1">
                 <div className="flex items-center gap-2 mb-1">
-                  <span className="text-sm font-medium text-gray-900">{catalyst.type}</span>
+                  <span className="text-sm font-medium text-gray-900">
+                    {catalyst.type}
+                  </span>
                   <span className="text-xs text-gray-500">
-                    {catalyst.timestamp.toLocaleTimeString('en-US', {
-                      hour: 'numeric',
-                      minute: '2-digit',
+                    {catalyst.timestamp.toLocaleTimeString("en-US", {
+                      hour: "numeric",
+                      minute: "2-digit",
                     })}
                   </span>
                 </div>
@@ -218,7 +266,9 @@ export default function MarketDetail() {
 
       {/* Correlated Markets */}
       <div className="bg-white rounded-lg border border-gray-200 p-6">
-        <h2 className="text-lg font-semibold text-gray-900 mb-4">Correlated Market Movements</h2>
+        <h2 className="text-lg font-semibold text-gray-900 mb-4">
+          Correlated Market Movements
+        </h2>
         <div className="space-y-3">
           {mockMarketMove.correlatedMarkets.map((correlated) => (
             <Link
@@ -226,7 +276,9 @@ export default function MarketDetail() {
               href={`/market/${correlated.marketId}`}
               className="flex items-center justify-between p-3 border border-gray-200 rounded-lg hover:border-gray-300 hover:shadow-sm transition-all"
             >
-              <span className="text-sm font-medium text-gray-900">{correlated.title}</span>
+              <span className="text-sm font-medium text-gray-900">
+                {correlated.title}
+              </span>
               <div className="flex items-center gap-2">
                 <span className="text-sm text-gray-600">Correlation:</span>
                 <span className="text-sm font-semibold text-blue-600">
@@ -242,9 +294,12 @@ export default function MarketDetail() {
       <div className="mt-8 bg-gradient-to-r from-blue-600 to-blue-700 rounded-lg p-6 text-white">
         <div className="flex flex-col md:flex-row items-center justify-between gap-4">
           <div>
-            <h3 className="text-xl font-semibold mb-2">Get deeper insights with Clearline Pro</h3>
+            <h3 className="text-xl font-semibold mb-2">
+              Get deeper insights with Clearline Pro
+            </h3>
             <p className="text-blue-100">
-              Access full wallet tracking, custom alerts, and historical accuracy data
+              Access full wallet tracking, custom alerts, and historical
+              accuracy data
             </p>
           </div>
           <button className="px-6 py-3 bg-white text-blue-600 font-medium rounded-lg hover:bg-blue-50 transition-colors whitespace-nowrap">
