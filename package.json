@@ -6,6 +6,7 @@
     "dev": "next dev"
   },
   "dependencies": {
+    "@clerk/nextjs": "^6.38.2",
     "@supabase/supabase-js": "^2.97.0",
     "@tailwindcss/postcss": "^4.2.0",
     "axios": "^1.13.5",
