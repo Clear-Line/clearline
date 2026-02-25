@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { Clock, ExternalLink } from "lucide-react";
-import { mockNewsStories, mockMarkets } from "../data/mockData";
+import { mockNewsStories, mockMarkets } from "../../data/mockData";
 import { ConfidenceBadge } from "../../components/ConfidenceBadge";
 import { formatDistanceToNow } from "date-fns";
 

@@ -1,5 +1,5 @@
 import { TrendingUp, TrendingDown, DollarSign } from "lucide-react";
-import { Market } from "../app/data/mockData";
+import { Market } from "../data/mockData";
 import { ConfidenceBadge } from "./ConfidenceBadge";
 import { formatDistanceToNow } from "date-fns";
 import Link from "next/link";

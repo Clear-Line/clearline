@@ -9,7 +9,7 @@ import {
   TrendingUp,
   ExternalLink,
 } from "lucide-react";
-import { mockMarkets, mockMarketMove } from "../../data/mockData";
+import { mockMarkets, mockMarketMove } from "../../../data/mockData";
 import { ConfidenceBadge } from "../../../components/ConfidenceBadge";
 import {
   LineChart,

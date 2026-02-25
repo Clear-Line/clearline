@@ -2,7 +2,7 @@
 
 import { useState, useMemo } from "react";
 import { Filter, ArrowUpDown } from "lucide-react";
-import { mockMarkets } from "./data/mockData";
+import { mockMarkets } from "../data/mockData";
 import { MarketCard } from "../components/MarketCard";
 
 type CategoryFilter =
