@@ -1,7 +1,13 @@
 node_modules
-.env
 .next
+
+# Environment variables
+.env
+.env.local
 
 # Claude code
 CLAUDE.md
 .claude
+
+# Clerk configuration (can include secrets) 
+/.clerk/

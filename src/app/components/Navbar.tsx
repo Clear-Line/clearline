@@ -4,10 +4,13 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { Activity, Wallet, Newspaper, Bell, BarChart3, Users, Menu, X } from 'lucide-react';
 import { useState } from 'react';
+import { SignedIn, SignedOut, SignInButton, UserButton } from '@clerk/nextjs';
 
 export function Navbar() {
   const pathname = usePathname();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  if (pathname.startsWith('/sign-in')) return null;
 
   const navigation = [
     { name: 'Live Markets', href: '/', icon: Activity },
@@ -53,12 +56,19 @@ export function Navbar() {
           </div>
 
           <div className="flex items-center gap-3">
-            <button className="hidden md:block px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 rounded-lg transition-colors">
-              Sign in
-            </button>
-            <button className="hidden md:block px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors">
-              Upgrade to Pro
-            </button>
+            <SignedOut>
+              <SignInButton mode="redirect">
+                <button className="hidden md:block px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 rounded-lg transition-colors">
+                  Sign in
+                </button>
+              </SignInButton>
+            </SignedOut>
+            <SignedIn>
+              <button className="hidden md:block px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors">
+                Upgrade to Pro
+              </button>
+              <UserButton afterSignOutUrl="/sign-in" />
+            </SignedIn>
 
             {/* Mobile menu button */}
             <button
@@ -94,12 +104,21 @@ export function Navbar() {
               );
             })}
             <div className="pt-3 space-y-2">
-              <button className="w-full px-4 py-2 text-sm font-medium text-gray-700 bg-gray-50 rounded-lg">
-                Sign in
-              </button>
-              <button className="w-full px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg">
-                Upgrade to Pro
-              </button>
+              <SignedOut>
+                <SignInButton mode="redirect">
+                  <button className="w-full px-4 py-2 text-sm font-medium text-gray-700 bg-gray-50 rounded-lg">
+                    Sign in
+                  </button>
+                </SignInButton>
+              </SignedOut>
+              <SignedIn>
+                <button className="w-full px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg">
+                  Upgrade to Pro
+                </button>
+                <div className="flex justify-center pt-1">
+                  <UserButton afterSignOutUrl="/sign-in" />
+                </div>
+              </SignedIn>
             </div>
           </nav>
         </div>
