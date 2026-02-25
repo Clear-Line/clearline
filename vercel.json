@@ -1,0 +1,16 @@
+{
+  "crons": [
+    {
+      "path": "/api/pipeline/markets",
+      "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/pipeline/trades",
+      "schedule": "*/2 * * * *"
+    },
+    {
+      "path": "/api/pipeline/books",
+      "schedule": "*/10 * * * *"
+    }
+  ]
+}
