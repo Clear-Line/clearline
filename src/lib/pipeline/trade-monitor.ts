@@ -1,6 +1,6 @@
 /**
  * Trade Monitor — fetches recent trades for active markets and stores in Supabase.
- * Run every 2 minutes.
+ * Uses batch inserts for performance.
  */
 
 import { supabaseAdmin } from '../supabase';
@@ -21,57 +21,67 @@ export async function pollTrades(): Promise<{ inserted: number; skipped: number;
     return { inserted: 0, skipped: 0, errors: [`Failed to fetch markets: ${mktError?.message}`] };
   }
 
-  for (const market of markets) {
-    try {
-      const trades = await fetchMarketTrades(market.condition_id, 50);
+  // Process markets in batches of 10 concurrently
+  const BATCH_SIZE = 10;
+  for (let i = 0; i < markets.length; i += BATCH_SIZE) {
+    const batch = markets.slice(i, i + BATCH_SIZE);
 
-      for (const t of trades) {
-        if (!t.transactionHash || !t.proxyWallet) continue;
+    await Promise.all(batch.map(async (market) => {
+      try {
+        const trades = await fetchMarketTrades(market.condition_id, 50);
+        if (!trades || trades.length === 0) return;
 
-        const row = {
-          market_id: market.condition_id,
-          wallet_address: t.proxyWallet,
-          side: t.side,
-          size_tokens: t.size,
-          size_usdc: t.usdcSize,
-          price: t.price,
-          outcome: t.outcome,
-          outcome_index: t.outcomeIndex,
-          transaction_hash: t.transactionHash,
-          timestamp: new Date(t.timestamp * 1000).toISOString(),
-        };
+        // Build batch rows
+        const tradeRows = trades
+          .filter((t) => t.transactionHash && t.proxyWallet)
+          .map((t) => ({
+            market_id: market.condition_id,
+            wallet_address: t.proxyWallet,
+            side: t.side,
+            size_tokens: t.size,
+            price: t.price,
+            size_usdc: t.usdcSize ?? t.size * t.price,
+            outcome: t.outcome,
+            outcome_index: t.outcomeIndex,
+            transaction_hash: t.transactionHash,
+            timestamp: new Date(t.timestamp * 1000).toISOString(),
+          }));
 
-        const { error: insertError } = await supabaseAdmin
-          .from('trades')
-          .upsert(row, { onConflict: 'transaction_hash', ignoreDuplicates: true });
+        // Batch upsert trades
+        if (tradeRows.length > 0) {
+          const { error: insertError, count } = await supabaseAdmin
+            .from('trades')
+            .upsert(tradeRows, { onConflict: 'transaction_hash', ignoreDuplicates: true, count: 'exact' });
 
-        if (insertError) {
-          // Duplicate hash = already stored, skip silently
-          if (insertError.code === '23505') {
-            skipped++;
+          if (insertError) {
+            errors.push(`Trades ${market.condition_id}: ${insertError.message}`);
           } else {
-            errors.push(`Trade ${t.transactionHash}: ${insertError.message}`);
+            inserted += count ?? tradeRows.length;
           }
-        } else {
-          inserted++;
         }
 
-        // Upsert wallet record
-        await supabaseAdmin
-          .from('wallets')
-          .upsert(
-            {
-              address: t.proxyWallet,
-              username: t.name || null,
-              pseudonym: t.pseudonym || null,
-              last_updated: new Date().toISOString(),
-            },
-            { onConflict: 'address' },
-          );
+        // Batch upsert wallets
+        const walletMap = new Map<string, { address: string; username: string | null; pseudonym: string | null; last_updated: string }>();
+        for (const t of trades) {
+          if (!t.proxyWallet) continue;
+          walletMap.set(t.proxyWallet, {
+            address: t.proxyWallet,
+            username: t.name || null,
+            pseudonym: t.pseudonym || null,
+            last_updated: new Date().toISOString(),
+          });
+        }
+
+        const walletRows = Array.from(walletMap.values());
+        if (walletRows.length > 0) {
+          await supabaseAdmin
+            .from('wallets')
+            .upsert(walletRows, { onConflict: 'address' });
+        }
+      } catch (err) {
+        errors.push(`Market ${market.condition_id}: ${err}`);
       }
-    } catch (err) {
-      errors.push(`Market ${market.condition_id}: ${err}`);
-    }
+    }));
   }
 
   return { inserted, skipped, errors };

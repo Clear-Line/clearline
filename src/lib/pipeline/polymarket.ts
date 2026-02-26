@@ -150,11 +150,9 @@ export async function fetchMarketTrades(
   const params = new URLSearchParams({
     market: conditionId,
     limit: String(limit),
-    sortBy: 'TIMESTAMP',
-    sortDirection: 'DESC',
   });
-  const res = await fetch(`${DATA_API}/activity?${params}&type=TRADE`);
-  if (!res.ok) throw new Error(`Data /activity failed: ${res.status}`);
+  const res = await fetch(`${DATA_API}/trades?${params}`);
+  if (!res.ok) throw new Error(`Data /trades failed: ${res.status}`);
   return res.json();
 }
 
