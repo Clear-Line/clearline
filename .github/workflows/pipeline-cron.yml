@@ -4,39 +4,71 @@ on:
   schedule:
     # Runs every 6 hours: midnight, 6am, noon, 6pm UTC
     - cron: '0 */6 * * *'
-  workflow_dispatch: # allows manual trigger from GitHub Actions tab
+  workflow_dispatch:
+
+concurrency:
+  group: data-pipeline-cron
+  cancel-in-progress: false
 
 jobs:
   run-pipeline:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      APP_URL: ${{ secrets.APP_URL }}
+      CRON_SECRET: ${{ secrets.CRON_SECRET }}
+
     steps:
+      - name: Validate required secrets
+        run: |
+          set -euo pipefail
+          test -n "${APP_URL}" || { echo "APP_URL secret is missing"; exit 1; }
+          test -n "${CRON_SECRET}" || { echo "CRON_SECRET secret is missing"; exit 1; }
+
       - name: Poll Markets
         run: |
+          set -euo pipefail
           echo "Polling markets..."
-          curl -sf --max-time 120 "${{ secrets.APP_URL }}/api/pipeline/markets" || echo "Markets failed"
+          curl -L --fail-with-body --max-time 120 \
+            -H "Authorization: Bearer ${CRON_SECRET}" \
+            "${APP_URL}/api/pipeline/markets"
 
       - name: Poll Trades
         run: |
+          set -euo pipefail
           echo "Polling trades..."
-          curl -sf --max-time 300 "${{ secrets.APP_URL }}/api/pipeline/trades" || echo "Trades failed"
+          curl -L --fail-with-body --max-time 300 \
+            -H "Authorization: Bearer ${CRON_SECRET}" \
+            "${APP_URL}/api/pipeline/trades"
 
       - name: Snapshot Books
         run: |
+          set -euo pipefail
           echo "Snapshotting books..."
-          curl -sf --max-time 300 "${{ secrets.APP_URL }}/api/pipeline/books" || echo "Books failed"
+          curl -L --fail-with-body --max-time 300 \
+            -H "Authorization: Bearer ${CRON_SECRET}" \
+            "${APP_URL}/api/pipeline/books"
 
       - name: Profile Wallets
         run: |
+          set -euo pipefail
           echo "Profiling wallets..."
-          curl -sf --max-time 120 "${{ secrets.APP_URL }}/api/pipeline/wallets" || echo "Wallets failed"
+          curl -L --fail-with-body --max-time 120 \
+            -H "Authorization: Bearer ${CRON_SECRET}" \
+            "${APP_URL}/api/pipeline/wallets"
 
       - name: Tier 1 Analysis
         run: |
+          set -euo pipefail
           echo "Running Tier 1 signals..."
-          curl -sf --max-time 120 "${{ secrets.APP_URL }}/api/analysis/tier1" || echo "Tier 1 failed"
+          curl -L --fail-with-body --max-time 120 \
+            -H "Authorization: Bearer ${CRON_SECRET}" \
+            "${APP_URL}/api/analysis/tier1"
 
       - name: Move Detection
         run: |
+          set -euo pipefail
           echo "Running move detection..."
-          curl -sf --max-time 120 "${{ secrets.APP_URL }}/api/analysis/moves" || echo "Moves failed"
+          curl -L --fail-with-body --max-time 120 \
+            -H "Authorization: Bearer ${CRON_SECRET}" \
+            "${APP_URL}/api/analysis/moves"
