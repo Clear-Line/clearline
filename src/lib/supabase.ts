@@ -9,3 +9,4 @@ export const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
 
 // Client-side client with anon key (for frontend reads)
 export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+
