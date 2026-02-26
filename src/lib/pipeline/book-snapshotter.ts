@@ -38,30 +38,38 @@ export async function snapshotBooks(): Promise<{ updated: number; errors: string
     return { updated: 0, errors: [`Failed to fetch markets: ${mktError?.message}`] };
   }
 
-  for (const market of markets) {
-    try {
-      const tokenIds = market.clob_token_ids as string[];
-      if (!tokenIds || tokenIds.length < 1) continue;
+  // Process markets concurrently in batches of 10, collect snapshot rows
+  const snapshotRows: {
+    market_id: string;
+    timestamp: string;
+    yes_price: number;
+    no_price: number;
+    spread: number | null;
+    book_depth_bid_5c: number;
+    book_depth_ask_5c: number;
+  }[] = [];
 
-      const yesTokenId = tokenIds[0];
+  const CONCURRENCY = 10;
+  for (let i = 0; i < markets.length; i += CONCURRENCY) {
+    const batch = markets.slice(i, i + CONCURRENCY);
 
-      // Fetch order book for YES token
-      const book = await fetchOrderBook(yesTokenId);
+    await Promise.all(batch.map(async (market) => {
+      try {
+        const tokenIds = market.clob_token_ids as string[];
+        if (!tokenIds || tokenIds.length < 1) return;
 
-      // Compute midpoint
-      const bestBid = book.bids.length > 0 ? parseFloat(book.bids[0].price) : 0;
-      const bestAsk = book.asks.length > 0 ? parseFloat(book.asks[0].price) : 1;
-      const midpoint = (bestBid + bestAsk) / 2;
-      const spread = bestAsk - bestBid;
+        const yesTokenId = tokenIds[0];
+        const book = await fetchOrderBook(yesTokenId);
 
-      // Compute depth within 5 cents of midpoint
-      const bidDepth = computeDepthWithin5Cents(book.bids, midpoint, 'bid');
-      const askDepth = computeDepthWithin5Cents(book.asks, midpoint, 'ask');
+        const bestBid = book.bids.length > 0 ? parseFloat(book.bids[0].price) : 0;
+        const bestAsk = book.asks.length > 0 ? parseFloat(book.asks[0].price) : 1;
+        const midpoint = (bestBid + bestAsk) / 2;
+        const spread = bestAsk - bestBid;
 
-      // Insert a snapshot row
-      const { error: snapError } = await supabaseAdmin
-        .from('market_snapshots')
-        .insert({
+        const bidDepth = computeDepthWithin5Cents(book.bids, midpoint, 'bid');
+        const askDepth = computeDepthWithin5Cents(book.asks, midpoint, 'ask');
+
+        snapshotRows.push({
           market_id: market.condition_id,
           timestamp: new Date().toISOString(),
           yes_price: midpoint,
@@ -70,14 +78,24 @@ export async function snapshotBooks(): Promise<{ updated: number; errors: string
           book_depth_bid_5c: bidDepth,
           book_depth_ask_5c: askDepth,
         });
-
-      if (snapError) {
-        errors.push(`Snapshot ${market.condition_id}: ${snapError.message}`);
-      } else {
-        updated++;
+      } catch (err) {
+        errors.push(`Book ${market.condition_id}: ${err}`);
       }
-    } catch (err) {
-      errors.push(`Book ${market.condition_id}: ${err}`);
+    }));
+  }
+
+  // Batch insert all snapshots
+  const BATCH_SIZE = 500;
+  for (let i = 0; i < snapshotRows.length; i += BATCH_SIZE) {
+    const batch = snapshotRows.slice(i, i + BATCH_SIZE);
+    const { error } = await supabaseAdmin
+      .from('market_snapshots')
+      .insert(batch);
+
+    if (error) {
+      errors.push(`Snapshot batch offset=${i}: ${error.message}`);
+    } else {
+      updated += batch.length;
     }
   }
 

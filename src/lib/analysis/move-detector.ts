@@ -55,25 +55,27 @@ interface DetectedMove {
 async function detectMoves(): Promise<DetectedMove[]> {
   const moves: DetectedMove[] = [];
 
-  // Get all markets with at least 2 snapshots
-  const { data: markets } = await supabaseAdmin
-    .from('markets')
-    .select('condition_id')
-    .eq('is_active', true);
+  // Fetch recent snapshots for all active markets in one query
+  // Order by market_id and timestamp to group by market
+  const { data: allSnapshots } = await supabaseAdmin
+    .from('market_snapshots')
+    .select('market_id, timestamp, yes_price')
+    .order('timestamp', { ascending: false });
 
-  if (!markets) return moves;
+  if (!allSnapshots || allSnapshots.length === 0) return moves;
 
-  for (const market of markets) {
-    const { data: snapshots } = await supabaseAdmin
-      .from('market_snapshots')
-      .select('market_id, timestamp, yes_price')
-      .eq('market_id', market.condition_id)
-      .order('timestamp', { ascending: false })
-      .limit(50);
+  // Group snapshots by market, keeping only the 50 most recent per market
+  const snapshotsByMarket = new Map<string, typeof allSnapshots>();
+  for (const snap of allSnapshots) {
+    if (!snapshotsByMarket.has(snap.market_id)) snapshotsByMarket.set(snap.market_id, []);
+    const marketSnaps = snapshotsByMarket.get(snap.market_id)!;
+    if (marketSnaps.length < 50) marketSnaps.push(snap);
+  }
 
-    if (!snapshots || snapshots.length < 2) continue;
+  // Compare consecutive snapshots for price moves
+  for (const [, snapshots] of snapshotsByMarket) {
+    if (snapshots.length < 2) continue;
 
-    // Compare consecutive snapshots for price moves
     for (let i = 0; i < snapshots.length - 1; i++) {
       const newer = snapshots[i];
       const older = snapshots[i + 1];
@@ -86,7 +88,7 @@ async function detectMoves(): Promise<DetectedMove[]> {
 
       if (delta >= threshold) {
         moves.push({
-          market_id: market.condition_id,
+          market_id: newer.market_id,
           move_start_time: older.timestamp,
           move_end_time: newer.timestamp,
           price_start: Number(older.yes_price),
