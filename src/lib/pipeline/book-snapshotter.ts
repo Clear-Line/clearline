@@ -63,6 +63,7 @@ export async function snapshotBooks(): Promise<{ updated: number; errors: string
         .from('market_snapshots')
         .insert({
           market_id: market.condition_id,
+          timestamp: new Date().toISOString(),
           yes_price: midpoint,
           no_price: 1 - midpoint,
           spread: spread > 0 ? spread : null,
