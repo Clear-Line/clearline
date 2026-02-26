@@ -55,14 +55,16 @@ export async function pollMarkets(): Promise<{ upserted: number; errors: string[
     }
   }
 
-  // Upsert into markets table
-  let upserted = 0;
+  // Build rows for batch upsert
+  const marketRows = [];
+  const snapshotRows = [];
+
   for (const m of allMarkets) {
     const outcomes = parseJsonField(m.outcomes);
     const clobTokenIds = parseJsonField(m.clobTokenIds);
     const outcomePrices = parseJsonField(m.outcomePrices) as string[];
 
-    const row = {
+    marketRows.push({
       condition_id: m.conditionId,
       question: m.question,
       slug: m.slug || null,
@@ -75,37 +77,46 @@ export async function pollMarkets(): Promise<{ upserted: number; errors: string[
       is_active: m.active && !m.closed,
       is_resolved: false,
       updated_at: new Date().toISOString(),
-    };
+    });
 
+    if (outcomePrices.length >= 2) {
+      snapshotRows.push({
+        market_id: m.conditionId,
+        yes_price: parseFloat(outcomePrices[0]) || 0,
+        no_price: parseFloat(outcomePrices[1]) || 0,
+        volume_24h: parseFloat(m.volume24hr) || 0,
+        total_volume: parseFloat(m.volume) || 0,
+        liquidity: parseFloat(m.liquidity) || 0,
+      });
+    }
+  }
+
+  // Batch upsert markets in chunks of 500
+  let upserted = 0;
+  const BATCH_SIZE = 500;
+
+  for (let i = 0; i < marketRows.length; i += BATCH_SIZE) {
+    const batch = marketRows.slice(i, i + BATCH_SIZE);
     const { error } = await supabaseAdmin
       .from('markets')
-      .upsert(row, { onConflict: 'condition_id' });
+      .upsert(batch, { onConflict: 'condition_id' });
 
     if (error) {
-      errors.push(`Upsert market ${m.conditionId}: ${error.message}`);
+      errors.push(`Upsert batch offset=${i}: ${error.message}`);
     } else {
-      upserted++;
+      upserted += batch.length;
     }
+  }
 
-    // Also create a snapshot with current prices
-    if (outcomePrices.length >= 2) {
-      const yesPrice = parseFloat(outcomePrices[0]) || 0;
-      const noPrice = parseFloat(outcomePrices[1]) || 0;
+  // Batch insert snapshots in chunks of 500
+  for (let i = 0; i < snapshotRows.length; i += BATCH_SIZE) {
+    const batch = snapshotRows.slice(i, i + BATCH_SIZE);
+    const { error } = await supabaseAdmin
+      .from('market_snapshots')
+      .insert(batch);
 
-      const { error: snapError } = await supabaseAdmin
-        .from('market_snapshots')
-        .insert({
-          market_id: m.conditionId,
-          yes_price: yesPrice,
-          no_price: noPrice,
-          volume_24h: parseFloat(m.volume24hr) || 0,
-          total_volume: parseFloat(m.volume) || 0,
-          liquidity: parseFloat(m.liquidity) || 0,
-        });
-
-      if (snapError) {
-        errors.push(`Snapshot ${m.conditionId}: ${snapError.message}`);
-      }
+    if (error) {
+      errors.push(`Snapshot batch offset=${i}: ${error.message}`);
     }
   }
 
