@@ -1,0 +1,42 @@
+name: Data Pipeline Cron
+
+on:
+  schedule:
+    # Runs every 6 hours: midnight, 6am, noon, 6pm UTC
+    - cron: '0 */6 * * *'
+  workflow_dispatch: # allows manual trigger from GitHub Actions tab
+
+jobs:
+  run-pipeline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Poll Markets
+        run: |
+          echo "Polling markets..."
+          curl -sf --max-time 120 "${{ secrets.APP_URL }}/api/pipeline/markets" || echo "Markets failed"
+
+      - name: Poll Trades
+        run: |
+          echo "Polling trades..."
+          curl -sf --max-time 300 "${{ secrets.APP_URL }}/api/pipeline/trades" || echo "Trades failed"
+
+      - name: Snapshot Books
+        run: |
+          echo "Snapshotting books..."
+          curl -sf --max-time 300 "${{ secrets.APP_URL }}/api/pipeline/books" || echo "Books failed"
+
+      - name: Profile Wallets
+        run: |
+          echo "Profiling wallets..."
+          curl -sf --max-time 120 "${{ secrets.APP_URL }}/api/pipeline/wallets" || echo "Wallets failed"
+
+      - name: Tier 1 Analysis
+        run: |
+          echo "Running Tier 1 signals..."
+          curl -sf --max-time 120 "${{ secrets.APP_URL }}/api/analysis/tier1" || echo "Tier 1 failed"
+
+      - name: Move Detection
+        run: |
+          echo "Running move detection..."
+          curl -sf --max-time 120 "${{ secrets.APP_URL }}/api/analysis/moves" || echo "Moves failed"
