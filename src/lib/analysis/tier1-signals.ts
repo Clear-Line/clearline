@@ -219,24 +219,40 @@ export async function computeTier1Signals(): Promise<{
   let computed = 0;
   let flagged = 0;
 
-  // Get all wallets with their first_seen data
-  const { data: wallets, error: wErr } = await supabaseAdmin
-    .from('wallets')
-    .select('address, first_seen_polymarket')
-    .gt('total_trades', 0);
+  // Get political/economic market IDs and volume data
+  const { data: markets } = await supabaseAdmin
+    .from('markets')
+    .select('condition_id, volume_24hr')
+    .eq('is_active', true)
+    .in('category', ['politics', 'economics']);
 
-  if (wErr || !wallets) {
-    return { computed: 0, errors: [`Failed to fetch wallets: ${wErr?.message}`], flagged: 0 };
+  if (!markets || markets.length === 0) {
+    return { computed: 0, errors: ['No political/economic markets found'], flagged: 0 };
   }
 
-  // Get all trades
+  const focusMarketIds = new Set(markets.map((m) => m.condition_id));
+
+  // Get trades only for focused markets
   const { data: allTrades, error: tErr } = await supabaseAdmin
     .from('trades')
     .select('market_id, wallet_address, side, size_usdc, price, timestamp')
+    .in('market_id', [...focusMarketIds])
     .order('timestamp', { ascending: true });
 
   if (tErr || !allTrades) {
     return { computed: 0, errors: [`Failed to fetch trades: ${tErr?.message}`], flagged: 0 };
+  }
+
+  // Get only wallets that appear in these trades
+  const activeWalletAddresses = [...new Set(allTrades.map((t) => t.wallet_address))];
+
+  const { data: wallets, error: wErr } = await supabaseAdmin
+    .from('wallets')
+    .select('address, first_seen_polymarket')
+    .in('address', activeWalletAddresses);
+
+  if (wErr || !wallets) {
+    return { computed: 0, errors: [`Failed to fetch wallets: ${wErr?.message}`], flagged: 0 };
   }
 
   // Group trades by wallet and by market
@@ -251,11 +267,6 @@ export async function computeTier1Signals(): Promise<{
     tradesByWallet.get(wKey)!.push(t);
     tradesByMarket.get(mKey)!.push(t);
   }
-
-  // Get market volume data for position size scoring
-  const { data: markets } = await supabaseAdmin
-    .from('markets')
-    .select('condition_id, volume_24hr');
 
   const marketVolume = new Map<string, number>();
   if (markets) {
