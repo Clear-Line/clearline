@@ -29,7 +29,7 @@ export async function pollTrades(): Promise<{ inserted: number; skipped: number;
 
     await Promise.all(batch.map(async (market) => {
       try {
-        const trades = await fetchMarketTrades(market.condition_id, 500);
+        const trades = await fetchMarketTrades(market.condition_id, 100);
         if (!trades || trades.length === 0) return;
 
         // Build batch rows
