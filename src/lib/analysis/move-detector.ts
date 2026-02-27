@@ -1,105 +1,30 @@
 /**
- * Move Detection Engine — Tier 2/3 Analysis
+ * Wallet Cluster Detection Engine
  *
- * 1. Detects significant price moves from market_snapshots
- * 2. Gathers trades in the move window
- * 3. Looks up Tier 1 scores for participating wallets
- * 4. Computes credibility score, informed activity index
- * 5. Generates summary text
- * 6. Stores results in flagged_moves table
+ * Detects suspicious wallet clusters in political/economic prediction markets:
+ *   1. Fetches flagged wallets (high composite_score from Tier 1 analysis)
+ *   2. Finds markets where multiple flagged wallets trade the same direction
+ *   3. Computes cluster score, concentration, informed activity index
+ *   4. Stores results in flagged_moves table
  */
 
 import { supabaseAdmin } from '../supabase';
 
 // ---- Config ----
 
-const MOVE_THRESHOLD_30MIN = 0.03; // 3 percentage points in 30 min
-const MOVE_THRESHOLD_2HR = 0.05;   // 5 percentage points in 2 hours
-const LOOKBACK_HOURS = 6;          // how far back to look for trades before the move
-const COMPOSITE_FLAG_THRESHOLD = 0.5;
+const CLUSTER_COMPOSITE_THRESHOLD = 0.4; // min composite_score to be "flagged"
+const MIN_CLUSTER_SIZE = 2;              // need at least 2 flagged wallets
+const MIN_DIRECTIONAL_RATIO = 0.6;       // at least 60% agreement on side
+const LOOKBACK_HOURS = 6;                // match the cron interval
 
 // ---- Types ----
 
-interface Snapshot {
-  market_id: string;
-  timestamp: string;
-  yes_price: number;
-  spread: number | null;
-  book_depth_bid_5c: number | null;
-  book_depth_ask_5c: number | null;
-}
-
 interface TradeRow {
   wallet_address: string;
+  market_id: string;
   side: string;
   size_usdc: number;
   timestamp: string;
-}
-
-interface WalletSignal {
-  wallet_address: string;
-  composite_score: number;
-}
-
-interface DetectedMove {
-  market_id: string;
-  move_start_time: string;
-  move_end_time: string;
-  price_start: number;
-  price_end: number;
-  price_delta: number;
-}
-
-// ---- Move Detection ----
-
-async function detectMoves(): Promise<DetectedMove[]> {
-  const moves: DetectedMove[] = [];
-
-  // Fetch recent snapshots for all active markets in one query
-  // Order by market_id and timestamp to group by market
-  const { data: allSnapshots } = await supabaseAdmin
-    .from('market_snapshots')
-    .select('market_id, timestamp, yes_price')
-    .order('timestamp', { ascending: false });
-
-  if (!allSnapshots || allSnapshots.length === 0) return moves;
-
-  // Group snapshots by market, keeping only the 50 most recent per market
-  const snapshotsByMarket = new Map<string, typeof allSnapshots>();
-  for (const snap of allSnapshots) {
-    if (!snapshotsByMarket.has(snap.market_id)) snapshotsByMarket.set(snap.market_id, []);
-    const marketSnaps = snapshotsByMarket.get(snap.market_id)!;
-    if (marketSnaps.length < 50) marketSnaps.push(snap);
-  }
-
-  // Compare consecutive snapshots for price moves
-  for (const [, snapshots] of snapshotsByMarket) {
-    if (snapshots.length < 2) continue;
-
-    for (let i = 0; i < snapshots.length - 1; i++) {
-      const newer = snapshots[i];
-      const older = snapshots[i + 1];
-
-      const delta = Math.abs(Number(newer.yes_price) - Number(older.yes_price));
-      const timeDiffMin = (new Date(newer.timestamp).getTime() - new Date(older.timestamp).getTime()) / (1000 * 60);
-
-      let threshold = MOVE_THRESHOLD_2HR;
-      if (timeDiffMin <= 30) threshold = MOVE_THRESHOLD_30MIN;
-
-      if (delta >= threshold) {
-        moves.push({
-          market_id: newer.market_id,
-          move_start_time: older.timestamp,
-          move_end_time: newer.timestamp,
-          price_start: Number(older.yes_price),
-          price_end: Number(newer.yes_price),
-          price_delta: Number(newer.yes_price) - Number(older.yes_price),
-        });
-      }
-    }
-  }
-
-  return moves;
 }
 
 // ---- Wallet Concentration ----
@@ -152,93 +77,6 @@ function computeInformedActivityIndex(
   return Math.min(Math.round(weightedRatio * 200), 100);
 }
 
-// ---- Credibility Score (0-100) ----
-
-function computeCredibilityScore(
-  trades: TradeRow[],
-  concentration: { top1: number; top3: number; top5: number },
-  informedActivityIndex: number,
-  snapshot: Snapshot | null,
-): number {
-  // Unique trader score (log scale: 10=30, 50=60, 200+=100)
-  const uniqueWallets = new Set(trades.map((t) => t.wallet_address)).size;
-  const uniqueTraderScore = Math.min(Math.log10(uniqueWallets + 1) / Math.log10(201), 1.0);
-
-  // Wallet diversity (inverse of top 5 concentration)
-  const walletDiversityScore = 1.0 - concentration.top5;
-
-  // Order book depth score
-  let bookDepthScore = 0.5; // default if no data
-  if (snapshot && snapshot.book_depth_bid_5c) {
-    const depth = Number(snapshot.book_depth_bid_5c) + Number(snapshot.book_depth_ask_5c || 0);
-    bookDepthScore = Math.min(depth / 50000, 1.0); // normalize against $50k depth
-  }
-
-  // Spread score ($0.01 = 1.0, $0.10+ = 0.0)
-  let spreadScore = 0.5;
-  if (snapshot && snapshot.spread) {
-    spreadScore = Math.max(1.0 - (Number(snapshot.spread) - 0.01) / 0.09, 0.0);
-  }
-
-  // Inverse informed activity
-  const inverseInformed = 1.0 - informedActivityIndex / 100;
-
-  // Volume consistency — simplified: use unique wallets as proxy
-  const volumeConsistencyScore = Math.min(uniqueWallets / 20, 1.0);
-
-  const credibility = (
-    uniqueTraderScore * 0.20 +
-    walletDiversityScore * 0.15 +
-    bookDepthScore * 0.20 +
-    spreadScore * 0.10 +
-    volumeConsistencyScore * 0.15 +
-    inverseInformed * 0.20
-  );
-
-  return Math.round(credibility * 100);
-}
-
-// ---- Summary Text Generator ----
-
-function generateSummary(
-  move: DetectedMove,
-  trades: TradeRow[],
-  concentration: { top1: number; top3: number; top5: number },
-  flaggedCount: number,
-  informedIndex: number,
-  credibility: number,
-): string {
-  const direction = move.price_delta > 0 ? 'upward' : 'downward';
-  const deltaPercent = Math.abs(move.price_delta * 100).toFixed(1);
-  const uniqueWallets = new Set(trades.map((t) => t.wallet_address)).size;
-  const totalVol = trades.reduce((s, t) => s + (Number(t.size_usdc) || 0), 0);
-
-  let summary = `Detected ${deltaPercent}pp ${direction} price move. `;
-  summary += `${uniqueWallets} unique wallets traded $${totalVol.toFixed(0)} in volume. `;
-
-  if (concentration.top1 > 0.5) {
-    summary += `Top wallet controlled ${(concentration.top1 * 100).toFixed(0)}% of volume. `;
-  }
-
-  if (flaggedCount > 0) {
-    summary += `${flaggedCount} wallet(s) with elevated suspicious behavior scores. `;
-  }
-
-  if (informedIndex > 50) {
-    summary += `High informed activity index (${informedIndex}/100) suggests insider-like trading. `;
-  }
-
-  if (credibility < 40) {
-    summary += `Low market credibility score (${credibility}/100).`;
-  } else if (credibility < 70) {
-    summary += `Moderate market credibility (${credibility}/100).`;
-  } else {
-    summary += `Market credibility appears healthy (${credibility}/100).`;
-  }
-
-  return summary;
-}
-
 // ---- Main Analysis Runner ----
 
 export async function detectAndFlagMoves(): Promise<{
@@ -247,107 +85,211 @@ export async function detectAndFlagMoves(): Promise<{
   errors: string[];
 }> {
   const errors: string[] = [];
-  let detected = 0;
-  let flagged = 0;
+  const now = new Date();
+  const lookbackISO = new Date(now.getTime() - LOOKBACK_HOURS * 60 * 60 * 1000).toISOString();
 
-  // Step 1: Detect price moves
-  const moves = await detectMoves();
-  detected = moves.length;
+  // ---- Phase 1: Parallel data fetch ----
+  const [signalsRes, tradesRes, snapshotsRes] = await Promise.all([
+    supabaseAdmin
+      .from('wallet_signals')
+      .select('wallet_address, market_id, composite_score')
+      .gt('composite_score', CLUSTER_COMPOSITE_THRESHOLD),
 
-  if (moves.length === 0) {
-    return { detected: 0, flagged: 0, errors: ['No significant price moves detected'] };
+    supabaseAdmin
+      .from('trades')
+      .select('wallet_address, market_id, side, size_usdc, timestamp')
+      .gte('timestamp', lookbackISO),
+
+    supabaseAdmin
+      .from('market_snapshots')
+      .select('market_id, timestamp, yes_price, book_depth_bid_5c')
+      .order('timestamp', { ascending: false }),
+  ]);
+
+  if (!signalsRes.data || !tradesRes.data) {
+    return {
+      detected: 0,
+      flagged: 0,
+      errors: [`Failed to fetch data: signals=${signalsRes.error?.message}, trades=${tradesRes.error?.message}`],
+    };
   }
 
-  // Step 2: Analyze each move
-  for (const move of moves) {
-    try {
-      // Get trades in window before the move (lookback period)
-      const lookbackStart = new Date(
-        new Date(move.move_start_time).getTime() - LOOKBACK_HOURS * 60 * 60 * 1000,
-      ).toISOString();
+  const signals = signalsRes.data;
+  const trades = tradesRes.data as TradeRow[];
+  const snapshots = snapshotsRes.data || [];
 
-      const { data: trades } = await supabaseAdmin
-        .from('trades')
-        .select('wallet_address, side, size_usdc, timestamp')
-        .eq('market_id', move.market_id)
-        .gte('timestamp', lookbackStart)
-        .lte('timestamp', move.move_end_time);
+  // ---- Phase 2: Group by market ----
 
-      if (!trades || trades.length === 0) continue;
+  // Build flagged wallet set per market: market -> (wallet -> composite_score)
+  const flaggedByMarket = new Map<string, Map<string, number>>();
+  for (const s of signals) {
+    if (!flaggedByMarket.has(s.market_id)) flaggedByMarket.set(s.market_id, new Map());
+    flaggedByMarket.get(s.market_id)!.set(s.wallet_address, Number(s.composite_score));
+  }
 
-      // Get Tier 1 scores for participating wallets
-      const walletAddresses = [...new Set(trades.map((t) => t.wallet_address))];
-      const { data: signals } = await supabaseAdmin
-        .from('wallet_signals')
-        .select('wallet_address, composite_score')
-        .eq('market_id', move.market_id)
-        .in('wallet_address', walletAddresses);
+  // Group trades by market
+  const tradesByMarket = new Map<string, TradeRow[]>();
+  for (const t of trades) {
+    if (!tradesByMarket.has(t.market_id)) tradesByMarket.set(t.market_id, []);
+    tradesByMarket.get(t.market_id)!.push(t);
+  }
 
-      const signalsByWallet = new Map<string, number>();
-      let flaggedWalletCount = 0;
-      if (signals) {
-        for (const s of signals) {
-          signalsByWallet.set(s.wallet_address, Number(s.composite_score));
-          if (Number(s.composite_score) > COMPOSITE_FLAG_THRESHOLD) flaggedWalletCount++;
-        }
-      }
+  // Build snapshot lookup: latest 2 per market (for price context)
+  const snapshotsByMarket = new Map<string, typeof snapshots>();
+  for (const snap of snapshots) {
+    if (!snapshotsByMarket.has(snap.market_id)) snapshotsByMarket.set(snap.market_id, []);
+    const arr = snapshotsByMarket.get(snap.market_id)!;
+    if (arr.length < 2) arr.push(snap);
+  }
 
-      // Compute metrics
-      const concentration = computeWalletConcentration(trades);
-      const informedIndex = computeInformedActivityIndex(trades, signalsByWallet);
+  // ---- Phase 3: Deduplication — check existing flags from last 6h ----
+  const dedupeStart = lookbackISO;
+  const { data: existingFlags } = await supabaseAdmin
+    .from('flagged_moves')
+    .select('market_id')
+    .eq('catalyst_type', 'wallet_cluster')
+    .gte('detection_timestamp', dedupeStart);
 
-      // Get latest snapshot for book depth/spread data
-      const { data: snapshots } = await supabaseAdmin
-        .from('market_snapshots')
-        .select('market_id, timestamp, yes_price, spread, book_depth_bid_5c, book_depth_ask_5c')
-        .eq('market_id', move.market_id)
-        .order('timestamp', { ascending: false })
-        .limit(1);
+  const alreadyFlagged = new Set((existingFlags || []).map((f) => f.market_id));
 
-      const latestSnapshot = snapshots && snapshots.length > 0 ? snapshots[0] : null;
+  // ---- Phase 4: Detect clusters ----
+  const flagRows: Record<string, unknown>[] = [];
+  const marketsScanned = flaggedByMarket.size;
 
-      const credibility = computeCredibilityScore(trades, concentration, informedIndex, latestSnapshot);
-      const totalVolume = trades.reduce((s, t) => s + (Number(t.size_usdc) || 0), 0);
-      const summary = generateSummary(move, trades, concentration, flaggedWalletCount, informedIndex, credibility);
+  for (const [marketId, walletScores] of flaggedByMarket) {
+    // Skip if already flagged in this cycle
+    if (alreadyFlagged.has(marketId)) continue;
 
-      // Determine signal direction
-      const buySideVol = trades
-        .filter((t) => t.side === 'BUY')
-        .reduce((s, t) => s + (Number(t.size_usdc) || 0), 0);
-      const signalDirection = buySideVol > totalVolume / 2 ? 'YES' : 'NO';
+    const marketTrades = tradesByMarket.get(marketId) || [];
+    if (marketTrades.length === 0) continue;
 
-      // Store in flagged_moves
-      const { error: insertErr } = await supabaseAdmin
-        .from('flagged_moves')
-        .insert({
-          market_id: move.market_id,
-          move_start_time: move.move_start_time,
-          move_end_time: move.move_end_time,
-          price_start: move.price_start,
-          price_end: move.price_end,
-          price_delta: move.price_delta,
-          total_volume_usdc: totalVolume,
-          unique_wallets: new Set(trades.map((t) => t.wallet_address)).size,
-          wallet_concentration_top1: concentration.top1,
-          wallet_concentration_top3: concentration.top3,
-          wallet_concentration_top5: concentration.top5,
-          flagged_wallet_count: flaggedWalletCount,
-          book_depth_at_start: latestSnapshot?.book_depth_bid_5c || null,
-          confidence_score: credibility,
-          informed_activity_index: informedIndex,
-          signal_direction: signalDirection,
-          summary_text: summary,
-        });
+    // Filter trades to only flagged wallets
+    const clusterTrades = marketTrades.filter((t) => walletScores.has(t.wallet_address));
+    const clusterWallets = new Set(clusterTrades.map((t) => t.wallet_address));
+
+    if (clusterWallets.size < MIN_CLUSTER_SIZE) continue;
+
+    // Directional agreement
+    let buyVol = 0;
+    let sellVol = 0;
+    for (const t of clusterTrades) {
+      const vol = Number(t.size_usdc) || 0;
+      if (t.side === 'BUY') buyVol += vol;
+      else sellVol += vol;
+    }
+    const totalClusterVol = buyVol + sellVol;
+    if (totalClusterVol === 0) continue;
+
+    const directionalRatio = Math.max(buyVol, sellVol) / totalClusterVol;
+    if (directionalRatio < MIN_DIRECTIONAL_RATIO) continue;
+
+    // Volume share among all market trades
+    const allMarketVol = marketTrades.reduce((s, t) => s + (Number(t.size_usdc) || 0), 0);
+    const volumeShare = allMarketVol > 0 ? totalClusterVol / allMarketVol : 0;
+
+    // Average composite score of cluster wallets
+    const avgComposite =
+      [...clusterWallets].reduce((s, w) => s + (walletScores.get(w) || 0), 0) / clusterWallets.size;
+
+    // Cluster score (0-100)
+    const clusterScore = Math.round(
+      100 *
+        (0.3 * directionalRatio +
+          0.25 * Math.min(clusterWallets.size / 5, 1) +
+          0.25 * volumeShare +
+          0.2 * avgComposite),
+    );
+
+    // Supporting metrics (reuse existing helpers)
+    const concentration = computeWalletConcentration(clusterTrades);
+
+    const signalMap = new Map<string, number>();
+    for (const [w, sc] of walletScores) signalMap.set(w, sc);
+    const informedIndex = computeInformedActivityIndex(marketTrades, signalMap);
+
+    // Price context from snapshots
+    const mktSnaps = snapshotsByMarket.get(marketId) || [];
+    const latestSnap = mktSnaps[0] || null;
+    const prevSnap = mktSnaps[1] || null;
+    const priceEnd = latestSnap ? Number(latestSnap.yes_price) : 0;
+    const priceStart = prevSnap ? Number(prevSnap.yes_price) : priceEnd;
+
+    // Time window from cluster trades
+    const timestamps = clusterTrades.map((t) => new Date(t.timestamp).getTime());
+    const moveStart = new Date(Math.min(...timestamps)).toISOString();
+    const moveEnd = new Date(Math.max(...timestamps)).toISOString();
+
+    // Signal direction
+    const signalDirection = buyVol > sellVol ? 'YES' : 'NO';
+
+    // Top 5 flagged wallets by composite score
+    const topWallets = [...clusterWallets]
+      .sort((a, b) => (walletScores.get(b) || 0) - (walletScores.get(a) || 0))
+      .slice(0, 5);
+
+    // Confidence score (0-100)
+    const confidence = Math.round(
+      100 *
+        (0.35 * directionalRatio +
+          0.3 * Math.min(clusterWallets.size / 5, 1) +
+          0.2 * volumeShare +
+          0.15 * avgComposite),
+    );
+
+    // Summary
+    const summary =
+      `Cluster of ${clusterWallets.size} flagged wallets detected, ` +
+      `trading ${signalDirection} with ${(directionalRatio * 100).toFixed(0)}% directional agreement. ` +
+      `Cluster controls ${(volumeShare * 100).toFixed(1)}% of recent volume ($${totalClusterVol.toFixed(0)} USDC). ` +
+      `Avg wallet suspicion score: ${avgComposite.toFixed(2)}. Cluster score: ${clusterScore}/100.`;
+
+    flagRows.push({
+      market_id: marketId,
+      detection_timestamp: now.toISOString(),
+      move_start_time: moveStart,
+      move_end_time: moveEnd,
+      price_start: priceStart,
+      price_end: priceEnd,
+      price_delta: priceEnd - priceStart,
+      total_volume_usdc: totalClusterVol,
+      unique_wallets: clusterWallets.size,
+      wallet_concentration_top1: concentration.top1,
+      wallet_concentration_top3: concentration.top3,
+      wallet_concentration_top5: concentration.top5,
+      flagged_wallet_count: clusterWallets.size,
+      cluster_score: clusterScore,
+      book_depth_at_start: latestSnap?.book_depth_bid_5c || null,
+      confidence_score: confidence,
+      informed_activity_index: informedIndex,
+      catalyst_type: 'wallet_cluster',
+      catalyst_description: JSON.stringify(topWallets),
+      signal_direction: signalDirection,
+      summary_text: summary,
+    });
+  }
+
+  // ---- Phase 5: Batch insert ----
+  let flagged = 0;
+  if (flagRows.length > 0) {
+    const CHUNK = 50;
+    for (let i = 0; i < flagRows.length; i += CHUNK) {
+      const chunk = flagRows.slice(i, i + CHUNK);
+      const { error: insertErr } = await supabaseAdmin.from('flagged_moves').insert(chunk);
 
       if (insertErr) {
-        errors.push(`Flag ${move.market_id}: ${insertErr.message}`);
+        errors.push(`Batch insert offset=${i}: ${insertErr.message}`);
       } else {
-        flagged++;
+        flagged += chunk.length;
       }
-    } catch (err) {
-      errors.push(`Move ${move.market_id}: ${err}`);
     }
   }
 
-  return { detected, flagged, errors: errors.slice(0, 20) };
+  return {
+    detected: marketsScanned,
+    flagged,
+    errors:
+      errors.length === 0 && flagRows.length === 0
+        ? ['No clusters detected (normal if no suspicious coordination found)']
+        : errors.slice(0, 20),
+  };
 }

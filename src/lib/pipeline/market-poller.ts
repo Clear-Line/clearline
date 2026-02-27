@@ -55,11 +55,17 @@ export async function pollMarkets(): Promise<{ upserted: number; errors: string[
     }
   }
 
+  // Filter to only political and economic markets
+  const FOCUS_CATEGORIES = new Set(['politics', 'economics']);
+  const focusedMarkets = allMarkets.filter((m) =>
+    FOCUS_CATEGORIES.has(categorizeMarket(m.question, m.tags)),
+  );
+
   // Build rows for batch upsert
   const marketRows = [];
   const snapshotRows = [];
 
-  for (const m of allMarkets) {
+  for (const m of focusedMarkets) {
     const outcomes = parseJsonField(m.outcomes);
     const clobTokenIds = parseJsonField(m.clobTokenIds);
     const outcomePrices = parseJsonField(m.outcomePrices) as string[];

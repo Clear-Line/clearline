@@ -11,11 +11,12 @@ export async function pollTrades(): Promise<{ inserted: number; skipped: number;
   let inserted = 0;
   let skipped = 0;
 
-  // Get all active markets from our DB
+  // Get active political/economic markets from our DB
   const { data: markets, error: mktError } = await supabaseAdmin
     .from('markets')
     .select('condition_id')
-    .eq('is_active', true);
+    .eq('is_active', true)
+    .in('category', ['politics', 'economics']);
 
   if (mktError || !markets) {
     return { inserted: 0, skipped: 0, errors: [`Failed to fetch markets: ${mktError?.message}`] };
@@ -28,7 +29,7 @@ export async function pollTrades(): Promise<{ inserted: number; skipped: number;
 
     await Promise.all(batch.map(async (market) => {
       try {
-        const trades = await fetchMarketTrades(market.condition_id, 50);
+        const trades = await fetchMarketTrades(market.condition_id, 500);
         if (!trades || trades.length === 0) return;
 
         // Build batch rows
