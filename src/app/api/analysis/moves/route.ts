@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { detectAndFlagMoves } from '@/src/lib/analysis/move-detector';
 
 export const runtime = 'nodejs';
-export const maxDuration = 120;
+export const maxDuration = 60;
 
 export async function GET(req: NextRequest) {
   const authHeader = req.headers.get('authorization');
