@@ -57,10 +57,26 @@ jobs:
             -H "Authorization: Bearer ${CRON_SECRET}" \
             "${APP_URL}/api/pipeline/wallets"
 
-      - name: Tier 1 Analysis
+      - name: Tier 1 Analysis (pass 1)
         run: |
           set -euo pipefail
-          echo "Running Tier 1 signals..."
+          echo "Running Tier 1 signals (pass 1)..."
+          curl -L --fail-with-body --max-time 120 \
+            -H "Authorization: Bearer ${CRON_SECRET}" \
+            "${APP_URL}/api/analysis/tier1"
+
+      - name: Tier 1 Analysis (pass 2)
+        run: |
+          set -euo pipefail
+          echo "Running Tier 1 signals (pass 2)..."
+          curl -L --fail-with-body --max-time 120 \
+            -H "Authorization: Bearer ${CRON_SECRET}" \
+            "${APP_URL}/api/analysis/tier1"
+
+      - name: Tier 1 Analysis (pass 3)
+        run: |
+          set -euo pipefail
+          echo "Running Tier 1 signals (pass 3)..."
           curl -L --fail-with-body --max-time 120 \
             -H "Authorization: Bearer ${CRON_SECRET}" \
             "${APP_URL}/api/analysis/tier1"

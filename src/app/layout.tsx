@@ -17,7 +17,7 @@ export default function RootLayout({
   return (
     <ClerkProvider signInUrl="/sign-in">
       <html lang="en">
-        <body className="min-h-screen bg-gray-50">
+        <body suppressHydrationWarning className="min-h-screen bg-gray-50">
           <Navbar />
           <main>{children}</main>
           <AppFooter />
