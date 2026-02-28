@@ -16,6 +16,7 @@ const CLUSTER_COMPOSITE_THRESHOLD = 0.4; // min composite_score to be "flagged"
 const MIN_CLUSTER_SIZE = 2;              // need at least 2 flagged wallets
 const MIN_DIRECTIONAL_RATIO = 0.6;       // at least 60% agreement on side
 const LOOKBACK_HOURS = 6;                // match the cron interval
+const PAGE_SIZE = 1000;                  // rows per paginated fetch
 
 // ---- Types ----
 
@@ -25,6 +26,75 @@ interface TradeRow {
   side: string;
   size_usdc: number;
   timestamp: string;
+}
+
+interface SignalRow {
+  wallet_address: string;
+  market_id: string;
+  composite_score: number;
+}
+
+interface SnapshotRow {
+  market_id: string;
+  timestamp: string;
+  yes_price: number;
+  book_depth_bid_5c: number | null;
+}
+
+// ---- Paginated fetch helpers ----
+
+async function fetchSignalsPaginated(): Promise<{ data: SignalRow[]; error: string | null }> {
+  const all: SignalRow[] = [];
+  let offset = 0;
+  while (true) {
+    const { data, error } = await supabaseAdmin
+      .from('wallet_signals')
+      .select('wallet_address, market_id, composite_score')
+      .gt('composite_score', CLUSTER_COMPOSITE_THRESHOLD)
+      .range(offset, offset + PAGE_SIZE - 1);
+    if (error) return { data: all, error: error.message };
+    if (!data || data.length === 0) break;
+    all.push(...data);
+    if (data.length < PAGE_SIZE) break;
+    offset += PAGE_SIZE;
+  }
+  return { data: all, error: null };
+}
+
+async function fetchRecentTradesPaginated(sinceISO: string): Promise<{ data: TradeRow[]; error: string | null }> {
+  const all: TradeRow[] = [];
+  let offset = 0;
+  while (true) {
+    const { data, error } = await supabaseAdmin
+      .from('trades')
+      .select('wallet_address, market_id, side, size_usdc, timestamp')
+      .gte('timestamp', sinceISO)
+      .range(offset, offset + PAGE_SIZE - 1);
+    if (error) return { data: all, error: error.message };
+    if (!data || data.length === 0) break;
+    all.push(...(data as TradeRow[]));
+    if (data.length < PAGE_SIZE) break;
+    offset += PAGE_SIZE;
+  }
+  return { data: all, error: null };
+}
+
+async function fetchSnapshotsPaginated(): Promise<{ data: SnapshotRow[]; error: string | null }> {
+  const all: SnapshotRow[] = [];
+  let offset = 0;
+  while (true) {
+    const { data, error } = await supabaseAdmin
+      .from('market_snapshots')
+      .select('market_id, timestamp, yes_price, book_depth_bid_5c')
+      .order('timestamp', { ascending: false })
+      .range(offset, offset + PAGE_SIZE - 1);
+    if (error) return { data: all, error: error.message };
+    if (!data || data.length === 0) break;
+    all.push(...(data as SnapshotRow[]));
+    if (data.length < PAGE_SIZE) break;
+    offset += PAGE_SIZE;
+  }
+  return { data: all, error: null };
 }
 
 // ---- Wallet Concentration ----
@@ -83,40 +153,41 @@ export async function detectAndFlagMoves(): Promise<{
   detected: number;
   flagged: number;
   errors: string[];
+  telemetry: {
+    signals_fetched: number;
+    trades_fetched: number;
+    snapshots_fetched: number;
+    markets_scanned: number;
+    clusters_found: number;
+    rows_inserted: number;
+    already_flagged: number;
+    duration_ms: number;
+  };
 }> {
+  const startTime = Date.now();
   const errors: string[] = [];
   const now = new Date();
   const lookbackISO = new Date(now.getTime() - LOOKBACK_HOURS * 60 * 60 * 1000).toISOString();
 
-  // ---- Phase 1: Parallel data fetch ----
-  const [signalsRes, tradesRes, snapshotsRes] = await Promise.all([
-    supabaseAdmin
-      .from('wallet_signals')
-      .select('wallet_address, market_id, composite_score')
-      .gt('composite_score', CLUSTER_COMPOSITE_THRESHOLD),
-
-    supabaseAdmin
-      .from('trades')
-      .select('wallet_address, market_id, side, size_usdc, timestamp')
-      .gte('timestamp', lookbackISO),
-
-    supabaseAdmin
-      .from('market_snapshots')
-      .select('market_id, timestamp, yes_price, book_depth_bid_5c')
-      .order('timestamp', { ascending: false }),
+  // ---- Phase 1: Parallel paginated data fetch ----
+  const [signalsResult, tradesResult, snapshotsResult] = await Promise.all([
+    fetchSignalsPaginated(),
+    fetchRecentTradesPaginated(lookbackISO),
+    fetchSnapshotsPaginated(),
   ]);
 
-  if (!signalsRes.data || !tradesRes.data) {
+  if (signalsResult.error || tradesResult.error) {
     return {
       detected: 0,
       flagged: 0,
-      errors: [`Failed to fetch data: signals=${signalsRes.error?.message}, trades=${tradesRes.error?.message}`],
+      errors: [`Failed to fetch data: signals=${signalsResult.error}, trades=${tradesResult.error}`],
+      telemetry: { signals_fetched: 0, trades_fetched: 0, snapshots_fetched: 0, markets_scanned: 0, clusters_found: 0, rows_inserted: 0, already_flagged: 0, duration_ms: Date.now() - startTime },
     };
   }
 
-  const signals = signalsRes.data;
-  const trades = tradesRes.data as TradeRow[];
-  const snapshots = snapshotsRes.data || [];
+  const signals = signalsResult.data;
+  const trades = tradesResult.data;
+  const snapshots = snapshotsResult.data;
 
   // ---- Phase 2: Group by market ----
 
@@ -135,7 +206,7 @@ export async function detectAndFlagMoves(): Promise<{
   }
 
   // Build snapshot lookup: latest 2 per market (for price context)
-  const snapshotsByMarket = new Map<string, typeof snapshots>();
+  const snapshotsByMarket = new Map<string, SnapshotRow[]>();
   for (const snap of snapshots) {
     if (!snapshotsByMarket.has(snap.market_id)) snapshotsByMarket.set(snap.market_id, []);
     const arr = snapshotsByMarket.get(snap.market_id)!;
@@ -291,5 +362,15 @@ export async function detectAndFlagMoves(): Promise<{
       errors.length === 0 && flagRows.length === 0
         ? ['No clusters detected (normal if no suspicious coordination found)']
         : errors.slice(0, 20),
+    telemetry: {
+      signals_fetched: signals.length,
+      trades_fetched: trades.length,
+      snapshots_fetched: snapshots.length,
+      markets_scanned: marketsScanned,
+      clusters_found: flagRows.length,
+      rows_inserted: flagged,
+      already_flagged: alreadyFlagged.size,
+      duration_ms: Date.now() - startTime,
+    },
   };
 }

@@ -62,8 +62,22 @@ export async function snapshotBooks(): Promise<{ updated: number; errors: string
         const yesTokenId = tokenIds[0];
         const book = await fetchOrderBook(yesTokenId);
 
-        const bestBid = book.bids.length > 0 ? parseFloat(book.bids[0].price) : 0;
-        const bestAsk = book.asks.length > 0 ? parseFloat(book.asks[0].price) : 1;
+        // If the book is empty/invalid, skip instead of writing synthetic 0.50 prices.
+        if (!book.bids?.length || !book.asks?.length) return;
+
+        const bestBid = parseFloat(book.bids[0].price);
+        const bestAsk = parseFloat(book.asks[0].price);
+        const hasValidTopOfBook =
+          Number.isFinite(bestBid) &&
+          Number.isFinite(bestAsk) &&
+          bestBid > 0 &&
+          bestAsk > 0 &&
+          bestBid < 1 &&
+          bestAsk < 1 &&
+          bestAsk > bestBid;
+
+        if (!hasValidTopOfBook) return;
+
         const midpoint = (bestBid + bestAsk) / 2;
         const spread = bestAsk - bestBid;
 
