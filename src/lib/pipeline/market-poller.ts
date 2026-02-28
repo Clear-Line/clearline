@@ -64,11 +64,16 @@ export async function pollMarkets(): Promise<{ upserted: number; errors: string[
   // Build rows for batch upsert
   const marketRows = [];
   const snapshotRows = [];
+  const marketSeen = new Set<string>();
+  const snapshotSeen = new Set<string>();
 
   for (const m of focusedMarkets) {
     const outcomes = parseJsonField(m.outcomes);
     const clobTokenIds = parseJsonField(m.clobTokenIds);
     const outcomePrices = parseJsonField(m.outcomePrices) as string[];
+
+    if (!m.conditionId || marketSeen.has(m.conditionId)) continue;
+    marketSeen.add(m.conditionId);
 
     marketRows.push({
       condition_id: m.conditionId,
@@ -85,9 +90,11 @@ export async function pollMarkets(): Promise<{ upserted: number; errors: string[
       updated_at: new Date().toISOString(),
     });
 
-    if (outcomePrices.length >= 2) {
+    if (outcomePrices.length >= 2 && !snapshotSeen.has(m.conditionId)) {
+      snapshotSeen.add(m.conditionId);
       snapshotRows.push({
         market_id: m.conditionId,
+        timestamp: new Date().toISOString(),
         yes_price: parseFloat(outcomePrices[0]) || 0,
         no_price: parseFloat(outcomePrices[1]) || 0,
         volume_24h: parseFloat(m.volume24hr) || 0,
