@@ -3,8 +3,8 @@ export type ConfidenceLevel = 'high' | 'medium' | 'low';
 export interface Market {
   id: string;
   title: string;
-  category: 'presidential' | 'senate' | 'gubernatorial' | 'policy' | 'crypto' | 'economic' | 'weather' | 'sports' | 'entertainment';
-  section: 'political' | 'other';
+  category: 'presidential' | 'senate' | 'gubernatorial' | 'policy' | 'crypto' | 'economic' | 'weather' | 'sports' | 'entertainment' | 'geopolitics';
+  section: 'political' | 'economics' | 'geopolitics' | 'other';
   currentOdds: number;
   previousOdds: number;
   change: number;
@@ -164,39 +164,12 @@ export const mockMarkets: Market[] = [
     lastUpdated: new Date('2026-02-18T09:30:00'),
     liquidity: 950000,
   },
-  // Crypto Markets
-  {
-    id: '7',
-    title: 'Bitcoin above $100,000 by end of 2026?',
-    category: 'crypto',
-    section: 'other',
-    currentOdds: 0.58,
-    previousOdds: 0.45,
-    change: 0.13,
-    volume24h: 3200000,
-    confidence: 'high',
-    lastUpdated: new Date('2026-02-18T15:00:00'),
-    liquidity: 9500000,
-  },
-  {
-    id: '8',
-    title: 'Ethereum ETF approval in Q1 2026?',
-    category: 'crypto',
-    section: 'other',
-    currentOdds: 0.71,
-    previousOdds: 0.68,
-    change: 0.03,
-    volume24h: 1800000,
-    confidence: 'medium',
-    lastUpdated: new Date('2026-02-18T14:45:00'),
-    liquidity: 5200000,
-  },
   // Economic Markets
   {
     id: '9',
     title: 'Fed interest rate cut by June 2026?',
     category: 'economic',
-    section: 'other',
+    section: 'economics',
     currentOdds: 0.42,
     previousOdds: 0.53,
     change: -0.11,
@@ -209,7 +182,7 @@ export const mockMarkets: Market[] = [
     id: '10',
     title: 'S&P 500 to reach 6,000 by year end?',
     category: 'economic',
-    section: 'other',
+    section: 'economics',
     currentOdds: 0.64,
     previousOdds: 0.61,
     change: 0.03,
@@ -222,7 +195,7 @@ export const mockMarkets: Market[] = [
     id: '11',
     title: 'US inflation below 2% by Q3 2026?',
     category: 'economic',
-    section: 'other',
+    section: 'economics',
     currentOdds: 0.37,
     previousOdds: 0.34,
     change: 0.03,
@@ -231,33 +204,32 @@ export const mockMarkets: Market[] = [
     lastUpdated: new Date('2026-02-18T11:45:00'),
     liquidity: 3100000,
   },
-  // Weather Markets
+  // Geopolitics / Current Events
   {
     id: '12',
-    title: '2026 Atlantic hurricane season: Above average activity?',
-    category: 'weather',
-    section: 'other',
-    currentOdds: 0.55,
-    previousOdds: 0.52,
-    change: 0.03,
-    volume24h: 420000,
-    confidence: 'low',
+    title: 'Will Iran reach a nuclear deal by end of 2026?',
+    category: 'geopolitics',
+    section: 'geopolitics',
+    currentOdds: 0.22,
+    previousOdds: 0.25,
+    change: -0.03,
+    volume24h: 890000,
+    confidence: 'medium',
     lastUpdated: new Date('2026-02-18T10:30:00'),
-    liquidity: 1200000,
+    liquidity: 2800000,
   },
-  // Sports Markets
   {
     id: '13',
-    title: 'Lakers to win NBA Championship 2026?',
-    category: 'sports',
-    section: 'other',
-    currentOdds: 0.18,
-    previousOdds: 0.22,
-    change: -0.04,
-    volume24h: 1100000,
+    title: 'Ukraine-Russia ceasefire before July 2026?',
+    category: 'geopolitics',
+    section: 'geopolitics',
+    currentOdds: 0.15,
+    previousOdds: 0.18,
+    change: -0.03,
+    volume24h: 1500000,
     confidence: 'medium',
     lastUpdated: new Date('2026-02-18T09:15:00'),
-    liquidity: 2800000,
+    liquidity: 4200000,
   },
 ];
 
@@ -458,9 +430,9 @@ export const mockNewsStories: NewsStory[] = [
   },
   {
     id: 'news-3',
-    title: 'Bitcoin $100K market: This move is legit',
-    summary: 'High-confidence 13-point jump driven by 180+ wallets after BlackRock institutional buying report. Correlated with broader crypto market strength.',
-    marketId: '7',
+    title: 'Iran nuclear deal odds dropping — informed money selling',
+    summary: 'High-confidence 3-point drop driven by geopolitics-focused wallets after IAEA report. Correlated with broader Middle East market activity.',
+    marketId: '12',
     confidence: 'high',
     timestamp: new Date('2026-02-18T15:15:00'),
     author: 'Clearline Analysis',

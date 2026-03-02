@@ -21,11 +21,13 @@ function categorizeMarket(question: string, tags?: string[]): string {
   if (tags?.includes('politics')) return 'politics';
 
   // Political keywords
-  if (/president|gop|democrat|republican|election|senate|governor|congress|vote/.test(q)) return 'politics';
+  if (/president|gop|democrat|republican|election|senate|governor|congress|vote|primary|caucus|ballot/.test(q)) return 'politics';
+  // Geopolitics / current events / wars
+  if (/iran|israel|gaza|ukraine|russia|china|taiwan|war |conflict|sanctions|military|nato|ceasefire|invasion|missile|nuclear|north korea|houthi|hezbollah|syria|yemen|coup|terror/.test(q)) return 'geopolitics';
+  // Economics
+  if (/fed |interest rate|inflation|gdp|s&p|nasdaq|recession|unemployment|tariff|trade war|oil price|treasury|debt ceiling|stock market|dow jones/.test(q)) return 'economics';
   // Crypto
   if (/bitcoin|btc|ethereum|eth|crypto|token|defi|solana/.test(q)) return 'crypto';
-  // Economics
-  if (/fed |interest rate|inflation|gdp|s&p|nasdaq|recession|unemployment/.test(q)) return 'economics';
   // Sports
   if (/nba|nfl|mlb|nhl|super bowl|championship|world cup|match/.test(q)) return 'sports';
   // Weather
@@ -55,8 +57,8 @@ export async function pollMarkets(): Promise<{ upserted: number; errors: string[
     }
   }
 
-  // Filter to only political and economic markets
-  const FOCUS_CATEGORIES = new Set(['politics', 'economics']);
+  // Filter to politics, economics, and geopolitics/current events
+  const FOCUS_CATEGORIES = new Set(['politics', 'economics', 'geopolitics']);
   const focusedMarkets = allMarkets.filter((m) =>
     FOCUS_CATEGORIES.has(categorizeMarket(m.question, m.tags)),
   );
