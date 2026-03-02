@@ -157,7 +157,7 @@ export async function GET(
     outcomes: market.outcomes,
     chartData,
     volumeProfile: {
-      totalVolume: totalTradeVolume || totalVolume,
+      totalVolume,
       uniqueWallets: uniqueWallets.size,
       topWalletConcentration,
     },

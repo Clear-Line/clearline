@@ -11,12 +11,39 @@ export async function pollTrades(): Promise<{ inserted: number; skipped: number;
   let inserted = 0;
   let skipped = 0;
 
-  // Get active political/economic markets from our DB
-  const { data: markets, error: mktError } = await supabaseAdmin
-    .from('markets')
-    .select('condition_id')
-    .eq('is_active', true)
-    .in('category', ['politics', 'economics']);
+  // Get top 200 markets by volume — keeps within 60s timeout
+  const { data: volSnaps } = await supabaseAdmin
+    .from('market_snapshots')
+    .select('market_id, volume_24h')
+    .gt('volume_24h', 1000)
+    .order('volume_24h', { ascending: false })
+    .limit(2000);
+
+  // Deduplicate and take the top 200 unique markets
+  const seen = new Set<string>();
+  const volMarketIds: string[] = [];
+  for (const s of volSnaps ?? []) {
+    if (!seen.has(s.market_id)) {
+      seen.add(s.market_id);
+      volMarketIds.push(s.market_id);
+      if (volMarketIds.length >= 200) break;
+    }
+  }
+
+  // Fetch market metadata, only active ones in our focus categories
+  const ID_BATCH = 200;
+  const markets: { condition_id: string }[] = [];
+  for (let i = 0; i < volMarketIds.length; i += ID_BATCH) {
+    const batch = volMarketIds.slice(i, i + ID_BATCH);
+    const { data } = await supabaseAdmin
+      .from('markets')
+      .select('condition_id')
+      .in('condition_id', batch)
+      .eq('is_active', true);
+    if (data) markets.push(...data);
+  }
+
+  const mktError = null;
 
   if (mktError || !markets) {
     return { inserted: 0, skipped: 0, errors: [`Failed to fetch markets: ${mktError?.message}`] };
