@@ -1,18 +1,24 @@
 "use client";
 
 import { useState, useMemo, useEffect } from "react";
-import { Filter, ArrowUpDown, Loader2 } from "lucide-react";
+import { ArrowUpDown, Loader2, Activity, TrendingUp, DollarSign } from "lucide-react";
 import { Market, mockMarkets } from "../data/mockData";
 import { MarketCard } from "../components/MarketCard";
 
-type CategoryFilter = "all" | "presidential" | "senate" | "gubernatorial" | "policy" | "crypto" | "economic" | "weather" | "sports";
-type SortOption = "biggest-movers" | "highest-volume" | "lowest-confidence";
-type SectionTab = "all" | "political" | "other";
+type CategoryFilter = "all" | "presidential" | "senate" | "gubernatorial" | "policy" | "economic" | "geopolitics";
+type SortOption = "highest-volume" | "biggest-movers" | "highest-odds" | "lowest-odds";
+type SectionTab = "all" | "political" | "economics" | "geopolitics";
+
+function formatVolume(v: number): string {
+  if (v >= 1_000_000) return `$${(v / 1_000_000).toFixed(1)}M`;
+  if (v >= 1_000) return `$${(v / 1_000).toFixed(0)}K`;
+  return `$${v.toFixed(0)}`;
+}
 
 export default function Dashboard() {
   const [sectionTab, setSectionTab] = useState<SectionTab>("all");
   const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>("all");
-  const [sortOption, setSortOption] = useState<SortOption>("biggest-movers");
+  const [sortOption, setSortOption] = useState<SortOption>("highest-volume");
   const [markets, setMarkets] = useState<Market[]>(mockMarkets);
   const [loading, setLoading] = useState(true);
   const [isLive, setIsLive] = useState(false);
@@ -20,7 +26,7 @@ export default function Dashboard() {
   useEffect(() => {
     async function fetchMarkets() {
       try {
-        const res = await fetch("/api/markets?limit=20");
+        const res = await fetch("/api/markets?limit=100");
         if (!res.ok) throw new Error("API error");
         const json = await res.json();
         if (json.markets && json.markets.length > 0) {
@@ -62,18 +68,17 @@ export default function Dashboard() {
 
     const sorted = [...filtered];
     switch (sortOption) {
-      case "biggest-movers":
-        sorted.sort((a, b) => Math.abs(b.change) - Math.abs(a.change));
-        break;
       case "highest-volume":
         sorted.sort((a, b) => b.volume24h - a.volume24h);
         break;
-      case "lowest-confidence":
-        const confidenceScore = { low: 0, medium: 1, high: 2 };
-        sorted.sort(
-          (a, b) =>
-            confidenceScore[a.confidence] - confidenceScore[b.confidence],
-        );
+      case "biggest-movers":
+        sorted.sort((a, b) => Math.abs(b.change) - Math.abs(a.change));
+        break;
+      case "highest-odds":
+        sorted.sort((a, b) => b.currentOdds - a.currentOdds);
+        break;
+      case "lowest-odds":
+        sorted.sort((a, b) => a.currentOdds - b.currentOdds);
         break;
     }
 
@@ -86,158 +91,157 @@ export default function Dashboard() {
     "gubernatorial",
     "policy",
   ];
-  const otherCategories: CategoryFilter[] = [
-    "crypto",
+  const economicsCategories: CategoryFilter[] = [
     "economic",
-    "weather",
-    "sports",
+  ];
+  const geopoliticsCategories: CategoryFilter[] = [
+    "geopolitics",
   ];
 
   const availableCategories =
     sectionTab === "political"
       ? politicalCategories
-      : sectionTab === "other"
-        ? otherCategories
-        : [...politicalCategories, ...otherCategories];
+      : sectionTab === "economics"
+        ? economicsCategories
+        : sectionTab === "geopolitics"
+          ? geopoliticsCategories
+          : [...politicalCategories, ...economicsCategories, ...geopoliticsCategories];
 
   const politicalMarkets = markets.filter((m) => m.section === "political");
-  const otherMarkets = markets.filter((m) => m.section === "other");
+  const economicsMarkets = markets.filter((m) => m.section === "economics");
+  const geopoliticsMarkets = markets.filter((m) => m.section === "geopolitics");
+
+  const totalVolume = markets.reduce((sum, m) => sum + m.volume24h, 0);
+  const highSignalCount = markets.filter((m) => m.confidence === "high").length;
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
       {/* Hero Section */}
-      <div className="bg-gradient-to-r from-blue-600 to-blue-700 rounded-xl p-8 mb-8 text-white">
-        <div className="max-w-3xl">
-          <h1 className="text-4xl font-semibold mb-3">
-            The intelligence layer for prediction markets
-          </h1>
-          <p className="text-lg text-blue-100 mb-6">
-            Decoding whether odds movements reflect real signal or just noise —
-            across politics, crypto, economics, weather, and more. Every market
-            move gets a confidence rating backed by on-chain behavioral
-            analysis.
-          </p>
+      <div className="bg-gradient-to-br from-gray-900 to-gray-800 rounded-xl p-8 mb-8 text-white">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
+          <div className="flex-1">
+            <h1 className="text-3xl font-semibold mb-2">
+              Prediction Market Intelligence
+            </h1>
+            <p className="text-gray-400 mb-0">
+              Real-time odds, volume, and on-chain signal analysis across politics, economics, and global events.
+            </p>
+          </div>
+
           <div className="flex flex-wrap gap-3">
-            <div className="flex items-center gap-2 bg-white/20 rounded-lg px-4 py-2">
-              <span className="text-2xl font-semibold">
-                {markets.length}
-              </span>
-              <span className="text-sm text-blue-100">Active Markets</span>
+            <div className="bg-white/10 rounded-lg px-4 py-3 min-w-[120px]">
+              <div className="flex items-center gap-1.5 text-gray-400 text-xs mb-1">
+                <Activity className="h-3 w-3" />
+                Markets
+              </div>
+              <div className="text-xl font-semibold">{markets.length}</div>
             </div>
-            <div className="flex items-center gap-2 bg-white/20 rounded-lg px-4 py-2">
-              <span className="text-2xl font-semibold">
-                {markets.filter((m) => m.confidence === "high").length}
-              </span>
-              <span className="text-sm text-blue-100">
-                High Confidence Today
-              </span>
+            <div className="bg-white/10 rounded-lg px-4 py-3 min-w-[120px]">
+              <div className="flex items-center gap-1.5 text-gray-400 text-xs mb-1">
+                <DollarSign className="h-3 w-3" />
+                24h Volume
+              </div>
+              <div className="text-xl font-semibold">{formatVolume(totalVolume)}</div>
+            </div>
+            <div className="bg-white/10 rounded-lg px-4 py-3 min-w-[120px]">
+              <div className="flex items-center gap-1.5 text-gray-400 text-xs mb-1">
+                <TrendingUp className="h-3 w-3" />
+                High Signal
+              </div>
+              <div className="text-xl font-semibold">{highSignalCount}</div>
             </div>
             {isLive && (
-              <div className="flex items-center gap-2 bg-green-500/30 rounded-lg px-4 py-2">
+              <div className="flex items-center gap-2 bg-green-500/20 rounded-lg px-4 py-3">
                 <span className="h-2 w-2 rounded-full bg-green-400 animate-pulse" />
-                <span className="text-sm text-green-100">Live Data</span>
+                <span className="text-sm text-green-300">Live</span>
               </div>
             )}
           </div>
         </div>
       </div>
 
-      {/* Section Tabs */}
-      <div className="mb-6">
-        <div className="flex items-center gap-2 border-b border-gray-200">
-          <button
-            onClick={() => {
-              setSectionTab("all");
-              setCategoryFilter("all");
-            }}
-            className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
-              sectionTab === "all"
-                ? "border-blue-600 text-blue-600"
-                : "border-transparent text-gray-600 hover:text-gray-900"
-            }`}
-          >
-            All Markets ({markets.length})
-          </button>
-          <button
-            onClick={() => {
-              setSectionTab("political");
-              setCategoryFilter("all");
-            }}
-            className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
-              sectionTab === "political"
-                ? "border-blue-600 text-blue-600"
-                : "border-transparent text-gray-600 hover:text-gray-900"
-            }`}
-          >
-            Political ({politicalMarkets.length})
-          </button>
-          <button
-            onClick={() => {
-              setSectionTab("other");
-              setCategoryFilter("all");
-            }}
-            className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
-              sectionTab === "other"
-                ? "border-blue-600 text-blue-600"
-                : "border-transparent text-gray-600 hover:text-gray-900"
-            }`}
-          >
-            Crypto, Economics & More ({otherMarkets.length})
-          </button>
-        </div>
-      </div>
-
-      {/* Filters and Sorting */}
-      <div className="mb-6 flex flex-col sm:flex-row gap-4">
-        <div className="flex-1">
-          <div className="flex items-center gap-2 mb-2">
-            <Filter className="h-4 w-4 text-gray-500" />
-            <span className="text-sm font-medium text-gray-700">
-              Filter by category
-            </span>
-          </div>
-          <div className="flex flex-wrap gap-2">
+      {/* Section Tabs + Sort in one row */}
+      <div className="mb-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+        <div className="flex items-center gap-1 border-b border-gray-200 sm:border-0">
+          {([
+            { tab: "all" as SectionTab, label: "All", count: markets.length },
+            { tab: "political" as SectionTab, label: "Politics", count: politicalMarkets.length },
+            { tab: "economics" as SectionTab, label: "Economics", count: economicsMarkets.length },
+            { tab: "geopolitics" as SectionTab, label: "Global Events", count: geopoliticsMarkets.length },
+          ]).map(({ tab, label, count }) => (
             <button
-              onClick={() => setCategoryFilter("all")}
-              className={`px-3 py-1.5 text-sm font-medium rounded-lg transition-colors ${
-                categoryFilter === "all"
-                  ? "bg-blue-600 text-white"
-                  : "bg-white text-gray-700 border border-gray-300 hover:bg-gray-50"
+              key={tab}
+              onClick={() => { setSectionTab(tab); setCategoryFilter("all"); }}
+              className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${
+                sectionTab === tab
+                  ? "bg-gray-900 text-white"
+                  : "text-gray-600 hover:text-gray-900 hover:bg-gray-100"
               }`}
             >
-              All
+              {label} <span className="text-xs opacity-60">({count})</span>
             </button>
-            {availableCategories.map((category) => (
-              <button
-                key={category}
-                onClick={() => setCategoryFilter(category)}
-                className={`px-3 py-1.5 text-sm font-medium rounded-lg transition-colors ${
-                  categoryFilter === category
-                    ? "bg-blue-600 text-white"
-                    : "bg-white text-gray-700 border border-gray-300 hover:bg-gray-50"
-                }`}
-              >
-                {category.charAt(0).toUpperCase() + category.slice(1)}
-              </button>
-            ))}
-          </div>
+          ))}
         </div>
 
-        <div className="sm:w-64">
-          <div className="flex items-center gap-2 mb-2">
-            <ArrowUpDown className="h-4 w-4 text-gray-500" />
-            <span className="text-sm font-medium text-gray-700">Sort by</span>
-          </div>
+        <div className="flex items-center gap-2">
+          <ArrowUpDown className="h-4 w-4 text-gray-400" />
           <select
             value={sortOption}
             onChange={(e) => setSortOption(e.target.value as SortOption)}
-            className="w-full px-3 py-2 bg-white border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="px-3 py-2 bg-white border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-gray-300"
           >
-            <option value="biggest-movers">Biggest movers</option>
             <option value="highest-volume">Highest volume</option>
-            <option value="lowest-confidence">Lowest confidence</option>
+            <option value="biggest-movers">Biggest movers</option>
+            <option value="highest-odds">Highest odds</option>
+            <option value="lowest-odds">Lowest odds</option>
           </select>
         </div>
+      </div>
+
+      {/* Subcategory filters (only show if relevant) */}
+      {sectionTab === "political" && (
+        <div className="flex flex-wrap gap-2 mb-6">
+          <button
+            onClick={() => setCategoryFilter("all")}
+            className={`px-3 py-1.5 text-xs font-medium rounded-full transition-colors ${
+              categoryFilter === "all"
+                ? "bg-gray-900 text-white"
+                : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+            }`}
+          >
+            All Political
+          </button>
+          {availableCategories.map((category) => (
+            <button
+              key={category}
+              onClick={() => setCategoryFilter(category)}
+              className={`px-3 py-1.5 text-xs font-medium rounded-full transition-colors ${
+                categoryFilter === category
+                  ? "bg-gray-900 text-white"
+                  : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+              }`}
+            >
+              {category.charAt(0).toUpperCase() + category.slice(1)}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Signal legend */}
+      <div className="flex items-center gap-4 mb-4 text-xs text-gray-500">
+        <span className="font-medium text-gray-700">Signal strength:</span>
+        <span className="flex items-center gap-1">
+          <span className="h-2 w-2 rounded-full bg-green-500" />
+          High — significant move + high volume
+        </span>
+        <span className="flex items-center gap-1">
+          <span className="h-2 w-2 rounded-full bg-yellow-500" />
+          Medium — moderate activity
+        </span>
+        <span className="flex items-center gap-1">
+          <span className="h-2 w-2 rounded-full bg-gray-400" />
+          Low — minimal movement
+        </span>
       </div>
 
       {/* Markets Grid */}
