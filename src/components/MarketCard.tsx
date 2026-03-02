@@ -14,6 +14,8 @@ const getCategoryColor = (category: Market["category"]) => {
       return "bg-purple-100 text-purple-700";
     case "economic":
       return "bg-green-100 text-green-700";
+    case "geopolitics":
+      return "bg-red-100 text-red-700";
     case "weather":
       return "bg-cyan-100 text-cyan-700";
     case "sports":
@@ -74,7 +76,11 @@ export function MarketCard({ market }: MarketCardProps) {
           <div className="text-xs text-gray-500 mb-1">24h Volume</div>
           <div className="flex items-center gap-1 text-sm font-medium text-gray-900">
             <DollarSign className="h-3.5 w-3.5" />
-            {(market.volume24h / 1000000).toFixed(2)}M
+            {market.volume24h >= 1_000_000
+              ? `${(market.volume24h / 1_000_000).toFixed(2)}M`
+              : market.volume24h >= 1_000
+                ? `${(market.volume24h / 1_000).toFixed(1)}K`
+                : market.volume24h.toFixed(0)}
           </div>
         </div>
       </div>
