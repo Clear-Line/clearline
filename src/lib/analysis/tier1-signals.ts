@@ -269,7 +269,7 @@ export async function computeTier1Signals(): Promise<{
       .select('condition_id')
       .in('condition_id', idBatch)
       .eq('is_active', true)
-      .in('category', ['politics', 'economics']);
+      .in('category', ['politics', 'economics', 'geopolitics', 'other']);
     if (data) for (const m of data) focusMarketIdSet.add(m.condition_id);
   }
 
@@ -277,7 +277,7 @@ export async function computeTier1Signals(): Promise<{
 
   if (focusMarketIds.length === 0) {
     return {
-      computed: 0, errors: ['No trades match politics/economics markets'], flagged: 0,
+      computed: 0, errors: ['No trades match tracked markets'], flagged: 0,
       telemetry: { markets_count: 0, trades_fetched: allTradesRaw.length, wallets_fetched: 0, wallets_processed: 0, pairs_computed: 0, rows_upserted: 0, duration_ms: Date.now() - startTime },
     };
   }
