@@ -33,7 +33,7 @@ export async function snapshotBooks(): Promise<{ updated: number; errors: string
     .from('markets')
     .select('condition_id, clob_token_ids, outcomes')
     .eq('is_active', true)
-    .in('category', ['politics', 'economics']);
+    .in('category', ['politics', 'economics', 'geopolitics', 'other']);
 
   if (mktError || !markets) {
     return { updated: 0, errors: [`Failed to fetch markets: ${mktError?.message}`] };
