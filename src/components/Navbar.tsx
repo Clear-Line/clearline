@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Activity, Wallet, Newspaper, Bell, BarChart3, Users, Menu, X } from 'lucide-react';
+import { Activity, Wallet, Newspaper, Bell, BarChart3, AlertTriangle, Menu, X, Search } from 'lucide-react';
 import { useState } from 'react';
 import { SignedIn, SignedOut, SignInButton, UserButton } from '@clerk/nextjs';
 
@@ -13,41 +13,43 @@ export function Navbar() {
   if (pathname.startsWith('/sign-in')) return null;
 
   const navigation = [
-    { name: 'Live Markets', href: '/', icon: Activity },
+    { name: 'Terminal', href: '/', icon: Activity },
     { name: 'Wallet Tracker', href: '/wallets', icon: Wallet },
     { name: 'News Feed', href: '/news', icon: Newspaper },
     { name: 'Alerts', href: '/alerts', icon: Bell },
-    { name: 'Accuracy Tracker', href: '/accuracy', icon: BarChart3 },
-    { name: 'About Us', href: '/about', icon: Users },
+    { name: 'Accuracy', href: '/accuracy', icon: BarChart3 },
+    { name: 'Insider Cases', href: '/about', icon: AlertTriangle },
   ];
 
   return (
-    <header className="bg-white border-b border-gray-200 sticky top-0 z-40">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex items-center justify-between h-16">
-          <div className="flex items-center gap-8">
-            <Link href="/" className="flex items-center gap-2">
-              <div className="h-8 w-8 bg-blue-600 rounded-lg flex items-center justify-center">
-                <Activity className="h-5 w-5 text-white" />
+    <header className="bg-[#0a0e17] border-b border-[rgba(255,255,255,0.08)] sticky top-0 z-40">
+      <div className="max-w-[1400px] mx-auto px-4 sm:px-6 lg:px-8">
+        <div className="flex items-center justify-between h-14">
+          <div className="flex items-center gap-6">
+            <Link href="/" className="flex items-center gap-2.5">
+              <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-[#00d4ff] to-[#0088aa] flex items-center justify-center">
+                <Activity className="h-4.5 w-4.5 text-white" />
               </div>
-              <span className="font-semibold text-xl">Clearline</span>
+              <div className="flex items-baseline gap-2">
+                <span className="font-bold text-white tracking-tight text-lg">CLEARLINE</span>
+                <span className="text-[#64748b] text-xs tracking-widest uppercase hidden sm:block">Terminal</span>
+              </div>
             </Link>
 
-            {/* Desktop Navigation */}
-            <nav className="hidden md:flex items-center gap-1">
+            <nav className="hidden lg:flex items-center gap-0.5">
               {navigation.map((item) => {
                 const isActive = pathname === item.href;
                 return (
                   <Link
                     key={item.name}
                     href={item.href}
-                    className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium tracking-wide uppercase transition-colors ${
                       isActive
-                        ? 'bg-gray-100 text-gray-900'
-                        : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
+                        ? 'bg-[#00d4ff]/10 text-[#00d4ff]'
+                        : 'text-[#94a3b8] hover:text-white hover:bg-white/5'
                     }`}
                   >
-                    <item.icon className="h-4 w-4" />
+                    <item.icon className="h-3.5 w-3.5" />
                     {item.name}
                   </Link>
                 );
@@ -55,24 +57,23 @@ export function Navbar() {
             </nav>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
             <SignedOut>
               <SignInButton mode="redirect">
-                <button className="hidden md:block px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 rounded-lg transition-colors">
-                  Sign in
+                <button className="hidden md:block px-3 py-1.5 text-xs font-medium tracking-wide uppercase text-[#94a3b8] hover:text-white border border-[rgba(255,255,255,0.1)] hover:border-[rgba(255,255,255,0.2)] rounded-md transition-colors">
+                  Sign In
                 </button>
               </SignInButton>
             </SignedOut>
             <SignedIn>
-              <button className="hidden md:block px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors">
-                Upgrade to Pro
-              </button>
               <UserButton afterSignOutUrl="/sign-in" />
             </SignedIn>
+            <button className="hidden md:block px-3 py-1.5 text-xs font-bold tracking-wide uppercase text-[#080b12] bg-[#00d4ff] hover:bg-[#00bde0] rounded-md transition-colors">
+              Upgrade Pro
+            </button>
 
-            {/* Mobile menu button */}
             <button
-              className="md:hidden p-2 text-gray-600 hover:bg-gray-100 rounded-lg"
+              className="lg:hidden p-2 text-[#94a3b8] hover:text-white hover:bg-white/5 rounded-md"
               onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
             >
               {mobileMenuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
@@ -81,9 +82,8 @@ export function Navbar() {
         </div>
       </div>
 
-      {/* Mobile Navigation */}
       {mobileMenuOpen && (
-        <div className="md:hidden border-t border-gray-200 bg-white">
+        <div className="lg:hidden border-t border-[rgba(255,255,255,0.08)] bg-[#0a0e17]">
           <nav className="px-4 py-3 space-y-1">
             {navigation.map((item) => {
               const isActive = pathname === item.href;
@@ -92,10 +92,10 @@ export function Navbar() {
                   key={item.name}
                   href={item.href}
                   onClick={() => setMobileMenuOpen(false)}
-                  className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+                  className={`flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium tracking-wide uppercase transition-colors ${
                     isActive
-                      ? 'bg-gray-100 text-gray-900'
-                      : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
+                      ? 'bg-[#00d4ff]/10 text-[#00d4ff]'
+                      : 'text-[#94a3b8] hover:text-white hover:bg-white/5'
                   }`}
                 >
                   <item.icon className="h-4 w-4" />
@@ -103,22 +103,17 @@ export function Navbar() {
                 </Link>
               );
             })}
-            <div className="pt-3 space-y-2">
+            <div className="pt-3 flex flex-col gap-2">
               <SignedOut>
                 <SignInButton mode="redirect">
-                  <button className="w-full px-4 py-2 text-sm font-medium text-gray-700 bg-gray-50 rounded-lg">
-                    Sign in
+                  <button className="w-full px-4 py-2 text-xs font-medium tracking-wide uppercase text-[#94a3b8] border border-[rgba(255,255,255,0.1)] rounded-md">
+                    Sign In
                   </button>
                 </SignInButton>
               </SignedOut>
-              <SignedIn>
-                <button className="w-full px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg">
-                  Upgrade to Pro
-                </button>
-                <div className="flex justify-center pt-1">
-                  <UserButton afterSignOutUrl="/sign-in" />
-                </div>
-              </SignedIn>
+              <button className="w-full px-4 py-2 text-xs font-bold tracking-wide uppercase text-[#080b12] bg-[#00d4ff] rounded-md">
+                Upgrade Pro
+              </button>
             </div>
           </nav>
         </div>

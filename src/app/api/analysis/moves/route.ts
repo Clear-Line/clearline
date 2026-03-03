@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { detectAndFlagMoves } from '@/src/lib/analysis/move-detector';
+import { detectAndFlagMoves } from '@/lib/analysis/move-detector';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;

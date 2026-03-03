@@ -5,8 +5,8 @@ import { Navbar } from "../components/Navbar";
 import { AppFooter } from "../components/AppFooter";
 
 export const metadata: Metadata = {
-  title: "Clearline",
-  description: "The intelligence layer for prediction markets",
+  title: "Clearline Terminal",
+  description: "Prediction Market Intelligence — The Bloomberg Terminal for Polymarket",
 };
 
 export default function RootLayout({
@@ -17,7 +17,7 @@ export default function RootLayout({
   return (
     <ClerkProvider signInUrl="/sign-in">
       <html lang="en">
-        <body suppressHydrationWarning className="min-h-screen bg-gray-50">
+        <body suppressHydrationWarning className="min-h-screen bg-[#080b12]">
           <Navbar />
           <main>{children}</main>
           <AppFooter />

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { computeTier1Signals } from '@/src/lib/analysis/tier1-signals';
+import { computeTier1Signals } from '@/lib/analysis/tier1-signals';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;

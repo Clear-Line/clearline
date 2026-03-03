@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { profileWallets } from '@/src/lib/pipeline/wallet-profiler';
+import { profileWallets } from '@/lib/pipeline/wallet-profiler';
 
 export const runtime = 'nodejs';
 export const maxDuration = 120;

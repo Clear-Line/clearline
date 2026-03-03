@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { pollMarkets } from '@/src/lib/pipeline/market-poller';
+import { pollMarkets } from '@/lib/pipeline/market-poller';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60; // seconds
