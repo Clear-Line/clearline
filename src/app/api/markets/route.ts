@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { supabaseAdmin } from '@/src/lib/supabase';
+import { supabaseAdmin } from '@/lib/supabase';
 
 export const runtime = 'nodejs';
 const ID_BATCH = 200;
@@ -31,7 +31,7 @@ export async function GET(request: Request) {
   // Fetch snapshots with real volume (> 0) sorted by volume to get the hottest markets
   const { data: volSnapshots, error: volErr } = await supabaseAdmin
     .from('market_snapshots')
-    .select('market_id, yes_price, volume_24h, liquidity, timestamp')
+    .select('market_id, yes_price, volume_24h, liquidity, unique_traders_24h, timestamp')
     .gt('volume_24h', 0)
     .order('volume_24h', { ascending: false })
     .limit(10000);
@@ -43,7 +43,7 @@ export async function GET(request: Request) {
   // Also fetch recent snapshots with volume = 0 but non-null (markets with price data but no volume)
   const { data: zeroVolSnapshots } = await supabaseAdmin
     .from('market_snapshots')
-    .select('market_id, yes_price, volume_24h, liquidity, timestamp')
+    .select('market_id, yes_price, volume_24h, liquidity, unique_traders_24h, timestamp')
     .not('volume_24h', 'is', null)
     .eq('volume_24h', 0)
     .order('timestamp', { ascending: false })
@@ -56,14 +56,17 @@ export async function GET(request: Request) {
   }
 
   // Group by market — for each market, pick the snapshot with the highest volume
-  const latestByMarket = new Map<string, { yes_price: number; volume_24h: number; liquidity: number; timestamp: string }>();
-  const prevByMarket = new Map<string, { yes_price: number }>();
+  const latestByMarket = new Map<string, { yes_price: number; volume_24h: number; liquidity: number; unique_traders_24h: number | null; timestamp: string }>();
+  const price24hAgoByMarket = new Map<string, { yes_price: number }>();
   const snapsByMarket = new Map<string, typeof allSnapshots>();
 
   for (const snap of allSnapshots) {
     if (!snapsByMarket.has(snap.market_id)) snapsByMarket.set(snap.market_id, []);
     snapsByMarket.get(snap.market_id)!.push(snap);
   }
+
+  const now = Date.now();
+  const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 
   for (const [marketId, marketSnaps] of snapsByMarket.entries()) {
     // Sort by timestamp desc to get latest first
@@ -78,9 +81,29 @@ export async function GET(request: Request) {
       yes_price: latest.yes_price,
       volume_24h: bestVolSnap.volume_24h ?? 0,
       liquidity: bestVolSnap.liquidity ?? 0,
+      unique_traders_24h: bestVolSnap.unique_traders_24h ?? null,
       timestamp: latest.timestamp,
     });
-    if (marketSnaps.length > 1) prevByMarket.set(marketId, { yes_price: marketSnaps[1].yes_price });
+
+    // Find the snapshot closest to 24h ago for real 24h change
+    let best24hSnap: (typeof marketSnaps)[0] | null = null;
+    let bestTimeDiff = Infinity;
+    for (const s of marketSnaps) {
+      const age = now - new Date(s.timestamp).getTime();
+      const diff = Math.abs(age - ONE_DAY_MS);
+      // Accept snapshots between 12h and 36h ago, prefer closest to 24h
+      if (age >= ONE_DAY_MS * 0.5 && age <= ONE_DAY_MS * 1.5 && diff < bestTimeDiff) {
+        bestTimeDiff = diff;
+        best24hSnap = s;
+      }
+    }
+    // Fallback: if no snapshot near 24h, use the oldest snapshot we have
+    if (!best24hSnap && marketSnaps.length > 1) {
+      best24hSnap = marketSnaps[marketSnaps.length - 1];
+    }
+    if (best24hSnap) {
+      price24hAgoByMarket.set(marketId, { yes_price: best24hSnap.yes_price });
+    }
   }
 
   // Fetch market metadata
@@ -105,6 +128,28 @@ export async function GET(request: Request) {
     if (data?.length) markets.push(...data);
   }
 
+  // Count unique wallets per market from trades table
+  const traderCountByMarket = new Map<string, number>();
+  const marketIds = markets.map((m) => m.condition_id);
+  for (let i = 0; i < marketIds.length; i += ID_BATCH) {
+    const batch = marketIds.slice(i, i + ID_BATCH);
+    const { data: tradeCounts } = await supabaseAdmin
+      .from('trades')
+      .select('market_id, wallet_address')
+      .in('market_id', batch);
+
+    if (tradeCounts) {
+      const byMarket = new Map<string, Set<string>>();
+      for (const t of tradeCounts) {
+        if (!byMarket.has(t.market_id)) byMarket.set(t.market_id, new Set());
+        byMarket.get(t.market_id)!.add(t.wallet_address);
+      }
+      for (const [mid, wallets] of byMarket) {
+        traderCountByMarket.set(mid, wallets.size);
+      }
+    }
+  }
+
   // Build market card DTOs — only politics, economics, geopolitics
   const FOCUS = new Set(['politics', 'economics', 'geopolitics']);
   const cards = [];
@@ -114,22 +159,32 @@ export async function GET(request: Request) {
     if (!FOCUS.has(category)) continue;
 
     const latest = latestByMarket.get(m.condition_id)!;
-    const prev = prevByMarket.get(m.condition_id);
+    const prev24h = price24hAgoByMarket.get(m.condition_id);
 
     const currentOdds = Number(latest.yes_price) || 0;
-    const previousOdds = prev ? Number(prev.yes_price) : currentOdds;
+
+    // Skip resolved/settled markets (at 0% or 100%)
+    if (currentOdds <= 0.01 || currentOdds >= 0.99) continue;
+
+    const previousOdds = prev24h ? Number(prev24h.yes_price) : currentOdds;
     const change = currentOdds - previousOdds;
     const absDelta = Math.abs(change);
     const volume = Number(latest.volume_24h) || 0;
     const liquidity = Number(latest.liquidity) || 0;
+    const traders = traderCountByMarket.get(m.condition_id) ?? null;
 
-    // Signal confidence based on price movement and volume
+    // Compute numeric confidence score (0-100) based on real signals
+    // Factors: volume strength, price movement, liquidity depth
+    const volScore = Math.min(volume / 500_000, 1) * 35;       // up to 35 pts for volume
+    const moveScore = Math.min(absDelta / 0.10, 1) * 30;       // up to 30 pts for price movement
+    const liqScore = Math.min(liquidity / 1_000_000, 1) * 20;  // up to 20 pts for liquidity
+    const traderScore = traders ? Math.min(traders / 500, 1) * 15 : 5; // up to 15 pts for unique traders
+    const confidenceScore = Math.round(volScore + moveScore + liqScore + traderScore);
+
     let confidence: 'high' | 'medium' | 'low' = 'low';
-    if (absDelta >= 0.03 && volume > 50_000) {
+    if (confidenceScore >= 60) {
       confidence = 'high';
-    } else if (absDelta >= 0.01 || volume > 100_000) {
-      confidence = 'medium';
-    } else if (volume > 50_000) {
+    } else if (confidenceScore >= 30) {
       confidence = 'medium';
     }
 
@@ -151,6 +206,8 @@ export async function GET(request: Request) {
       change,
       volume24h: volume,
       confidence,
+      confidenceScore,
+      traders: traders ?? null,
       lastUpdated: latest.timestamp ?? m.updated_at,
       liquidity,
     });

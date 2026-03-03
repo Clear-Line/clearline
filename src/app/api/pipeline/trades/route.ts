@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { pollTrades } from '@/src/lib/pipeline/trade-monitor';
+import { pollTrades } from '@/lib/pipeline/trade-monitor';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
