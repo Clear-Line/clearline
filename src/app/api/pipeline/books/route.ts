@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { snapshotBooks } from '@/src/lib/pipeline/book-snapshotter';
+import { snapshotBooks } from '@/lib/pipeline/book-snapshotter';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
