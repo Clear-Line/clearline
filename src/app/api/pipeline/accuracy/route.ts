@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { profileWallets } from '@/lib/pipeline/wallet-profiler';
+import { computeAccuracy } from '@/lib/pipeline/accuracy-computer';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -13,10 +13,11 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const result = await profileWallets();
+    const result = await computeAccuracy();
     return NextResponse.json({
       success: true,
-      updated: result.updated,
+      resolved: result.resolved,
+      walletsUpdated: result.walletsUpdated,
       errors: result.errors.slice(0, 10),
     });
   } catch (err) {

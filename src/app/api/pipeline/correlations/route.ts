@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { profileWallets } from '@/lib/pipeline/wallet-profiler';
+import { computeCorrelations } from '@/lib/analysis/correlation-engine';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -13,10 +13,10 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const result = await profileWallets();
+    const result = await computeCorrelations();
     return NextResponse.json({
       success: true,
-      updated: result.updated,
+      computed: result.computed,
       errors: result.errors.slice(0, 10),
     });
   } catch (err) {

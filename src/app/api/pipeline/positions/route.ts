@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { profileWallets } from '@/lib/pipeline/wallet-profiler';
+import { trackPositions } from '@/lib/pipeline/position-tracker';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -13,10 +13,10 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const result = await profileWallets();
+    const result = await trackPositions();
     return NextResponse.json({
       success: true,
-      updated: result.updated,
+      tracked: result.tracked,
       errors: result.errors.slice(0, 10),
     });
   } catch (err) {

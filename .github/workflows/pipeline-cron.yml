@@ -1,9 +1,9 @@
-name: Data Pipeline Cron
+name: Full Pipeline (Trades + Wallets + Signals)
 
 on:
   schedule:
-    # Runs every 6 hours: midnight, 6am, noon, 6pm UTC
-    - cron: '0 */6 * * *'
+    # Every 2 hours
+    - cron: '0 */2 * * *'
   workflow_dispatch:
 
 concurrency:
@@ -40,14 +40,6 @@ jobs:
           curl -L --fail-with-body --max-time 300 \
             -H "Authorization: Bearer ${CRON_SECRET}" \
             "${APP_URL}/api/pipeline/trades"
-
-      - name: Snapshot Books
-        run: |
-          set -euo pipefail
-          echo "Snapshotting books..."
-          curl -L --fail-with-body --max-time 300 \
-            -H "Authorization: Bearer ${CRON_SECRET}" \
-            "${APP_URL}/api/pipeline/books"
 
       - name: Profile Wallets
         run: |
@@ -88,3 +80,33 @@ jobs:
           curl -L --fail-with-body --max-time 120 \
             -H "Authorization: Bearer ${CRON_SECRET}" \
             "${APP_URL}/api/analysis/moves"
+
+      - name: Compute Accuracy Scores
+        run: |
+          set -euo pipefail
+          echo "Computing wallet accuracy from resolved markets..."
+          curl -L --fail-with-body --max-time 300 \
+            -H "Authorization: Bearer ${CRON_SECRET}" \
+            "${APP_URL}/api/pipeline/accuracy"
+
+      - name: Track Flagged Wallet Positions
+        run: |
+          set -euo pipefail
+          echo "Snapshotting flagged wallet positions..."
+          curl -L --fail-with-body --max-time 300 \
+            -H "Authorization: Bearer ${CRON_SECRET}" \
+            "${APP_URL}/api/pipeline/positions"
+
+      - name: Compute Correlations (weekly)
+        run: |
+          set -euo pipefail
+          # Only run correlations on Sundays (day 0)
+          DAY_OF_WEEK=$(date -u +%u)
+          if [ "$DAY_OF_WEEK" = "7" ]; then
+            echo "Sunday — computing cross-market correlations..."
+            curl -L --fail-with-body --max-time 300 \
+              -H "Authorization: Bearer ${CRON_SECRET}" \
+              "${APP_URL}/api/pipeline/correlations"
+          else
+            echo "Skipping correlations (only runs on Sundays)"
+          fi
