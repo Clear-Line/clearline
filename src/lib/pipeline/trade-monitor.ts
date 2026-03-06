@@ -11,22 +11,22 @@ export async function pollTrades(): Promise<{ inserted: number; skipped: number;
   let inserted = 0;
   let skipped = 0;
 
-  // Get top 200 markets by volume — keeps within 60s timeout
+  // Get top 500 markets by volume — keeps within 60s timeout
   const { data: volSnaps } = await supabaseAdmin
     .from('market_snapshots')
     .select('market_id, volume_24h')
-    .gt('volume_24h', 1000)
+    .gt('volume_24h', 500)
     .order('volume_24h', { ascending: false })
-    .limit(2000);
+    .limit(5000);
 
-  // Deduplicate and take the top 200 unique markets
+  // Deduplicate and take the top 500 unique markets
   const seen = new Set<string>();
   const volMarketIds: string[] = [];
   for (const s of volSnaps ?? []) {
     if (!seen.has(s.market_id)) {
       seen.add(s.market_id);
       volMarketIds.push(s.market_id);
-      if (volMarketIds.length >= 200) break;
+      if (volMarketIds.length >= 500) break;
     }
   }
 

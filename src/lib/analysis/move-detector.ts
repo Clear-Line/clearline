@@ -15,7 +15,8 @@ import { supabaseAdmin } from '../supabase';
 const CLUSTER_COMPOSITE_THRESHOLD = 0.4; // min composite_score to be "flagged"
 const MIN_CLUSTER_SIZE = 2;              // need at least 2 flagged wallets
 const MIN_DIRECTIONAL_RATIO = 0.6;       // at least 60% agreement on side
-const LOOKBACK_HOURS = 6;                // match the cron interval
+const LOOKBACK_HOURS = 24;               // scan last 24h of trades
+const DEDUP_COOLDOWN_HOURS = 12;         // allow re-flagging same market after 12h
 const PAGE_SIZE = 1000;                  // rows per paginated fetch
 
 // ---- Types ----
@@ -213,8 +214,8 @@ export async function detectAndFlagMoves(): Promise<{
     if (arr.length < 2) arr.push(snap);
   }
 
-  // ---- Phase 3: Deduplication — check existing flags from last 6h ----
-  const dedupeStart = lookbackISO;
+  // ---- Phase 3: Deduplication — check existing flags within cooldown window ----
+  const dedupeStart = new Date(now.getTime() - DEDUP_COOLDOWN_HOURS * 60 * 60 * 1000).toISOString();
   const { data: existingFlags } = await supabaseAdmin
     .from('flagged_moves')
     .select('market_id')

@@ -273,14 +273,39 @@ export async function computeAnalytics(): Promise<{
   const errors: string[] = [];
   let computed = 0;
 
-  // Get active markets
-  const { data: markets, error: mErr } = await supabaseAdmin
-    .from('markets')
-    .select('condition_id, start_date, end_date')
-    .eq('is_active', true);
+  // Get markets that actually have recent snapshots (not all 37K+ active markets)
+  const twoDaysAgo = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
+  const { data: recentSnaps } = await supabaseAdmin
+    .from('market_snapshots')
+    .select('market_id')
+    .gte('timestamp', twoDaysAgo)
+    .limit(5000);
 
-  if (mErr || !markets) {
-    return { computed: 0, errors: [`Market query failed: ${mErr?.message}`] };
+  const activeMarketIds = [...new Set((recentSnaps ?? []).map((s) => s.market_id))];
+
+  if (activeMarketIds.length === 0) {
+    return { computed: 0, errors: ['No markets with recent snapshots found'] };
+  }
+
+  // Fetch metadata only for markets with data
+  const markets: { condition_id: string; start_date: string | null; end_date: string | null }[] = [];
+  const META_BATCH = 200;
+  for (let i = 0; i < activeMarketIds.length; i += META_BATCH) {
+    const batch = activeMarketIds.slice(i, i + META_BATCH);
+    const { data, error: mErr } = await supabaseAdmin
+      .from('markets')
+      .select('condition_id, start_date, end_date')
+      .in('condition_id', batch)
+      .eq('is_active', true);
+    if (mErr) {
+      errors.push(`Market metadata batch ${i}: ${mErr.message}`);
+      continue;
+    }
+    if (data) markets.push(...data);
+  }
+
+  if (markets.length === 0) {
+    return { computed: 0, errors: ['No active markets with recent snapshots'] };
   }
 
   // Get smart wallets (accuracy > 0.70 with meaningful sample)
@@ -307,8 +332,8 @@ export async function computeAnalytics(): Promise<{
       .from('market_snapshots')
       .select('market_id, yes_price, timestamp, book_depth_bid_5c, book_depth_ask_5c, cost_move_up_5pct, cost_move_down_5pct')
       .in('market_id', batchIds)
-      .order('timestamp', { ascending: false })
-      .limit(20000);
+      .gte('timestamp', new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString())
+      .order('timestamp', { ascending: false });
 
     // Fetch trades for this batch (last 24h)
     const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
