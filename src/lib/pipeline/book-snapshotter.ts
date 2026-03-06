@@ -24,6 +24,67 @@ function computeDepthWithin5Cents(
   return depth;
 }
 
+/**
+ * Compute book imbalance: total bid size / (total bid size + total ask size).
+ * > 0.5 means more bid support (buying pressure).
+ */
+function computeBookImbalance(
+  bids: { price: string; size: string }[],
+  asks: { price: string; size: string }[],
+): number | null {
+  let bidTotal = 0;
+  let askTotal = 0;
+  for (const b of bids) bidTotal += parseFloat(b.size) || 0;
+  for (const a of asks) askTotal += parseFloat(a.size) || 0;
+  if (bidTotal + askTotal === 0) return null;
+  return bidTotal / (bidTotal + askTotal);
+}
+
+/**
+ * Compute cost-to-move: walk the book until cumulative purchase/sale
+ * would move the price by `targetDelta` from midpoint.
+ * Returns the total USD cost to achieve that price impact.
+ */
+function computeCostToMove(
+  levels: { price: string; size: string }[],
+  midpoint: number,
+  targetDelta: number,
+  direction: 'up' | 'down',
+): number | null {
+  if (levels.length === 0 || midpoint <= 0) return null;
+
+  const targetPrice = direction === 'up'
+    ? midpoint * (1 + targetDelta)
+    : midpoint * (1 - targetDelta);
+
+  let totalCost = 0;
+  let currentPrice = midpoint;
+
+  // Levels should be sorted: asks ascending, bids descending (as returned by CLOB)
+  for (const level of levels) {
+    const price = parseFloat(level.price);
+    const size = parseFloat(level.size);
+    if (!Number.isFinite(price) || !Number.isFinite(size) || size <= 0) continue;
+
+    // Check if this level reaches our target
+    if (direction === 'up' && price >= targetPrice) {
+      // We've reached the target price level
+      totalCost += size * price; // consume this level
+      return totalCost;
+    }
+    if (direction === 'down' && price <= targetPrice) {
+      totalCost += size * price;
+      return totalCost;
+    }
+
+    totalCost += size * price;
+    currentPrice = price;
+  }
+
+  // If we walked the entire book without reaching target, return total cost
+  return totalCost > 0 ? totalCost : null;
+}
+
 export async function snapshotBooks(): Promise<{ updated: number; errors: string[] }> {
   const errors: string[] = [];
   let updated = 0;
@@ -48,6 +109,9 @@ export async function snapshotBooks(): Promise<{ updated: number; errors: string
     spread: number | null;
     book_depth_bid_5c: number;
     book_depth_ask_5c: number;
+    book_imbalance: number | null;
+    cost_move_up_5pct: number | null;
+    cost_move_down_5pct: number | null;
   }[] = [];
 
   const CONCURRENCY = 10;
@@ -84,6 +148,10 @@ export async function snapshotBooks(): Promise<{ updated: number; errors: string
         const bidDepth = computeDepthWithin5Cents(book.bids, midpoint, 'bid');
         const askDepth = computeDepthWithin5Cents(book.asks, midpoint, 'ask');
 
+        const imbalance = computeBookImbalance(book.bids, book.asks);
+        const costUp = computeCostToMove(book.asks, midpoint, 0.05, 'up');
+        const costDown = computeCostToMove(book.bids, midpoint, 0.05, 'down');
+
         snapshotRows.push({
           market_id: market.condition_id,
           timestamp: new Date().toISOString(),
@@ -92,6 +160,9 @@ export async function snapshotBooks(): Promise<{ updated: number; errors: string
           spread: spread > 0 ? spread : null,
           book_depth_bid_5c: bidDepth,
           book_depth_ask_5c: askDepth,
+          book_imbalance: imbalance,
+          cost_move_up_5pct: costUp,
+          cost_move_down_5pct: costDown,
         });
       } catch (err) {
         errors.push(`Book ${market.condition_id}: ${err}`);
