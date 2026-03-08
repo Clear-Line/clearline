@@ -132,24 +132,24 @@ function computeConvergenceSpeed(
  * Requires enough historical data.
  */
 function computePriceReversionRate(snapshots: Snapshot[]): number | null {
-  if (snapshots.length < 100) return null; // need enough data
+  if (snapshots.length < 20) return null; // need some data but not 100+
 
   const sorted = [...snapshots].sort(
     (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
   );
 
-  const ONE_HOUR = 60 * 60 * 1000;
-  const FORTY_EIGHT_HOURS = 48 * ONE_HOUR;
-  const MOVE_THRESHOLD = 0.05; // 5% price move
+  const FORTY_EIGHT_HOURS = 48 * 60 * 60 * 1000;
+  const MOVE_THRESHOLD = 0.02; // 2% price move (prediction markets move in small increments)
 
   let sharpMoves = 0;
   let reversions = 0;
 
-  for (let i = 12; i < sorted.length; i++) {
-    // Look back ~1h (12 snapshots at 5min intervals)
-    const hourAgo = sorted[i - 12];
+  // Use 6-snapshot lookback (~30min) instead of 12 (~1h) — captures faster moves
+  const LOOKBACK = 6;
+  for (let i = LOOKBACK; i < sorted.length; i++) {
+    const past = sorted[i - LOOKBACK];
     const current = sorted[i];
-    const move = current.yes_price - hourAgo.yes_price;
+    const move = current.yes_price - past.yes_price;
 
     if (Math.abs(move) < MOVE_THRESHOLD) continue;
     sharpMoves++;
@@ -169,7 +169,7 @@ function computePriceReversionRate(snapshots: Snapshot[]): number | null {
       }
     }
 
-    if (maxReversion >= 0.5) reversions++; // at least 50% retracement
+    if (maxReversion >= 0.3) reversions++; // at least 30% retracement
   }
 
   if (sharpMoves === 0) return null;
@@ -308,12 +308,12 @@ export async function computeAnalytics(): Promise<{
     return { computed: 0, errors: ['No active markets with recent snapshots'] };
   }
 
-  // Get smart wallets (accuracy > 0.70 with meaningful sample)
+  // Get smart wallets (accuracy > 0.60 with meaningful sample)
   const { data: smartWalletRows } = await supabaseAdmin
     .from('wallets')
     .select('address')
-    .gt('accuracy_score', 0.70)
-    .gt('accuracy_sample_size', 5);
+    .gt('accuracy_score', 0.60)
+    .gt('accuracy_sample_size', 3);
 
   const smartWallets = new Set(
     (smartWalletRows ?? []).map((w: { address: string }) => w.address),
@@ -335,13 +335,13 @@ export async function computeAnalytics(): Promise<{
       .gte('timestamp', new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString())
       .order('timestamp', { ascending: false });
 
-    // Fetch trades for this batch (last 24h)
-    const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    // Fetch trades for this batch (last 7 days — wider window so more markets get VWAP/BSR)
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
     const { data: trades } = await supabaseAdmin
       .from('trades')
       .select('market_id, price, size_tokens, size_usdc, side, wallet_address, timestamp')
       .in('market_id', batchIds)
-      .gte('timestamp', oneDayAgo);
+      .gte('timestamp', sevenDaysAgo);
 
     // Group data by market
     const snapsByMarket = new Map<string, Snapshot[]>();

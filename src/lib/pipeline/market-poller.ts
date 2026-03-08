@@ -93,16 +93,23 @@ export async function pollMarkets(): Promise<{ upserted: number; errors: string[
     });
 
     if (outcomePrices.length >= 2 && !snapshotSeen.has(m.conditionId)) {
-      snapshotSeen.add(m.conditionId);
-      snapshotRows.push({
-        market_id: m.conditionId,
-        timestamp: new Date().toISOString(),
-        yes_price: parseFloat(outcomePrices[0]) || 0,
-        no_price: parseFloat(outcomePrices[1]) || 0,
-        volume_24h: parseFloat(m.volume24hr) || 0,
-        total_volume: parseFloat(m.volume) || 0,
-        liquidity: parseFloat(m.liquidity) || 0,
-      });
+      const vol24h = parseFloat(m.volume24hr) || 0;
+      const totalVol = parseFloat(m.volume) || 0;
+      const liq = parseFloat(m.liquidity) || 0;
+      // Only snapshot markets with some activity — skip truly dead markets
+      // (no 24h volume, no total volume, and no liquidity)
+      if (vol24h > 0 || totalVol > 0 || liq > 0) {
+        snapshotSeen.add(m.conditionId);
+        snapshotRows.push({
+          market_id: m.conditionId,
+          timestamp: new Date().toISOString(),
+          yes_price: parseFloat(outcomePrices[0]) || 0,
+          no_price: parseFloat(outcomePrices[1]) || 0,
+          volume_24h: vol24h,
+          total_volume: totalVol,
+          liquidity: liq,
+        });
+      }
     }
   }
 
