@@ -196,6 +196,22 @@ export async function GET(request: Request) {
     }
   }
 
+  // Fetch analytics publishability for all tracked markets
+  const analyticsPublishable = new Map<string, { is_publishable: boolean; coverage_score: number }>();
+  const analyticsMarketIds = [...latestByMarket.keys()];
+  for (let i = 0; i < analyticsMarketIds.length; i += ID_BATCH) {
+    const batch = analyticsMarketIds.slice(i, i + ID_BATCH);
+    const { data: analyticsData } = await supabaseAdmin
+      .from('market_analytics')
+      .select('market_id, is_publishable, coverage_score')
+      .in('market_id', batch);
+    if (analyticsData) {
+      for (const a of analyticsData) {
+        analyticsPublishable.set(a.market_id, { is_publishable: a.is_publishable ?? false, coverage_score: a.coverage_score ?? 0 });
+      }
+    }
+  }
+
   // Build market card DTOs — only politics, economics, geopolitics
   const FOCUS = new Set(['politics', 'economics', 'geopolitics']);
   const cards = [];
@@ -242,6 +258,8 @@ export async function GET(request: Request) {
       : category === 'geopolitics' ? 'geopolitics'
       : 'economic';
 
+    const ap = analyticsPublishable.get(m.condition_id);
+
     cards.push({
       id: m.condition_id,
       title: m.question,
@@ -256,6 +274,10 @@ export async function GET(request: Request) {
       traders: traders ?? null,
       lastUpdated: latest.timestamp ?? m.updated_at,
       liquidity,
+      dataQuality: {
+        isPublishable: ap?.is_publishable ?? false,
+        coverageScore: ap?.coverage_score ?? 0,
+      },
     });
   }
 

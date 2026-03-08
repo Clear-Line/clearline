@@ -17,6 +17,8 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({
       success: true,
       computed: result.computed,
+      publishable: result.publishable,
+      telemetry: result.telemetry,
       errors: result.errors.slice(0, 10),
     });
   } catch (err) {

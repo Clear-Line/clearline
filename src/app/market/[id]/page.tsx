@@ -82,7 +82,18 @@ interface MarketDetail {
   }[];
 }
 
+type MetricStatus = 'computed' | 'insufficient_data' | 'stale_data' | 'no_data';
+
+interface DataQuality {
+  isPublishable: boolean;
+  coverageScore: number;
+  computedAt: string | null;
+  missingDependencies: string[];
+  coverageByMetric: Record<string, MetricStatus> | null;
+}
+
 interface Analytics {
+  dataQuality: DataQuality | null;
   momentum: { "1h": number | null; "6h": number | null; "24h": number | null };
   volatility24h: number | null;
   convergenceSpeed: number | null;
@@ -147,13 +158,48 @@ function signPrefix(v: number | null): string {
   return "";
 }
 
+// ─── Metric Status Helper ───
+
+function metricLabel(status: MetricStatus | undefined): string | null {
+  if (!status || status === 'computed') return null;
+  if (status === 'insufficient_data') return 'low data';
+  if (status === 'stale_data') return 'stale';
+  if (status === 'no_data') return 'no data';
+  return null;
+}
+
+// ─── Data Quality Badge ───
+
+function DataQualityBadge({ dq }: { dq: DataQuality | null }) {
+  if (!dq) return null;
+  const score = dq.coverageScore;
+  const color = score >= 60 ? "text-[#10b981] border-[#10b981]/30" :
+    score >= 30 ? "text-[#f59e0b] border-[#f59e0b]/30" :
+    "text-[#ef4444] border-[#ef4444]/30";
+  const bg = score >= 60 ? "bg-[#10b981]/10" :
+    score >= 30 ? "bg-[#f59e0b]/10" :
+    "bg-[#ef4444]/10";
+  return (
+    <div className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[9px] font-mono border ${color} ${bg}`}>
+      <span className="tracking-wider uppercase">Coverage</span>
+      <span className="font-bold">{score}</span>
+    </div>
+  );
+}
+
 // ─── Stat Cell ───
 
-function Stat({ label, value, sub, color }: { label: string; value: string; sub?: string; color?: string }) {
+function Stat({ label, value, sub, color, metricStatus }: { label: string; value: string; sub?: string; color?: string; metricStatus?: MetricStatus }) {
+  const statusLabel = metricLabel(metricStatus);
+  const isInsufficient = metricStatus && metricStatus !== 'computed';
   return (
     <div className="px-3 py-2">
       <div className="text-[9px] text-[#64748b] tracking-[0.15em] uppercase mb-0.5">{label}</div>
-      <div className={`text-sm font-mono font-medium ${color || "text-white"}`}>{value}</div>
+      {isInsufficient && value === "\u2014" ? (
+        <div className="text-[10px] font-mono text-[#475569] italic">{statusLabel}</div>
+      ) : (
+        <div className={`text-sm font-mono font-medium ${color || "text-white"}`}>{value}</div>
+      )}
       {sub && <div className="text-[9px] text-[#475569] mt-0.5">{sub}</div>}
     </div>
   );
@@ -247,6 +293,8 @@ export default function MarketDetailPage() {
   const isNegative = market.change < 0;
   const changeColor = isPositive ? "text-[#10b981]" : isNegative ? "text-[#ef4444]" : "text-[#64748b]";
   const vwap = analytics?.vwap24h;
+  const ms = analytics?.dataQuality?.coverageByMetric;
+  const mst = (key: string): MetricStatus | undefined => ms?.[key] as MetricStatus | undefined;
 
   return (
     <div className="min-h-screen">
@@ -262,6 +310,7 @@ export default function MarketDetailPage() {
           <span className="text-[rgba(255,255,255,0.15)]">|</span>
           <span className="text-[#64748b] truncate max-w-[300px] font-mono">{market.id.slice(0, 10)}...{market.id.slice(-6)}</span>
           <div className="ml-auto flex items-center gap-3">
+            <DataQualityBadge dq={analytics?.dataQuality ?? null} />
             <ConfidenceBadge confidence={market.confidence} size="sm" />
             <span className="text-[#475569]">
               Updated {new Date(market.lastUpdated).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
@@ -393,31 +442,30 @@ export default function MarketDetailPage() {
             <div className="bg-[#0d1117] border border-[rgba(255,255,255,0.06)] rounded-lg p-4">
               <SectionHeader icon={TrendingUp} title="Price Behavior" />
               <div className="grid grid-cols-3 gap-0 -mx-3">
-                <Stat label="Mom 1H" value={`${signPrefix(analytics?.momentum?.["1h"] ?? null)}${formatPct(analytics?.momentum?.["1h"] ?? null)}`} color={signColor(analytics?.momentum?.["1h"] ?? null)} />
-                <Stat label="Mom 6H" value={`${signPrefix(analytics?.momentum?.["6h"] ?? null)}${formatPct(analytics?.momentum?.["6h"] ?? null)}`} color={signColor(analytics?.momentum?.["6h"] ?? null)} />
-                <Stat label="Mom 24H" value={`${signPrefix(analytics?.momentum?.["24h"] ?? null)}${formatPct(analytics?.momentum?.["24h"] ?? null)}`} color={signColor(analytics?.momentum?.["24h"] ?? null)} />
+                <Stat label="Mom 1H" value={`${signPrefix(analytics?.momentum?.["1h"] ?? null)}${formatPct(analytics?.momentum?.["1h"] ?? null)}`} color={signColor(analytics?.momentum?.["1h"] ?? null)} metricStatus={mst("momentum_1h")} />
+                <Stat label="Mom 6H" value={`${signPrefix(analytics?.momentum?.["6h"] ?? null)}${formatPct(analytics?.momentum?.["6h"] ?? null)}`} color={signColor(analytics?.momentum?.["6h"] ?? null)} metricStatus={mst("momentum_6h")} />
+                <Stat label="Mom 24H" value={`${signPrefix(analytics?.momentum?.["24h"] ?? null)}${formatPct(analytics?.momentum?.["24h"] ?? null)}`} color={signColor(analytics?.momentum?.["24h"] ?? null)} metricStatus={mst("momentum_24h")} />
               </div>
               <div className="grid grid-cols-2 gap-0 -mx-3 mt-1 pt-2 border-t border-[rgba(255,255,255,0.04)]">
-                <Stat label="Volatility (VIX)" value={formatNum(analytics?.volatility24h)} sub="24h annualized" />
-                <Stat label="Convergence" value={formatNum(analytics?.convergenceSpeed)} sub="speed to certainty" />
+                <Stat label="Volatility (VIX)" value={formatNum(analytics?.volatility24h)} sub="24h annualized" metricStatus={mst("volatility_24h")} />
+                <Stat label="Convergence" value={formatNum(analytics?.convergenceSpeed)} sub="speed to certainty" metricStatus={mst("convergence_speed")} />
               </div>
-              {analytics?.priceReversionRate !== null && analytics?.priceReversionRate !== undefined && (
-                <div className="-mx-3 pt-2 border-t border-[rgba(255,255,255,0.04)]">
-                  <Stat label="Reversion Rate" value={formatPct(analytics.priceReversionRate)} sub="% of 5%+ moves that retrace" />
-                </div>
-              )}
+              <div className="-mx-3 pt-2 border-t border-[rgba(255,255,255,0.04)]">
+                <Stat label="Reversion Rate" value={formatPct(analytics?.priceReversionRate ?? null)} sub="% of 2%+ moves that retrace" metricStatus={mst("price_reversion_rate")} />
+              </div>
             </div>
 
             {/* Volume & Flow */}
             <div className="bg-[#0d1117] border border-[rgba(255,255,255,0.06)] rounded-lg p-4">
               <SectionHeader icon={Zap} title="Volume & Flow" />
               <div className="grid grid-cols-2 gap-0 -mx-3">
-                <Stat label="VWAP 24H" value={analytics?.vwap24h ? `${(analytics.vwap24h * 100).toFixed(1)}%` : "\u2014"} />
+                <Stat label="VWAP 24H" value={analytics?.vwap24h ? `${(analytics.vwap24h * 100).toFixed(1)}%` : "\u2014"} metricStatus={mst("vwap_24h")} />
                 <Stat
                   label="Buy/Sell"
                   value={formatNum(analytics?.buySellRatio)}
                   color={analytics?.buySellRatio ? (analytics.buySellRatio > 1 ? "text-[#10b981]" : "text-[#ef4444]") : undefined}
                   sub={analytics?.buySellRatio ? (analytics.buySellRatio > 1 ? "buy pressure" : "sell pressure") : undefined}
+                  metricStatus={mst("buy_sell_ratio")}
                 />
               </div>
               <div className="-mx-3 pt-2 border-t border-[rgba(255,255,255,0.04)]">
@@ -425,7 +473,8 @@ export default function MarketDetailPage() {
                   label="Smart Money Flow"
                   value={analytics?.smartMoneyFlow !== null && analytics?.smartMoneyFlow !== undefined ? formatVol(Math.abs(analytics.smartMoneyFlow)) : "\u2014"}
                   color={signColor(analytics?.smartMoneyFlow ?? null)}
-                  sub={analytics?.smartMoneyFlow ? (analytics.smartMoneyFlow > 0 ? "net buying (accuracy >70%)" : "net selling (accuracy >70%)") : "wallets with >70% accuracy"}
+                  sub={analytics?.smartMoneyFlow ? (analytics.smartMoneyFlow > 0 ? "net buying (accuracy >60%)" : "net selling (accuracy >60%)") : "wallets with >60% accuracy"}
+                  metricStatus={mst("smart_money_flow")}
                 />
               </div>
             </div>
@@ -440,6 +489,7 @@ export default function MarketDetailPage() {
                   value={analytics?.bookImbalance ? formatPct(analytics.bookImbalance, 0) : "\u2014"}
                   color={analytics?.bookImbalance ? (analytics.bookImbalance > 0.5 ? "text-[#10b981]" : "text-[#ef4444]") : undefined}
                   sub={analytics?.bookImbalance ? (analytics.bookImbalance > 0.5 ? "bid heavy" : "ask heavy") : undefined}
+                  metricStatus={mst("book_imbalance")}
                 />
               </div>
               <div className="grid grid-cols-2 gap-0 -mx-3 pt-2 border-t border-[rgba(255,255,255,0.04)]">

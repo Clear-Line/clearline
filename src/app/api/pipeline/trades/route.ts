@@ -18,6 +18,7 @@ export async function GET(req: NextRequest) {
       success: true,
       inserted: result.inserted,
       skipped: result.skipped,
+      telemetry: result.telemetry,
       errors: result.errors.slice(0, 10),
     });
   } catch (err) {

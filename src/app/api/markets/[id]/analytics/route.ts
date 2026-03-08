@@ -89,9 +89,25 @@ export async function GET(
     .limit(1)
     .single();
 
+  // ─── Build dataQuality object ───
+
+  const coverageByMetric = analytics?.coverage_by_metric ?? null;
+  const isPublishable = analytics?.is_publishable ?? false;
+  const coverageScore = analytics?.coverage_score ?? 0;
+  const missingDeps = analytics?.missing_dependencies ?? [];
+
   return NextResponse.json({
     marketId,
     computedAt: analytics?.computed_at ?? null,
+
+    // Data quality metadata
+    dataQuality: {
+      isPublishable,
+      coverageScore,
+      computedAt: analytics?.computed_at ?? null,
+      missingDependencies: missingDeps,
+      coverageByMetric,
+    },
 
     // Price behavior
     momentum: {

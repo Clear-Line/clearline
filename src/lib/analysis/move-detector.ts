@@ -80,20 +80,27 @@ async function fetchRecentTradesPaginated(sinceISO: string): Promise<{ data: Tra
   return { data: all, error: null };
 }
 
-async function fetchSnapshotsPaginated(): Promise<{ data: SnapshotRow[]; error: string | null }> {
+async function fetchSnapshotsPaginated(marketIds: string[], sinceISO: string): Promise<{ data: SnapshotRow[]; error: string | null }> {
   const all: SnapshotRow[] = [];
-  let offset = 0;
-  while (true) {
-    const { data, error } = await supabaseAdmin
-      .from('market_snapshots')
-      .select('market_id, timestamp, yes_price, book_depth_bid_5c')
-      .order('timestamp', { ascending: false })
-      .range(offset, offset + PAGE_SIZE - 1);
-    if (error) return { data: all, error: error.message };
-    if (!data || data.length === 0) break;
-    all.push(...(data as SnapshotRow[]));
-    if (data.length < PAGE_SIZE) break;
-    offset += PAGE_SIZE;
+  // Fetch only snapshots for relevant markets within the lookback window
+  const BATCH = 200;
+  for (let i = 0; i < marketIds.length; i += BATCH) {
+    const idBatch = marketIds.slice(i, i + BATCH);
+    let offset = 0;
+    while (true) {
+      const { data, error } = await supabaseAdmin
+        .from('market_snapshots')
+        .select('market_id, timestamp, yes_price, book_depth_bid_5c')
+        .in('market_id', idBatch)
+        .gte('timestamp', sinceISO)
+        .order('timestamp', { ascending: false })
+        .range(offset, offset + PAGE_SIZE - 1);
+      if (error) return { data: all, error: error.message };
+      if (!data || data.length === 0) break;
+      all.push(...(data as SnapshotRow[]));
+      if (data.length < PAGE_SIZE) break;
+      offset += PAGE_SIZE;
+    }
   }
   return { data: all, error: null };
 }
@@ -170,12 +177,21 @@ export async function detectAndFlagMoves(): Promise<{
   const now = new Date();
   const lookbackISO = new Date(now.getTime() - LOOKBACK_HOURS * 60 * 60 * 1000).toISOString();
 
-  // ---- Phase 1: Parallel paginated data fetch ----
-  const [signalsResult, tradesResult, snapshotsResult] = await Promise.all([
+  // ---- Phase 1: Fetch signals and trades first, then snapshots only for relevant markets ----
+  const [signalsResult, tradesResult] = await Promise.all([
     fetchSignalsPaginated(),
     fetchRecentTradesPaginated(lookbackISO),
-    fetchSnapshotsPaginated(),
   ]);
+
+  // Collect unique market IDs from signals and trades to scope snapshot fetch
+  const relevantMarketIds = [...new Set([
+    ...signalsResult.data.map((s) => s.market_id),
+    ...tradesResult.data.map((t) => t.market_id),
+  ])];
+
+  const snapshotsResult = relevantMarketIds.length > 0
+    ? await fetchSnapshotsPaginated(relevantMarketIds, lookbackISO)
+    : { data: [] as SnapshotRow[], error: null };
 
   if (signalsResult.error || tradesResult.error) {
     return {
