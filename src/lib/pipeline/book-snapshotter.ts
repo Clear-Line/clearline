@@ -100,12 +100,9 @@ export async function snapshotBooks(): Promise<{ updated: number; errors: string
     return { updated: 0, errors: [`Failed to fetch markets: ${mktError?.message}`] };
   }
 
-  // Process markets concurrently in batches of 10, collect snapshot rows
+  // Process markets concurrently in batches of 10, collect book data
   const snapshotRows: {
     market_id: string;
-    timestamp: string;
-    yes_price: number;
-    no_price: number;
     spread: number | null;
     book_depth_bid_5c: number;
     book_depth_ask_5c: number;
@@ -154,9 +151,6 @@ export async function snapshotBooks(): Promise<{ updated: number; errors: string
 
         snapshotRows.push({
           market_id: market.condition_id,
-          timestamp: new Date().toISOString(),
-          yes_price: midpoint,
-          no_price: 1 - midpoint,
           spread: spread > 0 ? spread : null,
           book_depth_bid_5c: bidDepth,
           book_depth_ask_5c: askDepth,
@@ -170,18 +164,41 @@ export async function snapshotBooks(): Promise<{ updated: number; errors: string
     }));
   }
 
-  // Batch insert all snapshots
-  const BATCH_SIZE = 500;
-  for (let i = 0; i < snapshotRows.length; i += BATCH_SIZE) {
-    const batch = snapshotRows.slice(i, i + BATCH_SIZE);
-    const { error } = await supabaseAdmin
-      .from('market_snapshots')
-      .insert(batch);
+  // Update the most recent snapshot for each market with book data
+  // (instead of inserting new rows which pollute price data)
+  for (const row of snapshotRows) {
+    try {
+      // Find the latest snapshot with real price data for this market
+      const { data: latest } = await supabaseAdmin
+        .from('market_snapshots')
+        .select('id')
+        .eq('market_id', row.market_id)
+        .not('volume_24h', 'is', null)
+        .order('timestamp', { ascending: false })
+        .limit(1)
+        .single();
 
-    if (error) {
-      errors.push(`Snapshot batch offset=${i}: ${error.message}`);
-    } else {
-      updated += batch.length;
+      if (latest) {
+        const { error } = await supabaseAdmin
+          .from('market_snapshots')
+          .update({
+            spread: row.spread,
+            book_depth_bid_5c: row.book_depth_bid_5c,
+            book_depth_ask_5c: row.book_depth_ask_5c,
+            book_imbalance: row.book_imbalance,
+            cost_move_up_5pct: row.cost_move_up_5pct,
+            cost_move_down_5pct: row.cost_move_down_5pct,
+          })
+          .eq('id', latest.id);
+
+        if (error) {
+          errors.push(`Book update ${row.market_id}: ${error.message}`);
+        } else {
+          updated++;
+        }
+      }
+    } catch (err) {
+      errors.push(`Book ${row.market_id}: ${err}`);
     }
   }
 

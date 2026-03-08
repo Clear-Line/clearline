@@ -72,12 +72,14 @@ export async function GET(request: Request) {
           .from('market_snapshots')
           .select('market_id, yes_price, volume_24h, liquidity, unique_traders_24h, timestamp')
           .in('market_id', batch)
+          .not('volume_24h', 'is', null)
           .gte('timestamp', sixHoursAgo)
           .order('timestamp', { ascending: false }),
         supabaseAdmin
           .from('market_snapshots')
           .select('market_id, yes_price, volume_24h, liquidity, unique_traders_24h, timestamp')
           .in('market_id', batch)
+          .not('volume_24h', 'is', null)
           .lte('timestamp', dayAgoCutoff)
           .gte('timestamp', dayAgoEarliest)
           .order('timestamp', { ascending: false })
