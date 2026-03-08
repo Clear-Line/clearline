@@ -62,7 +62,7 @@ export default function Dashboard() {
   useEffect(() => {
     async function fetchMarkets() {
       try {
-        const res = await fetch("/api/markets?limit=100");
+        const res = await fetch("/api/markets?limit=1000");
         if (!res.ok) throw new Error("API error");
         const json = await res.json();
         if (json.markets && json.markets.length > 0) {
