@@ -86,6 +86,8 @@ function computeCostToMove(
 }
 
 export async function snapshotBooks(): Promise<{ updated: number; errors: string[] }> {
+  const startTime = Date.now();
+  const TIME_BUDGET_MS = 45_000; // leave 15s buffer for DB writes
   const errors: string[] = [];
   let updated = 0;
 
@@ -113,6 +115,10 @@ export async function snapshotBooks(): Promise<{ updated: number; errors: string
 
   const CONCURRENCY = 10;
   for (let i = 0; i < markets.length; i += CONCURRENCY) {
+    if (Date.now() - startTime > TIME_BUDGET_MS) {
+      errors.push(`Time budget reached at market ${i}/${markets.length}, will continue next run`);
+      break;
+    }
     const batch = markets.slice(i, i + CONCURRENCY);
 
     await Promise.all(batch.map(async (market) => {
@@ -165,41 +171,58 @@ export async function snapshotBooks(): Promise<{ updated: number; errors: string
   }
 
   // Update the most recent snapshot for each market with book data
-  // (instead of inserting new rows which pollute price data)
-  for (const row of snapshotRows) {
-    try {
-      // Find the latest snapshot with real price data for this market
-      const { data: latest } = await supabaseAdmin
-        .from('market_snapshots')
-        .select('id')
-        .eq('market_id', row.market_id)
-        .not('volume_24h', 'is', null)
-        .order('timestamp', { ascending: false })
-        .limit(1)
-        .single();
+  // Batch: find latest snapshot IDs for all markets at once, then update in chunks
+  const marketIds = snapshotRows.map((r) => r.market_id);
+  const snapshotMap = new Map(snapshotRows.map((r) => [r.market_id, r]));
 
-      if (latest) {
-        const { error } = await supabaseAdmin
-          .from('market_snapshots')
-          .update({
-            spread: row.spread,
-            book_depth_bid_5c: row.book_depth_bid_5c,
-            book_depth_ask_5c: row.book_depth_ask_5c,
-            book_imbalance: row.book_imbalance,
-            cost_move_up_5pct: row.cost_move_up_5pct,
-            cost_move_down_5pct: row.cost_move_down_5pct,
-          })
-          .eq('id', latest.id);
+  // Fetch latest snapshot ID per market in batches
+  const ID_BATCH = 200;
+  const latestById = new Map<string, number>();
+  for (let i = 0; i < marketIds.length; i += ID_BATCH) {
+    const batch = marketIds.slice(i, i + ID_BATCH);
+    const { data: latestSnaps } = await supabaseAdmin
+      .from('market_snapshots')
+      .select('id, market_id')
+      .in('market_id', batch)
+      .not('volume_24h', 'is', null)
+      .order('timestamp', { ascending: false });
 
-        if (error) {
-          errors.push(`Book update ${row.market_id}: ${error.message}`);
-        } else {
-          updated++;
+    if (latestSnaps) {
+      for (const s of latestSnaps) {
+        // Only keep the first (latest) per market
+        if (!latestById.has(s.market_id)) {
+          latestById.set(s.market_id, s.id);
         }
       }
-    } catch (err) {
-      errors.push(`Book ${row.market_id}: ${err}`);
     }
+  }
+
+  // Update snapshots individually (Supabase doesn't support batch update with different values)
+  // but now we already have the IDs, saving N queries
+  const UPDATE_CONCURRENCY = 20;
+  const entries = [...latestById.entries()];
+  for (let i = 0; i < entries.length; i += UPDATE_CONCURRENCY) {
+    const batch = entries.slice(i, i + UPDATE_CONCURRENCY);
+    await Promise.all(batch.map(async ([marketId, snapId]) => {
+      const row = snapshotMap.get(marketId);
+      if (!row) return;
+      const { error } = await supabaseAdmin
+        .from('market_snapshots')
+        .update({
+          spread: row.spread,
+          book_depth_bid_5c: row.book_depth_bid_5c,
+          book_depth_ask_5c: row.book_depth_ask_5c,
+          book_imbalance: row.book_imbalance,
+          cost_move_up_5pct: row.cost_move_up_5pct,
+          cost_move_down_5pct: row.cost_move_down_5pct,
+        })
+        .eq('id', snapId);
+      if (error) {
+        errors.push(`Book update ${marketId}: ${error.message}`);
+      } else {
+        updated++;
+      }
+    }));
   }
 
   return { updated, errors };

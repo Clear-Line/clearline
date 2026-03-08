@@ -37,15 +37,21 @@ function categorizeMarket(question: string, tags?: string[]): string {
 }
 
 export async function pollMarkets(): Promise<{ upserted: number; errors: string[] }> {
+  const startTime = Date.now();
+  const TIME_BUDGET_MS = 45_000; // leave 15s buffer for DB writes
   const errors: string[] = [];
   let allMarkets: GammaMarket[] = [];
 
-  // Paginate through all active markets
+  // Paginate through all active markets (with time budget)
   let offset = 0;
   const limit = 100;
   let keepGoing = true;
 
   while (keepGoing) {
+    if (Date.now() - startTime > TIME_BUDGET_MS) {
+      errors.push(`Time budget reached at offset=${offset}, will continue next run`);
+      break;
+    }
     try {
       const batch = await fetchActiveMarkets(limit, offset);
       allMarkets = allMarkets.concat(batch);
