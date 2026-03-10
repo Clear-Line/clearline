@@ -63,11 +63,7 @@ export async function pollMarkets(): Promise<{ upserted: number; errors: string[
     }
   }
 
-  // Filter to politics, economics, and geopolitics/current events
-  const FOCUS_CATEGORIES = new Set(['politics', 'economics', 'geopolitics']);
-  const focusedMarkets = allMarkets.filter((m) =>
-    FOCUS_CATEGORIES.has(categorizeMarket(m.question, m.tags)),
-  );
+  // Process ALL markets — no category filter. Categories are still tagged for display/filtering.
 
   // Build rows for batch upsert
   const marketRows = [];
@@ -75,7 +71,7 @@ export async function pollMarkets(): Promise<{ upserted: number; errors: string[
   const marketSeen = new Set<string>();
   const snapshotSeen = new Set<string>();
 
-  for (const m of focusedMarkets) {
+  for (const m of allMarkets) {
     const outcomes = parseJsonField(m.outcomes);
     const clobTokenIds = parseJsonField(m.clobTokenIds);
     const outcomePrices = parseJsonField(m.outcomePrices) as string[];

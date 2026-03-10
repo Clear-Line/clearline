@@ -128,8 +128,8 @@ function computeConvergenceC(
 
 function computeReversionC(snapshots: Snapshot[]): MetricResult {
   if (snapshots.length === 0) return { value: null, status: 'no_data' };
-  if (snapshots.length < 8) return { value: null, status: 'insufficient_data' };
-  if (timeSpanMinutes(snapshots) < 120) return { value: null, status: 'insufficient_data' };
+  if (snapshots.length < 4) return { value: null, status: 'insufficient_data' };
+  if (timeSpanMinutes(snapshots) < 60) return { value: null, status: 'insufficient_data' };
 
   const sorted = [...snapshots].sort(
     (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
@@ -139,7 +139,7 @@ function computeReversionC(snapshots: Snapshot[]): MetricResult {
   const THRESHOLD = 0.02;
   let sharpMoves = 0;
   let reversions = 0;
-  const LOOKBACK = 6;
+  const LOOKBACK = 3;
 
   for (let i = LOOKBACK; i < sorted.length; i++) {
     const move = sorted[i].yes_price - sorted[i - LOOKBACK].yes_price;
@@ -164,7 +164,6 @@ function computeReversionC(snapshots: Snapshot[]): MetricResult {
 
 function computeVWAPC(trades: Trade[]): MetricResult {
   if (trades.length === 0) return { value: null, status: 'no_data' };
-  if (trades.length < 2) return { value: null, status: 'insufficient_data' };
 
   let sumPV = 0, sumV = 0, totalUsdc = 0;
   for (const t of trades) {
@@ -176,13 +175,12 @@ function computeVWAPC(trades: Trade[]): MetricResult {
       totalUsdc += Number(t.size_usdc) || 0;
     }
   }
-  if (sumV === 0 || totalUsdc < 50) return { value: null, status: 'insufficient_data' };
+  if (sumV === 0 || totalUsdc < 10) return { value: null, status: 'insufficient_data' };
   return { value: sumPV / sumV, status: 'computed' };
 }
 
 function computeBuySellC(trades: Trade[]): MetricResult {
   if (trades.length === 0) return { value: null, status: 'no_data' };
-  if (trades.length < 2) return { value: null, status: 'insufficient_data' };
 
   let buyVol = 0, sellVol = 0;
   for (const t of trades) {
@@ -208,7 +206,7 @@ function computeSmartMoneyC(trades: Trade[], smartWallets: Set<string>): MetricR
     else if (t.side === 'SELL') netFlow -= usdc;
   }
   if (smartCount === 0) return { value: null, status: 'no_data' };
-  if (smartCount < 1 || smartVol < 50) return { value: null, status: 'insufficient_data' };
+  if (smartVol < 10) return { value: null, status: 'insufficient_data' };
   return { value: netFlow, status: 'computed' };
 }
 
@@ -308,6 +306,8 @@ export async function computeAnalytics(): Promise<{
     avgCoverageScore: number;
   };
 }> {
+  const startTime = Date.now();
+  const TIME_BUDGET_MS = 50_000; // leave 10s buffer for Vercel's 60s limit
   const errors: string[] = [];
   let computed = 0;
   let publishable = 0;
@@ -345,20 +345,37 @@ export async function computeAnalytics(): Promise<{
       telemetry: { marketsProcessed: 0, marketsSkipped: 0, smartWalletCount: 0, avgCoverageScore: 0 } };
   }
 
-  const { data: smartWalletRows } = await supabaseAdmin
+  // Hybrid smart wallet detection:
+  // 1. Accuracy-based: accuracy > 0.55 with sample_size >= 2 (relaxed from 0.60/4)
+  // 2. Tier1-based: top wallets by composite_score from wallet_signals
+  // Union of both sets gives much broader smart wallet pool
+
+  const { data: accuracyWallets } = await supabaseAdmin
     .from('wallets')
     .select('address')
-    .gt('accuracy_score', 0.60)
-    .gt('accuracy_sample_size', 3);
+    .gt('accuracy_score', 0.55)
+    .gte('accuracy_sample_size', 2);
 
-  const smartWallets = new Set(
-    (smartWalletRows ?? []).map((w: { address: string }) => w.address),
-  );
+  const { data: tier1Wallets } = await supabaseAdmin
+    .from('wallet_signals')
+    .select('wallet_address')
+    .gt('composite_score', 0.4)
+    .order('composite_score', { ascending: false })
+    .limit(500);
+
+  const smartWallets = new Set([
+    ...(accuracyWallets ?? []).map((w: { address: string }) => w.address),
+    ...(tier1Wallets ?? []).map((w: { wallet_address: string }) => w.wallet_address),
+  ]);
 
   const ID_BATCH = 50;
   const analyticsRows: Record<string, unknown>[] = [];
 
   for (let i = 0; i < markets.length; i += ID_BATCH) {
+    if (Date.now() - startTime > TIME_BUDGET_MS) {
+      errors.push(`Time budget reached at market ${i}/${markets.length}, will continue next run`);
+      break;
+    }
     const batch = markets.slice(i, i + ID_BATCH);
     const batchIds = batch.map((m) => m.condition_id);
 
@@ -369,12 +386,13 @@ export async function computeAnalytics(): Promise<{
       .gte('timestamp', twoDaysAgo)
       .order('timestamp', { ascending: false });
 
-    const sevenDaysAgo = new Date(Date.now() - 7 * 86400000).toISOString();
+    // Use 30-day trade window (up from 7d) to capture more activity for sparse markets
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 86400000).toISOString();
     const { data: trades } = await supabaseAdmin
       .from('trades')
       .select('market_id, price, size_tokens, size_usdc, side, wallet_address, timestamp')
       .in('market_id', batchIds)
-      .gte('timestamp', sevenDaysAgo);
+      .gte('timestamp', thirtyDaysAgo);
 
     const snapsByMarket = new Map<string, Snapshot[]>();
     for (const s of snapshots ?? []) {
