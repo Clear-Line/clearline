@@ -44,6 +44,8 @@ export async function computeCorrelations(): Promise<{
   computed: number;
   errors: string[];
 }> {
+  const startTime = Date.now();
+  const TIME_BUDGET_MS = 50_000; // leave 10s buffer for Vercel's 60s limit
   const errors: string[] = [];
   let computed = 0;
 
@@ -82,6 +84,10 @@ export async function computeCorrelations(): Promise<{
   const allSnapshots: { market_id: string; yes_price: number; timestamp: string }[] = [];
 
   for (let i = 0; i < allMarketIds.length; i += ID_BATCH) {
+    if (Date.now() - startTime > TIME_BUDGET_MS) {
+      errors.push(`Time budget reached at snapshot fetch ${i}/${allMarketIds.length}, will continue next run`);
+      break;
+    }
     const batch = allMarketIds.slice(i, i + ID_BATCH);
     const { data } = await supabaseAdmin
       .from('market_snapshots')

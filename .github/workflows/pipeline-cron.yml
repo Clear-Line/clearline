@@ -1,9 +1,9 @@
 name: Full Pipeline (Trades + Wallets + Signals)
 
 on:
-  schedule:
-    # Every 2 hours
-    - cron: '0 */2 * * *'
+  # Disabled — using cron-job.org instead of GitHub Actions
+  # schedule:
+  #   - cron: '0 */2 * * *'
   workflow_dispatch:
 
 concurrency:

@@ -7,6 +7,8 @@
 import { supabaseAdmin } from '../supabase';
 
 export async function profileWallets(): Promise<{ updated: number; errors: string[] }> {
+  const startTime = Date.now();
+  const TIME_BUDGET_MS = 50_000; // leave 10s buffer for Vercel's 60s limit
   const errors: string[] = [];
   let updated = 0;
 
@@ -47,11 +49,16 @@ export async function profileWallets(): Promise<{ updated: number; errors: strin
     }
   }
 
-  // After basic profiling, compute credibility scores and PnL
-  const credResult = await computeCredibilityAndPnl();
-  errors.push(...credResult.errors);
+  // After basic profiling, compute credibility scores and PnL (if time remains)
+  if (Date.now() - startTime < TIME_BUDGET_MS) {
+    const credResult = await computeCredibilityAndPnl(TIME_BUDGET_MS - (Date.now() - startTime));
+    errors.push(...credResult.errors);
+    updated += credResult.updated;
+  } else {
+    errors.push('Time budget reached before credibility computation, will continue next run');
+  }
 
-  return { updated: updated + credResult.updated, errors };
+  return { updated, errors };
 }
 
 /**
@@ -60,7 +67,8 @@ export async function profileWallets(): Promise<{ updated: number; errors: strin
  * credibility_score = 40% accuracy + 30% normalized PnL + 30% entry_timing
  * total_pnl_usdc = realized PnL from trades in resolved markets
  */
-async function computeCredibilityAndPnl(): Promise<{ updated: number; errors: string[] }> {
+async function computeCredibilityAndPnl(remainingMs = 40_000): Promise<{ updated: number; errors: string[] }> {
+  const credStart = Date.now();
   const errors: string[] = [];
   let updated = 0;
 
@@ -101,6 +109,10 @@ async function computeCredibilityAndPnl(): Promise<{ updated: number; errors: st
   }[] = [];
 
   for (let i = 0; i < resolvedIds.length; i += ID_BATCH) {
+    if (Date.now() - credStart > remainingMs) {
+      errors.push(`Credibility time budget reached at trade fetch ${i}/${resolvedIds.length}`);
+      break;
+    }
     const batch = resolvedIds.slice(i, i + ID_BATCH);
     const { data } = await supabaseAdmin
       .from('trades')

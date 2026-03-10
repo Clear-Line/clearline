@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { detectAndFlagMoves } from '@/lib/analysis/move-detector';
+import { shouldRetry, scheduleRetry, getRetryCount } from '@/lib/pipeline/self-retry';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -14,12 +15,19 @@ export async function GET(req: NextRequest) {
 
   try {
     const result = await detectAndFlagMoves();
+    const retryCount = getRetryCount(req);
+
+    if (shouldRetry(result.errors)) {
+      scheduleRetry(req, retryCount);
+    }
+
     return NextResponse.json({
       success: true,
       detected: result.detected,
       flagged: result.flagged,
-      errors: result.errors,
       telemetry: result.telemetry,
+      retryCount,
+      errors: result.errors,
     });
   } catch (err) {
     return NextResponse.json(

@@ -146,14 +146,63 @@ export interface PolymarketTrade {
 export async function fetchMarketTrades(
   conditionId: string,
   limit = 100,
+  offset = 0,
 ): Promise<PolymarketTrade[]> {
   const params = new URLSearchParams({
     market: conditionId,
     limit: String(limit),
+    offset: String(offset),
   });
   const res = await fetch(`${DATA_API}/trades?${params}`);
   if (!res.ok) throw new Error(`Data /trades failed: ${res.status}`);
   return res.json();
+}
+
+/**
+ * Fetch trades with pagination — pages through until no more data or limits hit.
+ * Includes per-request retry with exponential backoff for 429s.
+ */
+export async function fetchMarketTradesPaginated(
+  conditionId: string,
+  opts: { maxPages?: number; pageSize?: number; maxRetries?: number } = {},
+): Promise<{ trades: PolymarketTrade[]; pages: number; retries: number }> {
+  const { maxPages = 5, pageSize = 100, maxRetries = 3 } = opts;
+  const allTrades: PolymarketTrade[] = [];
+  let pages = 0;
+  let totalRetries = 0;
+
+  for (let page = 0; page < maxPages; page++) {
+    const offset = page * pageSize;
+    let lastErr: Error | null = null;
+
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        const trades = await fetchMarketTrades(conditionId, pageSize, offset);
+        allTrades.push(...trades);
+        pages++;
+        lastErr = null;
+
+        // If fewer results than page size, no more pages
+        if (trades.length < pageSize) return { trades: allTrades, pages, retries: totalRetries };
+        break;
+      } catch (err) {
+        lastErr = err as Error;
+        const errStr = String(err);
+        if (errStr.includes('429') || errStr.includes('rate')) {
+          totalRetries++;
+          // Exponential backoff: 300ms, 900ms, 2700ms + jitter
+          const delay = Math.pow(3, attempt) * 300 + Math.random() * 200;
+          await new Promise((r) => setTimeout(r, delay));
+        } else {
+          throw err; // Non-retryable error
+        }
+      }
+    }
+
+    if (lastErr) throw lastErr; // All retries exhausted
+  }
+
+  return { trades: allTrades, pages, retries: totalRetries };
 }
 
 export async function fetchWalletActivity(

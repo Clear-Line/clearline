@@ -268,8 +268,7 @@ export async function computeTier1Signals(): Promise<{
       .from('markets')
       .select('condition_id')
       .in('condition_id', idBatch)
-      .eq('is_active', true)
-      .in('category', ['politics', 'economics', 'geopolitics', 'other']);
+      .eq('is_active', true);
     if (data) for (const m of data) focusMarketIdSet.add(m.condition_id);
   }
 
