@@ -98,8 +98,6 @@ export async function pollMarkets(): Promise<{ upserted: number; errors: string[
       const vol24h = parseFloat(m.volume24hr) || 0;
       const totalVol = parseFloat(m.volume) || 0;
       const liq = parseFloat(m.liquidity) || 0;
-      // Only snapshot markets with some activity — skip truly dead markets
-      // (no 24h volume, no total volume, and no liquidity)
       if (vol24h > 0 || totalVol > 0 || liq > 0) {
         snapshotSeen.add(m.conditionId);
         snapshotRows.push({
@@ -114,6 +112,11 @@ export async function pollMarkets(): Promise<{ upserted: number; errors: string[
       }
     }
   }
+
+  // Cap snapshots to top 500 markets by 24h volume to control storage growth
+  const MAX_SNAPSHOTS = 500;
+  snapshotRows.sort((a, b) => (b.volume_24h ?? 0) - (a.volume_24h ?? 0));
+  const cappedSnapshots = snapshotRows.slice(0, MAX_SNAPSHOTS);
 
   // Batch upsert markets in chunks of 500
   let upserted = 0;
@@ -133,8 +136,8 @@ export async function pollMarkets(): Promise<{ upserted: number; errors: string[
   }
 
   // Batch insert snapshots in chunks of 500
-  for (let i = 0; i < snapshotRows.length; i += BATCH_SIZE) {
-    const batch = snapshotRows.slice(i, i + BATCH_SIZE);
+  for (let i = 0; i < cappedSnapshots.length; i += BATCH_SIZE) {
+    const batch = cappedSnapshots.slice(i, i + BATCH_SIZE);
     const { error } = await supabaseAdmin
       .from('market_snapshots')
       .insert(batch);

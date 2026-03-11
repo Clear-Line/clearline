@@ -13,7 +13,7 @@ import {
   ArrowRight,
   Globe,
 } from "lucide-react";
-import { Market, mockMarkets } from "../data/mockData";
+import { Market } from "../types/market";
 import { MarketCard } from "../components/MarketCard";
 import { InteractiveGlobe } from "../components/ui/interactive-globe";
 
@@ -46,9 +46,10 @@ function formatDate(): string {
 
 export default function Dashboard() {
   const [sortOption, setSortOption] = useState<SortOption>("highest-volume");
-  const [markets, setMarkets] = useState<Market[]>(mockMarkets);
+  const [markets, setMarkets] = useState<Market[]>([]);
   const [loading, setLoading] = useState(true);
   const [isLive, setIsLive] = useState(false);
+  const [fetchError, setFetchError] = useState(false);
   const [currentTime, setCurrentTime] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [showAll, setShowAll] = useState(false);
@@ -85,7 +86,7 @@ export default function Dashboard() {
           setIsLive(true);
         }
       } catch {
-        // Keep mock data on failure
+        setFetchError(true);
       } finally {
         setLoading(false);
       }
@@ -148,7 +149,7 @@ export default function Dashboard() {
                   isLive ? "text-[#10b981]" : "text-[#f59e0b]"
                 }`}
               >
-                {isLive ? "Live" : "Mock"}
+                {isLive ? "Live" : fetchError ? "Offline" : "Connecting..."}
               </span>
             </div>
             <span className="text-[#64748b] font-mono">{currentTime} EST</span>
@@ -316,7 +317,8 @@ export default function Dashboard() {
 
             {!loading && sortedMarkets.length === 0 && (
               <div className="text-center py-16">
-                <p className="text-sm text-[#64748b]">No markets found.</p>
+                <p className="text-sm text-[#94a3b8] mb-2">{fetchError ? "Unable to connect to data pipeline." : "No markets found."}</p>
+                {fetchError && <p className="text-xs text-[#64748b]">The pipeline may still be populating data. Try refreshing in a few minutes.</p>}
               </div>
             )}
           </div>

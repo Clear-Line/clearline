@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Activity, Wallet, Newspaper, Bell, BarChart3, AlertTriangle, Menu, X, Search } from 'lucide-react';
+import { Activity, Wallet, Bell, BarChart3, AlertTriangle, Menu, X, Search } from 'lucide-react';
 import { useState } from 'react';
 import { SignedIn, SignedOut, SignInButton, UserButton } from '@clerk/nextjs';
 
@@ -15,7 +15,6 @@ export function Navbar() {
   const navigation = [
     { name: 'Terminal', href: '/', icon: Activity },
     { name: 'Wallet Tracker', href: '/wallets', icon: Wallet },
-    { name: 'News Feed', href: '/news', icon: Newspaper },
     { name: 'Alerts', href: '/alerts', icon: Bell },
     { name: 'Accuracy', href: '/accuracy', icon: BarChart3 },
     { name: 'Insider Cases', href: '/about', icon: AlertTriangle },

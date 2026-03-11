@@ -21,7 +21,7 @@ import {
   ArrowDownRight,
 } from "lucide-react";
 import { ConfidenceBadge } from "../../../components/ConfidenceBadge";
-import { ConfidenceLevel } from "../../../data/mockData";
+import { ConfidenceLevel } from "../../../types/market";
 import {
   LineChart,
   Line,

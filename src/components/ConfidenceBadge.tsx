@@ -1,4 +1,4 @@
-import { ConfidenceLevel } from "../data/mockData";
+import { ConfidenceLevel } from "../types/market";
 
 interface ConfidenceBadgeProps {
   confidence: ConfidenceLevel;

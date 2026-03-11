@@ -1,7 +1,7 @@
 "use client";
 
 import { TrendingUp, TrendingDown, DollarSign, Users } from "lucide-react";
-import { Market } from "../data/mockData";
+import { Market } from "../types/market";
 import { ConfidenceBadge } from "./ConfidenceBadge";
 import Link from "next/link";
 import { GlowingEffect } from "./ui/glowing-effect";
