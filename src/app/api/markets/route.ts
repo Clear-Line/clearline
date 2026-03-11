@@ -30,7 +30,7 @@ export async function GET(request: Request) {
 
   // Step 1: Get distinct market IDs with volume (paginate to beat Supabase 1000-row default)
   // We query just market_id to minimize data, then fetch full snapshots per batch
-  const sixHoursAgo = new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString();
+  const fortyEightHoursAgo = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
   const allMarketIds = new Set<string>();
   let snapOffset = 0;
   const SNAP_PAGE = 1000;
@@ -41,7 +41,7 @@ export async function GET(request: Request) {
       .from('market_snapshots')
       .select('market_id')
       .gt('volume_24h', 0)
-      .gte('timestamp', sixHoursAgo)
+      .gte('timestamp', fortyEightHoursAgo)
       .range(snapOffset, snapOffset + SNAP_PAGE - 1);
 
     if (!page || page.length === 0) break;
@@ -73,7 +73,7 @@ export async function GET(request: Request) {
           .select('market_id, yes_price, volume_24h, liquidity, unique_traders_24h, timestamp')
           .in('market_id', batch)
           .not('volume_24h', 'is', null)
-          .gte('timestamp', sixHoursAgo)
+          .gte('timestamp', fortyEightHoursAgo)
           .order('timestamp', { ascending: false }),
         supabaseAdmin
           .from('market_snapshots')
@@ -213,7 +213,7 @@ export async function GET(request: Request) {
   }
 
   // Build market card DTOs — only politics, economics, geopolitics
-  const FOCUS = new Set(['politics', 'economics', 'geopolitics']);
+  const FOCUS = new Set(['politics', 'economics', 'geopolitics', 'crypto']);
   const cards = [];
 
   for (const m of markets) {
@@ -252,10 +252,12 @@ export async function GET(request: Request) {
 
     const section = category === 'politics' ? 'political'
       : category === 'geopolitics' ? 'geopolitics'
+      : category === 'crypto' ? 'crypto'
       : 'economics';
     const uiCategory = category === 'politics'
       ? classifyPoliticalSubcategory(m.question)
       : category === 'geopolitics' ? 'geopolitics'
+      : category === 'crypto' ? 'crypto'
       : 'economic';
 
     const ap = analyticsPublishable.get(m.condition_id);
