@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase';
+import { bq } from '@/lib/bigquery';
 
 export const runtime = 'nodejs';
 
@@ -21,7 +22,7 @@ export async function GET(
   }
 
   // Fetch last 50 snapshots with actual volume data (from Gamma API, not CLOB)
-  const { data: snapshots } = await supabaseAdmin
+  const { data: snapshots } = await bq
     .from('market_snapshots')
     .select('yes_price, no_price, volume_24h, total_volume, liquidity, timestamp')
     .eq('market_id', id)
@@ -48,7 +49,7 @@ export async function GET(
   }));
 
   // Fetch trades for this market to build wallet breakdown
-  const { data: trades } = await supabaseAdmin
+  const { data: trades } = await bq
     .from('trades')
     .select('wallet_address, size_usdc, side, timestamp')
     .eq('market_id', id)
@@ -82,7 +83,7 @@ export async function GET(
   // Look up wallet accuracy for top wallets
   const topAddresses = sortedWallets.map(([addr]) => addr);
   const { data: walletData } = topAddresses.length > 0
-    ? await supabaseAdmin
+    ? await bq
         .from('wallets')
         .select('address, accuracy_score, accuracy_sample_size, total_markets_traded')
         .in('address', topAddresses)
@@ -108,7 +109,7 @@ export async function GET(
   const topWalletConcentration = walletBreakdown.length > 0 ? walletBreakdown[0].percentage / 100 : 0;
 
   // Fetch flagged moves for this market
-  const { data: flaggedMoves } = await supabaseAdmin
+  const { data: flaggedMoves } = await bq
     .from('flagged_moves')
     .select('summary_text, confidence_score, catalyst_type, catalyst_description, detection_timestamp, price_delta, signal_direction')
     .eq('market_id', id)

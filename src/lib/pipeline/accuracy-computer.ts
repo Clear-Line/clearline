@@ -9,6 +9,7 @@
  */
 
 import { supabaseAdmin } from '../supabase';
+import { bq } from '../bigquery';
 import { GammaMarket } from './polymarket';
 
 const GAMMA_API = 'https://gamma-api.polymarket.com';
@@ -173,7 +174,7 @@ export async function computeAccuracy(): Promise<{
 
   for (let i = 0; i < resolvedIds.length; i += ID_BATCH) {
     const batch = resolvedIds.slice(i, i + ID_BATCH);
-    const { data, error } = await supabaseAdmin
+    const { data, error } = await bq
       .from('trades')
       .select('wallet_address, market_id, side, outcome, size_usdc')
       .in('market_id', batch);
@@ -225,7 +226,7 @@ export async function computeAccuracy(): Promise<{
   const UPSERT_BATCH = 500;
   for (let i = 0; i < walletRows.length; i += UPSERT_BATCH) {
     const chunk = walletRows.slice(i, i + UPSERT_BATCH);
-    const { error } = await supabaseAdmin
+    const { error } = await bq
       .from('wallets')
       .upsert(chunk, { onConflict: 'address' });
 

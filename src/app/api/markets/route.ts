@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase';
+import { bq } from '@/lib/bigquery';
 
 export const runtime = 'nodejs';
 const ID_BATCH = 200;
@@ -37,7 +38,7 @@ export async function GET(request: Request) {
 
   // eslint-disable-next-line no-constant-condition
   while (true) {
-    const { data: page } = await supabaseAdmin
+    const { data: page } = await bq
       .from('market_snapshots')
       .select('market_id')
       .gt('volume_24h', 0)
@@ -68,14 +69,14 @@ export async function GET(request: Request) {
     const batch = uniqueMarketIds.slice(i, i + SNAP_BATCH);
     batchPromises.push(
       Promise.all([
-        supabaseAdmin
+        bq
           .from('market_snapshots')
           .select('market_id, yes_price, volume_24h, liquidity, unique_traders_24h, timestamp')
           .in('market_id', batch)
           .not('volume_24h', 'is', null)
           .gte('timestamp', fortyEightHoursAgo)
           .order('timestamp', { ascending: false }),
-        supabaseAdmin
+        bq
           .from('market_snapshots')
           .select('market_id, yes_price, volume_24h, liquidity, unique_traders_24h, timestamp')
           .in('market_id', batch)
@@ -179,7 +180,7 @@ export async function GET(request: Request) {
   const topMarketIds = marketIds.slice(0, TOP_TRADE_MARKETS);
   for (let i = 0; i < topMarketIds.length; i += ID_BATCH) {
     const batch = topMarketIds.slice(i, i + ID_BATCH);
-    const { data: tradeCounts } = await supabaseAdmin
+    const { data: tradeCounts } = await bq
       .from('trades')
       .select('market_id, wallet_address')
       .in('market_id', batch);
@@ -201,7 +202,7 @@ export async function GET(request: Request) {
   const analyticsMarketIds = [...latestByMarket.keys()];
   for (let i = 0; i < analyticsMarketIds.length; i += ID_BATCH) {
     const batch = analyticsMarketIds.slice(i, i + ID_BATCH);
-    const { data: analyticsData } = await supabaseAdmin
+    const { data: analyticsData } = await bq
       .from('market_analytics')
       .select('market_id, is_publishable, coverage_score')
       .in('market_id', batch);

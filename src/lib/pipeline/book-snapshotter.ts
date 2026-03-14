@@ -5,6 +5,7 @@
  */
 
 import { supabaseAdmin } from '../supabase';
+import { bq } from '../bigquery';
 import { fetchOrderBook, fetchSpread } from './polymarket';
 
 function computeDepthWithin5Cents(
@@ -169,43 +170,42 @@ export async function snapshotBooks(): Promise<{ updated: number; errors: string
     }));
   }
 
-  // Update the most recent snapshot for each market with book data
-  // Batch: find latest snapshot IDs for all markets at once, then update in chunks
+  // Update the most recent snapshot for each market with book data in BigQuery
+  // Use (market_id, timestamp) composite key instead of auto-increment id
   const marketIds = snapshotRows.map((r) => r.market_id);
   const snapshotMap = new Map(snapshotRows.map((r) => [r.market_id, r]));
 
-  // Fetch latest snapshot ID per market in batches
+  // Fetch latest snapshot timestamp per market in batches
   const ID_BATCH = 200;
-  const latestById = new Map<string, number>();
+  const latestByMarket = new Map<string, string>(); // market_id → timestamp
   for (let i = 0; i < marketIds.length; i += ID_BATCH) {
     const batch = marketIds.slice(i, i + ID_BATCH);
-    const { data: latestSnaps } = await supabaseAdmin
+    const { data: latestSnaps } = await bq
       .from('market_snapshots')
-      .select('id, market_id')
+      .select('market_id, timestamp')
       .in('market_id', batch)
       .not('volume_24h', 'is', null)
       .order('timestamp', { ascending: false });
 
     if (latestSnaps) {
-      for (const s of latestSnaps) {
+      for (const s of latestSnaps as { market_id: string; timestamp: string }[]) {
         // Only keep the first (latest) per market
-        if (!latestById.has(s.market_id)) {
-          latestById.set(s.market_id, s.id);
+        if (!latestByMarket.has(s.market_id)) {
+          latestByMarket.set(s.market_id, s.timestamp);
         }
       }
     }
   }
 
-  // Update snapshots individually (Supabase doesn't support batch update with different values)
-  // but now we already have the IDs, saving N queries
+  // Update snapshots individually using (market_id, timestamp) composite key
   const UPDATE_CONCURRENCY = 20;
-  const entries = [...latestById.entries()];
+  const entries = [...latestByMarket.entries()];
   for (let i = 0; i < entries.length; i += UPDATE_CONCURRENCY) {
     const batch = entries.slice(i, i + UPDATE_CONCURRENCY);
-    await Promise.all(batch.map(async ([marketId, snapId]) => {
+    await Promise.all(batch.map(async ([marketId, timestamp]) => {
       const row = snapshotMap.get(marketId);
       if (!row) return;
-      const { error } = await supabaseAdmin
+      const { error } = await bq
         .from('market_snapshots')
         .update({
           spread: row.spread,
@@ -215,7 +215,8 @@ export async function snapshotBooks(): Promise<{ updated: number; errors: string
           cost_move_up_5pct: row.cost_move_up_5pct,
           cost_move_down_5pct: row.cost_move_down_5pct,
         })
-        .eq('id', snapId);
+        .eq('market_id', marketId)
+        .eq('timestamp', timestamp);
       if (error) {
         errors.push(`Book update ${marketId}: ${error.message}`);
       } else {

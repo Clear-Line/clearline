@@ -1,11 +1,12 @@
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase';
+import { bq } from '@/lib/bigquery';
 
 export const runtime = 'nodejs';
 
 export async function GET() {
   // Fetch top wallets by accuracy (with minimum sample size)
-  const { data: wallets, error: wErr } = await supabaseAdmin
+  const { data: wallets, error: wErr } = await bq
     .from('wallets')
     .select('address, username, pseudonym, accuracy_score, accuracy_sample_size')
     .gte('accuracy_sample_size', 2)
@@ -29,7 +30,7 @@ export async function GET() {
 
   for (let i = 0; i < addresses.length; i += ID_BATCH) {
     const batch = addresses.slice(i, i + ID_BATCH);
-    const { data: trades } = await supabaseAdmin
+    const { data: trades } = await bq
       .from('trades')
       .select('wallet_address, market_id, side, size_usdc, timestamp')
       .in('wallet_address', batch)
@@ -67,7 +68,7 @@ export async function GET() {
   }
 
   // Also pull tier1 composite scores if available
-  const { data: signals } = await supabaseAdmin
+  const { data: signals } = await bq
     .from('wallet_signals')
     .select('wallet_address, composite_score')
     .in('wallet_address', addresses)

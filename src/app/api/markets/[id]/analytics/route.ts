@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { supabaseAdmin } from '@/lib/supabase';
+import { bq } from '@/lib/bigquery';
 
 export const runtime = 'nodejs';
 
@@ -11,7 +11,7 @@ export async function GET(
 
   // ─── Precomputed analytics from market_analytics table ───
 
-  const { data: analytics } = await supabaseAdmin
+  const { data: analytics } = await bq
     .from('market_analytics')
     .select('*')
     .eq('market_id', marketId)
@@ -19,7 +19,7 @@ export async function GET(
 
   // ─── Volume profile: computed on-the-fly from trades ───
 
-  const { data: trades } = await supabaseAdmin
+  const { data: trades } = await bq
     .from('trades')
     .select('price, size_usdc, side')
     .eq('market_id', marketId);
@@ -28,7 +28,7 @@ export async function GET(
 
   // ─── Position delta for flagged wallets ───
 
-  const { data: positions } = await supabaseAdmin
+  const { data: positions } = await bq
     .from('wallet_positions')
     .select('wallet_address, position_size, outcome, snapshot_time')
     .eq('market_id', marketId)
@@ -39,7 +39,7 @@ export async function GET(
 
   // ─── Smart wallet activity ───
 
-  const { data: smartWallets } = await supabaseAdmin
+  const { data: smartWallets } = await bq
     .from('wallets')
     .select('address, accuracy_score, accuracy_sample_size, credibility_score, total_pnl_usdc')
     .gt('accuracy_score', 0.60)
@@ -48,7 +48,7 @@ export async function GET(
   const smartAddresses = new Set((smartWallets ?? []).map((w) => w.address));
 
   const { data: smartTrades } = smartAddresses.size > 0
-    ? await supabaseAdmin
+    ? await bq
         .from('trades')
         .select('wallet_address, side, size_usdc, price, timestamp')
         .eq('market_id', marketId)
@@ -80,7 +80,7 @@ export async function GET(
 
   // ─── Latest book snapshot for real-time book metrics ───
 
-  const { data: latestBook } = await supabaseAdmin
+  const { data: latestBook } = await bq
     .from('market_snapshots')
     .select('spread, book_depth_bid_5c, book_depth_ask_5c, book_imbalance, cost_move_up_5pct, cost_move_down_5pct, timestamp')
     .eq('market_id', marketId)
