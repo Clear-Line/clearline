@@ -8,7 +8,7 @@
  *   4. Stores results in flagged_moves table
  */
 
-import { supabaseAdmin } from '../supabase';
+import { bq } from '../bigquery';
 
 // ---- Config ----
 
@@ -48,7 +48,7 @@ async function fetchSignalsPaginated(): Promise<{ data: SignalRow[]; error: stri
   const all: SignalRow[] = [];
   let offset = 0;
   while (true) {
-    const { data, error } = await supabaseAdmin
+    const { data, error } = await bq
       .from('wallet_signals')
       .select('wallet_address, market_id, composite_score')
       .gt('composite_score', CLUSTER_COMPOSITE_THRESHOLD)
@@ -66,7 +66,7 @@ async function fetchRecentTradesPaginated(sinceISO: string): Promise<{ data: Tra
   const all: TradeRow[] = [];
   let offset = 0;
   while (true) {
-    const { data, error } = await supabaseAdmin
+    const { data, error } = await bq
       .from('trades')
       .select('wallet_address, market_id, side, size_usdc, timestamp')
       .gte('timestamp', sinceISO)
@@ -88,7 +88,7 @@ async function fetchSnapshotsPaginated(marketIds: string[], sinceISO: string): P
     const idBatch = marketIds.slice(i, i + BATCH);
     let offset = 0;
     while (true) {
-      const { data, error } = await supabaseAdmin
+      const { data, error } = await bq
         .from('market_snapshots')
         .select('market_id, timestamp, yes_price, book_depth_bid_5c')
         .in('market_id', idBatch)
@@ -232,7 +232,7 @@ export async function detectAndFlagMoves(): Promise<{
 
   // ---- Phase 3: Deduplication — check existing flags within cooldown window ----
   const dedupeStart = new Date(now.getTime() - DEDUP_COOLDOWN_HOURS * 60 * 60 * 1000).toISOString();
-  const { data: existingFlags } = await supabaseAdmin
+  const { data: existingFlags } = await bq
     .from('flagged_moves')
     .select('market_id')
     .eq('catalyst_type', 'wallet_cluster')
@@ -362,7 +362,7 @@ export async function detectAndFlagMoves(): Promise<{
     const CHUNK = 50;
     for (let i = 0; i < flagRows.length; i += CHUNK) {
       const chunk = flagRows.slice(i, i + CHUNK);
-      const { error: insertErr } = await supabaseAdmin.from('flagged_moves').insert(chunk);
+      const { error: insertErr } = await bq.from('flagged_moves').insert(chunk);
 
       if (insertErr) {
         errors.push(`Batch insert offset=${i}: ${insertErr.message}`);

@@ -15,6 +15,7 @@
  */
 
 import { supabaseAdmin } from '../supabase';
+import { bq } from '../bigquery';
 
 // ─── Types ───
 
@@ -315,7 +316,7 @@ export async function computeAnalytics(): Promise<{
   let skipped = 0;
 
   const twoDaysAgo = new Date(Date.now() - 48 * 3600000).toISOString();
-  const { data: recentSnaps } = await supabaseAdmin
+  const { data: recentSnaps } = await bq
     .from('market_snapshots')
     .select('market_id')
     .gte('timestamp', twoDaysAgo)
@@ -350,13 +351,13 @@ export async function computeAnalytics(): Promise<{
   // 2. Tier1-based: top wallets by composite_score from wallet_signals
   // Union of both sets gives much broader smart wallet pool
 
-  const { data: accuracyWallets } = await supabaseAdmin
+  const { data: accuracyWallets } = await bq
     .from('wallets')
     .select('address')
     .gt('accuracy_score', 0.55)
     .gte('accuracy_sample_size', 2);
 
-  const { data: tier1Wallets } = await supabaseAdmin
+  const { data: tier1Wallets } = await bq
     .from('wallet_signals')
     .select('wallet_address')
     .gt('composite_score', 0.4)
@@ -379,7 +380,7 @@ export async function computeAnalytics(): Promise<{
     const batch = markets.slice(i, i + ID_BATCH);
     const batchIds = batch.map((m) => m.condition_id);
 
-    const { data: snapshots } = await supabaseAdmin
+    const { data: snapshots } = await bq
       .from('market_snapshots')
       .select('market_id, yes_price, timestamp, book_depth_bid_5c, book_depth_ask_5c, cost_move_up_5pct, cost_move_down_5pct')
       .in('market_id', batchIds)
@@ -388,7 +389,7 @@ export async function computeAnalytics(): Promise<{
 
     // Use 30-day trade window (up from 7d) to capture more activity for sparse markets
     const thirtyDaysAgo = new Date(Date.now() - 30 * 86400000).toISOString();
-    const { data: trades } = await supabaseAdmin
+    const { data: trades } = await bq
       .from('trades')
       .select('market_id, price, size_tokens, size_usdc, side, wallet_address, timestamp')
       .in('market_id', batchIds)
@@ -480,7 +481,7 @@ export async function computeAnalytics(): Promise<{
   const UPSERT_BATCH = 500;
   for (let i = 0; i < analyticsRows.length; i += UPSERT_BATCH) {
     const chunk = analyticsRows.slice(i, i + UPSERT_BATCH);
-    const { error } = await supabaseAdmin
+    const { error } = await bq
       .from('market_analytics')
       .upsert(chunk, { onConflict: 'market_id' });
 

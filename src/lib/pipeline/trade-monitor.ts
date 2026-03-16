@@ -10,6 +10,7 @@
  */
 
 import { supabaseAdmin } from '../supabase';
+import { bq } from '../bigquery';
 import { fetchMarketTradesPaginated } from './polymarket';
 
 const BATCH_SIZE = 5;          // concurrent market fetches (down from 10)
@@ -48,7 +49,7 @@ export async function pollTrades(): Promise<{
   // --- Freshness-aware candidate selection ---
   // Only consider snapshots from the last 6 hours, ranked by volume
   const sixHoursAgo = new Date(Date.now() - 6 * 3600000).toISOString();
-  const { data: volSnaps } = await supabaseAdmin
+  const { data: volSnaps } = await bq
     .from('market_snapshots')
     .select('market_id, volume_24h')
     .gte('timestamp', sixHoursAgo)
@@ -141,7 +142,7 @@ export async function pollTrades(): Promise<{
         // Batch upsert trades
         if (tradeRows.length > 0) {
           const beforeCount = inserted;
-          const { error: insertError, count } = await supabaseAdmin
+          const { error: insertError, count } = await bq
             .from('trades')
             .upsert(tradeRows, { onConflict: 'transaction_hash', ignoreDuplicates: true, count: 'exact' });
 
@@ -168,7 +169,7 @@ export async function pollTrades(): Promise<{
 
         const walletRows = Array.from(walletMap.values());
         if (walletRows.length > 0) {
-          const { error: walletErr } = await supabaseAdmin
+          const { error: walletErr } = await bq
             .from('wallets')
             .upsert(walletRows, { onConflict: 'address' });
           if (walletErr) {

@@ -10,6 +10,7 @@
  */
 
 import { supabaseAdmin } from '../supabase';
+import { bq } from '../bigquery';
 
 // ─── Pearson Correlation ───
 
@@ -89,7 +90,7 @@ export async function computeCorrelations(): Promise<{
       break;
     }
     const batch = allMarketIds.slice(i, i + ID_BATCH);
-    const { data } = await supabaseAdmin
+    const { data } = await bq
       .from('market_snapshots')
       .select('market_id, yes_price, timestamp')
       .in('market_id', batch)
@@ -167,7 +168,7 @@ export async function computeCorrelations(): Promise<{
   const BATCH = 500;
   for (let i = 0; i < correlationRows.length; i += BATCH) {
     const chunk = correlationRows.slice(i, i + BATCH);
-    const { error } = await supabaseAdmin
+    const { error } = await bq
       .from('market_correlations')
       .upsert(chunk, { onConflict: 'market_id_a,market_id_b,window_hours' });
 
@@ -226,7 +227,7 @@ export async function detectArbitrage(): Promise<{
 
   for (let i = 0; i < eventMarketIds.length; i += ID_BATCH) {
     const batch = eventMarketIds.slice(i, i + ID_BATCH);
-    const { data: snaps } = await supabaseAdmin
+    const { data: snaps } = await bq
       .from('market_snapshots')
       .select('market_id, yes_price, timestamp')
       .in('market_id', batch)

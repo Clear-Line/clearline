@@ -1,9 +1,12 @@
 /**
- * Market Poller — fetches active markets from Gamma API and upserts into Supabase.
+ * Market Poller — fetches active markets from Gamma API.
+ * Markets metadata → Supabase (small, fast lookups).
+ * Snapshots → BigQuery (high-volume time-series).
  * Run every 5 minutes.
  */
 
 import { supabaseAdmin } from '../supabase';
+import { bq } from '../bigquery';
 import { fetchActiveMarkets, GammaMarket } from './polymarket';
 
 function parseJsonField(raw: string | null | undefined): unknown {
@@ -135,10 +138,10 @@ export async function pollMarkets(): Promise<{ upserted: number; errors: string[
     }
   }
 
-  // Batch insert snapshots in chunks of 500
+  // Batch insert snapshots into BigQuery in chunks of 500
   for (let i = 0; i < cappedSnapshots.length; i += BATCH_SIZE) {
     const batch = cappedSnapshots.slice(i, i + BATCH_SIZE);
-    const { error } = await supabaseAdmin
+    const { error } = await bq
       .from('market_snapshots')
       .insert(batch);
 

@@ -5,6 +5,7 @@
  */
 
 import { supabaseAdmin } from '../supabase';
+import { bq } from '../bigquery';
 
 export async function profileWallets(): Promise<{ updated: number; errors: string[] }> {
   const startTime = Date.now();
@@ -12,42 +13,10 @@ export async function profileWallets(): Promise<{ updated: number; errors: strin
   const errors: string[] = [];
   let updated = 0;
 
-  // Aggregate trade stats per wallet using a single SQL query
-  const { data: stats, error: queryError } = await supabaseAdmin.rpc('compute_wallet_stats');
-
-  if (queryError) {
-    // If RPC doesn't exist yet, fall back to manual aggregation
-    return fallbackProfileWallets();
-  }
-
-  if (!stats || stats.length === 0) {
-    return { updated: 0, errors: ['No wallet stats computed'] };
-  }
-
-  // Batch upsert wallets in chunks of 500
-  const CHUNK = 500;
-  const now = new Date().toISOString();
-  const rows = stats.map((w: { wallet_address: string; total_trades: number; total_volume_usdc: number; total_markets_traded: number; first_seen_polymarket: string }) => ({
-    address: w.wallet_address,
-    total_trades: w.total_trades,
-    total_volume_usdc: w.total_volume_usdc,
-    total_markets_traded: w.total_markets_traded,
-    first_seen_polymarket: w.first_seen_polymarket,
-    last_updated: now,
-  }));
-
-  for (let i = 0; i < rows.length; i += CHUNK) {
-    const chunk = rows.slice(i, i + CHUNK);
-    const { error: updateError } = await supabaseAdmin
-      .from('wallets')
-      .upsert(chunk, { onConflict: 'address' });
-
-    if (updateError) {
-      errors.push(`Wallet batch offset=${i}: ${updateError.message}`);
-    } else {
-      updated += chunk.length;
-    }
-  }
+  // No RPC in BigQuery — use JS fallback aggregation directly
+  const fallbackResult = await fallbackProfileWallets();
+  errors.push(...fallbackResult.errors);
+  updated += fallbackResult.updated;
 
   // After basic profiling, compute credibility scores and PnL (if time remains)
   if (Date.now() - startTime < TIME_BUDGET_MS) {
@@ -73,7 +42,7 @@ async function computeCredibilityAndPnl(remainingMs = 40_000): Promise<{ updated
   let updated = 0;
 
   // Get wallets that have accuracy scores
-  const { data: wallets, error: wErr } = await supabaseAdmin
+  const { data: wallets, error: wErr } = await bq
     .from('wallets')
     .select('address, accuracy_score, accuracy_sample_size')
     .not('accuracy_score', 'is', null);
@@ -114,7 +83,7 @@ async function computeCredibilityAndPnl(remainingMs = 40_000): Promise<{ updated
       break;
     }
     const batch = resolvedIds.slice(i, i + ID_BATCH);
-    const { data } = await supabaseAdmin
+    const { data } = await bq
       .from('trades')
       .select('wallet_address, market_id, side, outcome, price, size_usdc')
       .in('market_id', batch)
@@ -148,7 +117,7 @@ async function computeCredibilityAndPnl(remainingMs = 40_000): Promise<{ updated
   }
 
   // Get entry timing scores for credibility weighting
-  const { data: signalRows } = await supabaseAdmin
+  const { data: signalRows } = await bq
     .from('wallet_signals')
     .select('wallet_address, entry_timing_score')
     .in('wallet_address', walletAddresses);
@@ -185,7 +154,7 @@ async function computeCredibilityAndPnl(remainingMs = 40_000): Promise<{ updated
   const BATCH = 500;
   for (let i = 0; i < updateRows.length; i += BATCH) {
     const chunk = updateRows.slice(i, i + BATCH);
-    const { error } = await supabaseAdmin
+    const { error } = await bq
       .from('wallets')
       .upsert(chunk, { onConflict: 'address' });
 
@@ -207,7 +176,7 @@ async function fallbackProfileWallets(): Promise<{ updated: number; errors: stri
   let updated = 0;
 
   // Get all wallets
-  const { data: wallets, error: wError } = await supabaseAdmin
+  const { data: wallets, error: wError } = await bq
     .from('wallets')
     .select('address');
 
@@ -216,7 +185,7 @@ async function fallbackProfileWallets(): Promise<{ updated: number; errors: stri
   }
 
   // Fetch all trades at once and aggregate in JS
-  const { data: allTrades, error: tError } = await supabaseAdmin
+  const { data: allTrades, error: tError } = await bq
     .from('trades')
     .select('wallet_address, market_id, size_usdc, timestamp');
 
@@ -261,7 +230,7 @@ async function fallbackProfileWallets(): Promise<{ updated: number; errors: stri
   const BATCH = 500;
   for (let i = 0; i < walletRows.length; i += BATCH) {
     const chunk = walletRows.slice(i, i + BATCH);
-    const { error: updateError } = await supabaseAdmin
+    const { error: updateError } = await bq
       .from('wallets')
       .upsert(chunk, { onConflict: 'address' });
 
