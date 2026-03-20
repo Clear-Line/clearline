@@ -1,6 +1,6 @@
 "use client";
 
-import { TrendingUp, TrendingDown, DollarSign, Users } from "lucide-react";
+import { TrendingUp, TrendingDown, DollarSign, Users, Zap } from "lucide-react";
 import { Market } from "../types/market";
 import { ConfidenceBadge } from "./ConfidenceBadge";
 import Link from "next/link";
@@ -110,12 +110,24 @@ export function MarketCard({ market }: MarketCardProps) {
               <span>{formatVolume(market.volume24h)}</span>
               <span className="text-[10px] text-[#475569]">vol</span>
             </div>
-            {market.traders !== null && (
-              <div className="flex items-center gap-1 text-xs text-[#64748b]">
-                <Users className="h-3 w-3" />
-                <span>{formatTraders(market.traders)}</span>
-              </div>
-            )}
+            <div className="flex items-center gap-3">
+              {market.edge && market.edge.score > 0 && (
+                <div className={`flex items-center gap-1 text-[10px] font-bold font-mono ${
+                  market.edge.score >= 65 ? "text-[#10b981]" :
+                  market.edge.score <= 35 ? "text-[#ef4444]" :
+                  "text-[#f59e0b]"
+                }`}>
+                  <Zap className="h-3 w-3" />
+                  <span>{market.edge.score}</span>
+                </div>
+              )}
+              {market.traders !== null && (
+                <div className="flex items-center gap-1 text-xs text-[#64748b]">
+                  <Users className="h-3 w-3" />
+                  <span>{formatTraders(market.traders)}</span>
+                </div>
+              )}
+            </div>
           </div>
         </Link>
       </div>

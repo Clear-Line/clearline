@@ -14,4 +14,9 @@ export interface Market {
   traders: number | null;
   lastUpdated: Date;
   liquidity: number;
+  edge: {
+    score: number;
+    direction: 'bullish' | 'bearish' | 'neutral';
+    regime: string;
+  } | null;
 }

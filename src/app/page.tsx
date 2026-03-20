@@ -17,7 +17,7 @@ import { Market } from "../types/market";
 import { MarketCard } from "../components/MarketCard";
 import { InteractiveGlobe } from "../components/ui/interactive-globe";
 
-type SortOption = "highest-volume" | "biggest-movers" | "highest-odds" | "lowest-odds";
+type SortOption = "highest-volume" | "biggest-movers" | "highest-odds" | "lowest-odds" | "highest-edge";
 
 function formatVolume(v: number): string {
   if (v >= 1_000_000) return `$${(v / 1_000_000).toFixed(1)}M`;
@@ -81,6 +81,7 @@ export default function Dashboard() {
             traders: (m.traders as number | null) ?? null,
             lastUpdated: new Date(m.lastUpdated as string),
             liquidity: m.liquidity as number,
+            edge: (m.edge as { score: number; direction: 'bullish' | 'bearish' | 'neutral'; regime: string } | null) ?? null,
           }));
           setMarkets(liveMarkets);
           setIsLive(true);
@@ -115,6 +116,13 @@ export default function Dashboard() {
         break;
       case "lowest-odds":
         filtered.sort((a, b) => a.currentOdds - b.currentOdds);
+        break;
+      case "highest-edge":
+        filtered.sort((a, b) => {
+          const aEdge = a.edge?.score ?? 50;
+          const bEdge = b.edge?.score ?? 50;
+          return Math.abs(bEdge - 50) - Math.abs(aEdge - 50); // strongest signals first (furthest from neutral 50)
+        });
         break;
     }
     return filtered;
@@ -299,6 +307,29 @@ export default function Dashboard() {
                 {showAll ? "Show Less" : `View All (${sortedMarkets.length})`}
                 <ArrowRight className={`h-3 w-3 transition-transform ${showAll ? "rotate-90" : ""}`} />
               </button>
+            </div>
+
+            {/* Sort Options */}
+            <div className="flex items-center gap-1 flex-wrap">
+              {([
+                { key: "highest-volume", label: "Volume" },
+                { key: "biggest-movers", label: "Movers" },
+                { key: "highest-edge", label: "Edge Signal" },
+                { key: "highest-odds", label: "High Odds" },
+                { key: "lowest-odds", label: "Low Odds" },
+              ] as { key: SortOption; label: string }[]).map(({ key, label }) => (
+                <button
+                  key={key}
+                  onClick={() => setSortOption(key)}
+                  className={`px-3 py-1 rounded-lg text-[10px] font-medium tracking-wider uppercase transition-colors ${
+                    sortOption === key
+                      ? "bg-[#00d4ff]/10 text-[#00d4ff] border border-[#00d4ff]/30"
+                      : "text-[#64748b] border border-transparent hover:text-white hover:bg-[rgba(255,255,255,0.04)]"
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
             </div>
 
             {/* Market Cards Grid */}
