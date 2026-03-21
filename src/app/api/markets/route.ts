@@ -199,16 +199,22 @@ export async function GET(request: Request) {
 
   // Fetch analytics publishability for all tracked markets
   const analyticsPublishable = new Map<string, { is_publishable: boolean; coverage_score: number }>();
+  const edgeByMarket = new Map<string, { edge_score: number; edge_direction: string; market_regime: string }>();
   const analyticsMarketIds = [...latestByMarket.keys()];
   for (let i = 0; i < analyticsMarketIds.length; i += ID_BATCH) {
     const batch = analyticsMarketIds.slice(i, i + ID_BATCH);
-    const { data: analyticsData } = await bq
-      .from('market_analytics')
-      .select('market_id, is_publishable, coverage_score')
-      .in('market_id', batch);
-    if (analyticsData) {
-      for (const a of analyticsData) {
+    const [analyticsRes, edgeRes] = await Promise.all([
+      bq.from('market_analytics').select('market_id, is_publishable, coverage_score').in('market_id', batch),
+      bq.from('market_edge').select('market_id, edge_score, edge_direction, market_regime').in('market_id', batch),
+    ]);
+    if (analyticsRes.data) {
+      for (const a of analyticsRes.data) {
         analyticsPublishable.set(a.market_id, { is_publishable: a.is_publishable ?? false, coverage_score: a.coverage_score ?? 0 });
+      }
+    }
+    if (edgeRes.data) {
+      for (const e of edgeRes.data) {
+        edgeByMarket.set(e.market_id, { edge_score: e.edge_score ?? 0, edge_direction: e.edge_direction ?? 'neutral', market_regime: e.market_regime ?? 'unknown' });
       }
     }
   }
@@ -262,6 +268,7 @@ export async function GET(request: Request) {
       : 'economic';
 
     const ap = analyticsPublishable.get(m.condition_id);
+    const ed = edgeByMarket.get(m.condition_id);
 
     cards.push({
       id: m.condition_id,
@@ -281,6 +288,11 @@ export async function GET(request: Request) {
         isPublishable: ap?.is_publishable ?? false,
         coverageScore: ap?.coverage_score ?? 0,
       },
+      edge: ed ? {
+        score: ed.edge_score,
+        direction: ed.edge_direction,
+        regime: ed.market_regime,
+      } : null,
     });
   }
 

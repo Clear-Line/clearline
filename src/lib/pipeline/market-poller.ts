@@ -70,7 +70,7 @@ export async function pollMarkets(): Promise<{ upserted: number; errors: string[
 
   // Build rows for batch upsert
   const marketRows = [];
-  const snapshotRows = [];
+  const snapshotRows: any[] = [];
   const marketSeen = new Set<string>();
   const snapshotSeen = new Set<string>();
 
@@ -116,8 +116,8 @@ export async function pollMarkets(): Promise<{ upserted: number; errors: string[
     }
   }
 
-  // Cap snapshots to top 500 markets by 24h volume to control storage growth
-  const MAX_SNAPSHOTS = 500;
+  // Top 5000 markets by volume — covers all meaningful activity within timeout
+  const MAX_SNAPSHOTS = 5000;
   snapshotRows.sort((a, b) => (b.volume_24h ?? 0) - (a.volume_24h ?? 0));
   const cappedSnapshots = snapshotRows.slice(0, MAX_SNAPSHOTS);
 

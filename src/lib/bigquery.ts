@@ -250,18 +250,32 @@ class QueryBuilder<T = any> {
     if (rows.length === 0) return { data: null, error: null, count: 0 };
 
     const client = getClient();
-    const table = client.dataset(dataset).table(this._table);
+    const fq = fqTable(this._table);
+    const allCols = Object.keys(rows[0]);
+    const INSERT_BATCH = 500;
 
-    // Convert ISO timestamp strings to Date objects for BigQuery streaming insert
-    const prepared = rows.map((row) => {
-      const out: any = {};
-      for (const [k, v] of Object.entries(row)) {
-        out[k] = typeof v === 'string' && /^\d{4}-\d{2}-\d{2}T/.test(v) ? new Date(v) : v;
-      }
-      return out;
-    });
+    for (let i = 0; i < rows.length; i += INSERT_BATCH) {
+      const batch = rows.slice(i, i + INSERT_BATCH);
 
-    await table.insert(prepared, { raw: false, skipInvalidRows: false });
+      const valueRows = batch.map((row) => {
+        const vals = allCols.map((c) => {
+          const v = row[c];
+          if (v === null || v === undefined) return 'NULL';
+          if (typeof v === 'number') return `${v}`;
+          if (typeof v === 'boolean') return `${v}`;
+          if (v instanceof Date) return `TIMESTAMP '${v.toISOString()}'`;
+          if (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}T/.test(v)) return `TIMESTAMP '${v}'`;
+          if (typeof v === 'object') return `'${JSON.stringify(v).replace(/'/g, "\\'")}'`;
+          const escaped = String(v).replace(/'/g, "\\'");
+          return `'${escaped}'`;
+        });
+        return `(${vals.join(', ')})`;
+      });
+
+      const sql = `INSERT INTO ${fq} (${allCols.join(', ')}) VALUES ${valueRows.join(',\n')}`;
+      await client.query(sql);
+    }
+
     return { data: null, error: null, count: rows.length };
   }
 
@@ -289,24 +303,55 @@ class QueryBuilder<T = any> {
     const MERGE_BATCH = 500;
     let totalAffected = 0;
 
+    // Fetch the actual BigQuery table schema so NULL casts match column types
+    const [tableMeta] = await client.dataset(dataset).table(this._table).getMetadata();
+    const schemaFields: { name: string; type: string }[] = tableMeta.schema?.fields ?? [];
+    const schemaTypes: Record<string, string> = {};
+    const BQ_TYPE_MAP: Record<string, string> = {
+      STRING: 'STRING', FLOAT: 'FLOAT64', FLOAT64: 'FLOAT64', INTEGER: 'INT64',
+      INT64: 'INT64', BOOLEAN: 'BOOL', BOOL: 'BOOL', TIMESTAMP: 'TIMESTAMP',
+      DATE: 'DATE', DATETIME: 'DATETIME', NUMERIC: 'NUMERIC',
+    };
+    for (const f of schemaFields) {
+      schemaTypes[f.name] = BQ_TYPE_MAP[f.type] || 'STRING';
+    }
+    // Fallback: infer from data for columns not in schema
+    const colTypes: Record<string, string> = { ...schemaTypes };
+    for (const c of allCols) {
+      if (colTypes[c]) continue;
+      for (const row of rows) {
+        const v = row[c];
+        if (v === null || v === undefined) continue;
+        if (typeof v === 'number') { colTypes[c] = 'FLOAT64'; break; }
+        if (typeof v === 'boolean') { colTypes[c] = 'BOOL'; break; }
+        if (v instanceof Date) { colTypes[c] = 'TIMESTAMP'; break; }
+        if (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}T/.test(v)) { colTypes[c] = 'TIMESTAMP'; break; }
+        colTypes[c] = 'STRING';
+        break;
+      }
+    }
+
     for (let i = 0; i < rows.length; i += MERGE_BATCH) {
       const batch = rows.slice(i, i + MERGE_BATCH);
 
       // Build source rows as SELECT ... UNION ALL SELECT ...
-      const sourceRows = batch.map((row, idx) => {
+      // Every value is explicitly CAST to ensure consistent types across all rows.
+      const sourceRows = batch.map((row) => {
         const fields = allCols.map((c) => {
           const v = row[c];
-          if (v === null || v === undefined) return `CAST(NULL AS STRING) AS ${c}`;
-          if (typeof v === 'number') return `${v} AS ${c}`;
-          if (typeof v === 'boolean') return `${v} AS ${c}`;
-          if (v instanceof Date) return `TIMESTAMP '${v.toISOString()}' AS ${c}`;
+          const bqType = colTypes[c] || 'STRING';
+          if (v === null || v === undefined) return `CAST(NULL AS ${bqType}) AS ${c}`;
+          if (typeof v === 'number') return `CAST(${v} AS ${bqType === 'INT64' ? 'INT64' : 'FLOAT64'}) AS ${c}`;
+          if (typeof v === 'boolean') return `CAST(${v} AS BOOL) AS ${c}`;
+          if (v instanceof Date) return `CAST('${v.toISOString()}' AS TIMESTAMP) AS ${c}`;
+          if (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}T/.test(v)) return `CAST('${v}' AS TIMESTAMP) AS ${c}`;
           // Handle arrays/objects as JSON strings
-          if (typeof v === 'object') return `'${JSON.stringify(v).replace(/'/g, "\\'")}' AS ${c}`;
+          if (typeof v === 'object') return `CAST('${JSON.stringify(v).replace(/'/g, "\\'")}' AS STRING) AS ${c}`;
           // String — escape single quotes
           const escaped = String(v).replace(/'/g, "\\'");
-          return `'${escaped}' AS ${c}`;
+          return `CAST('${escaped}' AS STRING) AS ${c}`;
         });
-        return idx === 0 ? `SELECT ${fields.join(', ')}` : `SELECT ${fields.join(', ')}`;
+        return `SELECT ${fields.join(', ')}`;
       });
 
       const sourceSQL = sourceRows.join('\nUNION ALL\n');

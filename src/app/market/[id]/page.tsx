@@ -92,6 +92,31 @@ interface DataQuality {
   coverageByMetric: Record<string, MetricStatus> | null;
 }
 
+interface EdgeSignal {
+  value: number | null;
+  direction: string | null;
+  strength: number | null;
+}
+
+interface EdgeAnalytics {
+  score: number | null;
+  direction: string | null;
+  reasoning: string[];
+  computedAt: string | null;
+  signals: {
+    smartMoneyLeadLag: EdgeSignal;
+    volumePriceDivergence: EdgeSignal;
+    whaleAccumulation: EdgeSignal;
+    emaMomentum: EdgeSignal;
+    marketRegime: { regime: string | null; confidence: number | null };
+  };
+  context: {
+    snapshotCount: number;
+    tradeCount: number;
+    smartTradeCount: number;
+  };
+}
+
 interface Analytics {
   dataQuality: DataQuality | null;
   momentum: { "1h": number | null; "6h": number | null; "24h": number | null };
@@ -125,6 +150,7 @@ interface Analytics {
     delta: number;
     outcome: string;
   }[];
+  edge: EdgeAnalytics | null;
 }
 
 // ─── Formatters ───
@@ -358,6 +384,106 @@ export default function MarketDetailPage() {
             )}
           </div>
         </div>
+
+        {/* Edge Analytics Panel */}
+        {analytics?.edge && analytics.edge.score !== null && (
+          <div className="bg-[#0d1117] border border-[rgba(255,255,255,0.06)] rounded-lg p-4 mb-3">
+            <div className="flex items-center justify-between mb-3">
+              <SectionHeader icon={Zap} title="Edge Analysis" />
+              <div className="flex items-center gap-2">
+                {analytics.edge.signals.marketRegime.regime && (
+                  <span className="text-[9px] font-mono tracking-wider uppercase px-2 py-0.5 rounded border border-[rgba(255,255,255,0.1)] text-[#64748b]">
+                    {analytics.edge.signals.marketRegime.regime.replace('_', ' ')}
+                  </span>
+                )}
+                {analytics.edge.computedAt && (
+                  <span className="text-[9px] text-[#475569]">
+                    {new Date(analytics.edge.computedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                  </span>
+                )}
+              </div>
+            </div>
+
+            <div className="flex items-start gap-6">
+              {/* Big Edge Score */}
+              <div className="shrink-0 text-center">
+                <div className={`text-5xl font-bold font-mono tabular-nums ${
+                  analytics.edge.score >= 65 ? "text-[#10b981]" :
+                  analytics.edge.score <= 35 ? "text-[#ef4444]" :
+                  "text-[#f59e0b]"
+                }`}>
+                  {analytics.edge.score}
+                </div>
+                <div className="text-[9px] text-[#64748b] tracking-[0.15em] uppercase mt-1">Edge Score</div>
+                <div className={`text-[11px] font-bold tracking-wider uppercase mt-1 ${
+                  analytics.edge.direction === "bullish" ? "text-[#10b981]" :
+                  analytics.edge.direction === "bearish" ? "text-[#ef4444]" :
+                  "text-[#f59e0b]"
+                }`}>
+                  {analytics.edge.direction}
+                </div>
+              </div>
+
+              {/* Signal Breakdown */}
+              <div className="flex-1 min-w-0">
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-3">
+                  {[
+                    { label: "Smart Money", signal: analytics.edge.signals.smartMoneyLeadLag, format: (v: number) => `${(v * 100).toFixed(0)}%` },
+                    { label: "Vol/Price Div", signal: analytics.edge.signals.volumePriceDivergence, format: (v: number) => v.toFixed(2) },
+                    { label: "Whale Accum", signal: analytics.edge.signals.whaleAccumulation, format: (v: number) => `${(v * 100).toFixed(0)}` },
+                    { label: "EMA Momentum", signal: analytics.edge.signals.emaMomentum, format: (v: number) => (v * 100).toFixed(2) },
+                  ].map(({ label, signal, format }) => (
+                    <div key={label} className="bg-[rgba(255,255,255,0.02)] rounded px-3 py-2">
+                      <div className="text-[9px] text-[#64748b] tracking-[0.12em] uppercase mb-1">{label}</div>
+                      {signal.value !== null ? (
+                        <>
+                          <div className={`text-sm font-mono font-medium ${
+                            signal.direction === "bullish" ? "text-[#10b981]" :
+                            signal.direction === "bearish" ? "text-[#ef4444]" :
+                            "text-[#64748b]"
+                          }`}>
+                            {format(signal.value)}
+                          </div>
+                          <div className="mt-1 h-1 bg-[#151b27] rounded-full overflow-hidden">
+                            <div
+                              className={`h-full rounded-full ${
+                                signal.direction === "bullish" ? "bg-[#10b981]" :
+                                signal.direction === "bearish" ? "bg-[#ef4444]" :
+                                "bg-[#64748b]"
+                              }`}
+                              style={{ width: `${(signal.strength ?? 0) * 100}%` }}
+                            />
+                          </div>
+                        </>
+                      ) : (
+                        <div className="text-[10px] font-mono text-[#475569] italic">no data</div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+
+                {/* Reasoning */}
+                {analytics.edge.reasoning.length > 0 && (
+                  <div className="space-y-1">
+                    {analytics.edge.reasoning.map((reason, i) => (
+                      <div key={i} className="flex items-start gap-2 text-[11px] text-[#94a3b8]">
+                        <span className="text-[#00d4ff] shrink-0 mt-0.5">&#8226;</span>
+                        <span>{reason}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Context */}
+                <div className="flex items-center gap-4 mt-2 pt-2 border-t border-[rgba(255,255,255,0.04)] text-[9px] text-[#475569]">
+                  <span>{analytics.edge.context.snapshotCount} snapshots</span>
+                  <span>{analytics.edge.context.tradeCount} trades</span>
+                  <span>{analytics.edge.context.smartTradeCount} smart trades</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Main Grid: Charts + Analytics */}
         <div className="grid grid-cols-1 xl:grid-cols-12 gap-3 mb-3">

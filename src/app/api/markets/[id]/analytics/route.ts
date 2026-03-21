@@ -78,6 +78,14 @@ export async function GET(
     })
     .sort((a, b) => (b.accuracy ?? 0) - (a.accuracy ?? 0));
 
+  // ─── Edge analytics (predictive signals) ───
+
+  const { data: edgeData } = await bq
+    .from('market_edge')
+    .select('*')
+    .eq('market_id', marketId)
+    .single();
+
   // ─── Latest book snapshot for real-time book metrics ───
 
   const { data: latestBook } = await bq
@@ -139,6 +147,45 @@ export async function GET(
     // Insider / smart money
     smartWalletActivity,
     positionDeltas,
+
+    // Edge analytics (predictive signals)
+    edge: edgeData ? {
+      score: edgeData.edge_score ?? null,
+      direction: edgeData.edge_direction ?? null,
+      reasoning: (() => { try { return JSON.parse(edgeData.edge_reasoning ?? '[]'); } catch { return []; } })(),
+      computedAt: edgeData.computed_at ?? null,
+      signals: {
+        smartMoneyLeadLag: {
+          value: edgeData.smart_money_lead_lag ?? null,
+          direction: edgeData.smart_money_direction ?? null,
+          strength: edgeData.smart_money_strength ?? null,
+        },
+        volumePriceDivergence: {
+          value: edgeData.volume_price_divergence ?? null,
+          direction: edgeData.volume_price_direction ?? null,
+          strength: edgeData.volume_price_strength ?? null,
+        },
+        whaleAccumulation: {
+          value: edgeData.whale_accumulation ?? null,
+          direction: edgeData.whale_direction ?? null,
+          strength: edgeData.whale_strength ?? null,
+        },
+        emaMomentum: {
+          value: edgeData.ema_momentum ?? null,
+          direction: edgeData.ema_direction ?? null,
+          strength: edgeData.ema_strength ?? null,
+        },
+        marketRegime: {
+          regime: edgeData.market_regime ?? null,
+          confidence: edgeData.regime_confidence ?? null,
+        },
+      },
+      context: {
+        snapshotCount: edgeData.snapshot_count ?? 0,
+        tradeCount: edgeData.trade_count ?? 0,
+        smartTradeCount: edgeData.smart_trade_count ?? 0,
+      },
+    } : null,
   });
 }
 
