@@ -14,7 +14,7 @@ import { bq } from '../bigquery';
 import { fetchMarketTradesPaginated } from './polymarket';
 
 const BATCH_SIZE = 5;          // concurrent market fetches (down from 10)
-const MAX_PAGES_PER_MARKET = 5;
+const MAX_PAGES_PER_MARKET = 3; // reduced from 5 to fit within Vercel 60s
 const PAGE_SIZE = 100;
 
 export async function pollTrades(): Promise<{
@@ -34,7 +34,7 @@ export async function pollTrades(): Promise<{
   };
 }> {
   const startTime = Date.now();
-  const TIME_BUDGET_MS = 50_000;
+  const TIME_BUDGET_MS = 40_000; // leave 20s buffer for Vercel 60s limit
   const errors: string[] = [];
   let inserted = 0;
   let skipped = 0;
@@ -64,7 +64,7 @@ export async function pollTrades(): Promise<{
     if (!seen.has(s.market_id)) {
       seen.add(s.market_id);
       volMarketIds.push(s.market_id);
-      if (volMarketIds.length >= 800) break;
+      if (volMarketIds.length >= 300) break; // reduced from 800 to fit within Vercel 60s
     }
   }
 

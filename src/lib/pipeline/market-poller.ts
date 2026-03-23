@@ -41,11 +41,12 @@ function categorizeMarket(question: string, tags?: string[]): string {
 
 export async function pollMarkets(): Promise<{ upserted: number; errors: string[] }> {
   const startTime = Date.now();
-  const TIME_BUDGET_MS = 45_000; // leave 15s buffer for DB writes
+  const TIME_BUDGET_MS = 20_000; // leave 40s buffer for DB writes
+  const MAX_MARKETS = 1500; // cap Gamma pagination to fit within Vercel 60s
   const errors: string[] = [];
   let allMarkets: GammaMarket[] = [];
 
-  // Paginate through all active markets (with time budget)
+  // Paginate through active markets (capped + time budget)
   let offset = 0;
   const limit = 100;
   let keepGoing = true;
@@ -53,6 +54,10 @@ export async function pollMarkets(): Promise<{ upserted: number; errors: string[
   while (keepGoing) {
     if (Date.now() - startTime > TIME_BUDGET_MS) {
       errors.push(`Time budget reached at offset=${offset}, will continue next run`);
+      break;
+    }
+    if (allMarkets.length >= MAX_MARKETS) {
+      errors.push(`Market cap reached (${MAX_MARKETS}), will continue next run`);
       break;
     }
     try {
@@ -116,16 +121,20 @@ export async function pollMarkets(): Promise<{ upserted: number; errors: string[
     }
   }
 
-  // Top 5000 markets by volume — covers all meaningful activity within timeout
-  const MAX_SNAPSHOTS = 5000;
+  // Top 1500 markets by volume — covers all meaningful activity within timeout
+  const MAX_SNAPSHOTS = 1500;
   snapshotRows.sort((a, b) => (b.volume_24h ?? 0) - (a.volume_24h ?? 0));
   const cappedSnapshots = snapshotRows.slice(0, MAX_SNAPSHOTS);
 
-  // Batch upsert markets in chunks of 500
+  // Batch upsert markets in chunks of 200
   let upserted = 0;
-  const BATCH_SIZE = 500;
+  const BATCH_SIZE = 200;
 
   for (let i = 0; i < marketRows.length; i += BATCH_SIZE) {
+    if (Date.now() - startTime > TIME_BUDGET_MS + 15_000) {
+      errors.push(`Hard time limit reached at market upsert ${i}/${marketRows.length}`);
+      break;
+    }
     const batch = marketRows.slice(i, i + BATCH_SIZE);
     const { error } = await supabaseAdmin
       .from('markets')
@@ -138,8 +147,12 @@ export async function pollMarkets(): Promise<{ upserted: number; errors: string[
     }
   }
 
-  // Batch insert snapshots into BigQuery in chunks of 500
+  // Batch insert snapshots into BigQuery in chunks of 200
   for (let i = 0; i < cappedSnapshots.length; i += BATCH_SIZE) {
+    if (Date.now() - startTime > TIME_BUDGET_MS + 20_000) {
+      errors.push(`Hard time limit reached at snapshot insert ${i}/${cappedSnapshots.length}`);
+      break;
+    }
     const batch = cappedSnapshots.slice(i, i + BATCH_SIZE);
     const { error } = await bq
       .from('market_snapshots')

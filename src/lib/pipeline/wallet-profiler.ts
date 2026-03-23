@@ -9,12 +9,12 @@ import { bq } from '../bigquery';
 
 export async function profileWallets(): Promise<{ updated: number; errors: string[] }> {
   const startTime = Date.now();
-  const TIME_BUDGET_MS = 50_000; // leave 10s buffer for Vercel's 60s limit
+  const TIME_BUDGET_MS = 40_000; // leave 20s buffer for Vercel's 60s limit
   const errors: string[] = [];
   let updated = 0;
 
   // No RPC in BigQuery — use JS fallback aggregation directly
-  const fallbackResult = await fallbackProfileWallets();
+  const fallbackResult = await fallbackProfileWallets(startTime, TIME_BUDGET_MS);
   errors.push(...fallbackResult.errors);
   updated += fallbackResult.updated;
 
@@ -169,35 +169,59 @@ async function computeCredibilityAndPnl(remainingMs = 40_000): Promise<{ updated
 }
 
 /**
- * Fallback: compute wallet stats in JS if the Supabase RPC function doesn't exist.
+ * Fallback: compute wallet stats in JS with pagination and time budget.
  */
-async function fallbackProfileWallets(): Promise<{ updated: number; errors: string[] }> {
+async function fallbackProfileWallets(
+  startTime: number,
+  timeBudgetMs: number,
+): Promise<{ updated: number; errors: string[] }> {
   const errors: string[] = [];
   let updated = 0;
+  const MAX_WALLETS = 1000; // cap wallets per run
 
-  // Get all wallets
+  // Get wallets (capped)
   const { data: wallets, error: wError } = await bq
     .from('wallets')
-    .select('address');
+    .select('address')
+    .limit(MAX_WALLETS);
 
   if (wError || !wallets) {
     return { updated: 0, errors: [`Failed to fetch wallets: ${wError?.message}`] };
   }
 
-  // Fetch all trades at once and aggregate in JS
-  const { data: allTrades, error: tError } = await bq
-    .from('trades')
-    .select('wallet_address, market_id, size_usdc, timestamp');
-
-  if (tError || !allTrades) {
-    return { updated: 0, errors: [`Failed to fetch trades: ${tError?.message}`] };
+  if (Date.now() - startTime > timeBudgetMs) {
+    return { updated: 0, errors: ['Time budget reached after wallet fetch'] };
   }
 
-  // Group trades by wallet
-  const tradesByWallet = new Map<string, typeof allTrades>();
-  for (const t of allTrades) {
-    if (!tradesByWallet.has(t.wallet_address)) tradesByWallet.set(t.wallet_address, []);
-    tradesByWallet.get(t.wallet_address)!.push(t);
+  // Fetch trades in pages of 2000 to avoid loading everything at once
+  const TRADE_PAGE = 2000;
+  const tradesByWallet = new Map<string, { market_id: string; size_usdc: number; timestamp: string }[]>();
+  let tradeOffset = 0;
+
+  while (true) {
+    if (Date.now() - startTime > timeBudgetMs) {
+      errors.push(`Time budget reached at trade fetch offset=${tradeOffset}`);
+      break;
+    }
+
+    const { data: tradePage, error: tError } = await bq
+      .from('trades')
+      .select('wallet_address, market_id, size_usdc, timestamp')
+      .range(tradeOffset, tradeOffset + TRADE_PAGE - 1);
+
+    if (tError) {
+      errors.push(`Failed to fetch trades at offset=${tradeOffset}: ${tError.message}`);
+      break;
+    }
+    if (!tradePage || tradePage.length === 0) break;
+
+    for (const t of tradePage) {
+      if (!tradesByWallet.has(t.wallet_address)) tradesByWallet.set(t.wallet_address, []);
+      tradesByWallet.get(t.wallet_address)!.push(t);
+    }
+
+    if (tradePage.length < TRADE_PAGE) break;
+    tradeOffset += TRADE_PAGE;
   }
 
   // Build update rows
@@ -229,6 +253,10 @@ async function fallbackProfileWallets(): Promise<{ updated: number; errors: stri
   // Batch upsert in chunks of 500
   const BATCH = 500;
   for (let i = 0; i < walletRows.length; i += BATCH) {
+    if (Date.now() - startTime > timeBudgetMs + 10_000) {
+      errors.push(`Hard time limit reached at wallet upsert ${i}/${walletRows.length}`);
+      break;
+    }
     const chunk = walletRows.slice(i, i + BATCH);
     const { error: updateError } = await bq
       .from('wallets')
