@@ -22,8 +22,8 @@ const PAGE_SIZE = 1000;         // rows per paginated fetch
 const WALLET_BATCH = 200;       // wallets to process per batch
 const UPSERT_CHUNK = 100;       // rows per upsert call
 const IN_BATCH = 200;           // max .in() filter size
-const TRADE_LOOKBACK_DAYS = 14; // only analyze trades from last N days
-const MAX_TRADES = 50_000;      // cap total trades fetched to stay within timeout
+const TRADE_LOOKBACK_DAYS = 7;  // only analyze trades from last N days
+const MAX_TRADES = 20_000;      // cap total trades fetched to stay within timeout
 
 // ---- Types ----
 
@@ -378,7 +378,7 @@ export async function computeTier1Signals(): Promise<{
     const batchResults: Tier1Scores[] = [];
 
     // Check if we're running low on time (leave 10s buffer)
-    if (Date.now() - startTime > 48_000) {
+    if (Date.now() - startTime > 42_000) {
       errors.push(`Timeout approaching at wallet ${wi}/${allWallets.length}, saving progress`);
       break;
     }
