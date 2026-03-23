@@ -308,7 +308,7 @@ export async function computeAnalytics(): Promise<{
   };
 }> {
   const startTime = Date.now();
-  const TIME_BUDGET_MS = 50_000; // leave 10s buffer for Vercel's 60s limit
+  const TIME_BUDGET_MS = 42_000; // leave 18s buffer for Vercel's 60s limit
   const errors: string[] = [];
   let computed = 0;
   let publishable = 0;
@@ -320,7 +320,7 @@ export async function computeAnalytics(): Promise<{
     .from('market_snapshots')
     .select('market_id')
     .gte('timestamp', twoDaysAgo)
-    .limit(5000);
+    .limit(2000); // reduced from 5000 to fit within Vercel 60s
 
   const activeMarketIds = [...new Set((recentSnaps ?? []).map((s) => s.market_id))];
   if (activeMarketIds.length === 0) {
@@ -351,25 +351,18 @@ export async function computeAnalytics(): Promise<{
   // 2. Tier1-based: top wallets by composite_score from wallet_signals
   // Union of both sets gives much broader smart wallet pool
 
-  const { data: accuracyWallets } = await bq
-    .from('wallets')
-    .select('address')
-    .gt('accuracy_score', 0.55)
-    .gte('accuracy_sample_size', 2);
-
-  const { data: tier1Wallets } = await bq
-    .from('wallet_signals')
-    .select('wallet_address')
-    .gt('composite_score', 0.4)
-    .order('composite_score', { ascending: false })
-    .limit(500);
+  // Run smart wallet queries in parallel to save time
+  const [{ data: accuracyWallets }, { data: tier1Wallets }] = await Promise.all([
+    bq.from('wallets').select('address').gt('accuracy_score', 0.55).gte('accuracy_sample_size', 2),
+    bq.from('wallet_signals').select('wallet_address').gt('composite_score', 0.4).order('composite_score', { ascending: false }).limit(500),
+  ]);
 
   const smartWallets = new Set([
     ...(accuracyWallets ?? []).map((w: { address: string }) => w.address),
     ...(tier1Wallets ?? []).map((w: { wallet_address: string }) => w.wallet_address),
   ]);
 
-  const ID_BATCH = 50;
+  const ID_BATCH = 25; // reduced from 50 to allow more frequent time budget checks
   const analyticsRows: Record<string, unknown>[] = [];
 
   for (let i = 0; i < markets.length; i += ID_BATCH) {
@@ -387,13 +380,13 @@ export async function computeAnalytics(): Promise<{
       .gte('timestamp', twoDaysAgo)
       .order('timestamp', { ascending: false });
 
-    // Use 30-day trade window (up from 7d) to capture more activity for sparse markets
-    const thirtyDaysAgo = new Date(Date.now() - 30 * 86400000).toISOString();
+    // Use 14-day trade window (reduced from 30d to fit within timeout)
+    const fourteenDaysAgo = new Date(Date.now() - 14 * 86400000).toISOString();
     const { data: trades } = await bq
       .from('trades')
       .select('market_id, price, size_tokens, size_usdc, side, wallet_address, timestamp')
       .in('market_id', batchIds)
-      .gte('timestamp', thirtyDaysAgo);
+      .gte('timestamp', fourteenDaysAgo);
 
     const snapsByMarket = new Map<string, Snapshot[]>();
     for (const s of snapshots ?? []) {

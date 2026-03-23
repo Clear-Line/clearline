@@ -92,7 +92,7 @@ export async function computeAccuracy(): Promise<{
   // Time budget: stop after ~45s to stay within Vercel's 60s limit
 
   const startTime = Date.now();
-  const TIME_BUDGET_MS = 45_000;
+  const TIME_BUDGET_MS = 38_000; // leave 22s buffer for Vercel 60s
 
   const newlyResolved: { conditionId: string; outcome: string }[] = [];
   let offset = 0;
@@ -122,7 +122,7 @@ export async function computeAccuracy(): Promise<{
       else offset += limit;
 
       // Safety: don't paginate forever
-      if (offset > 2000) keepGoing = false;
+      if (offset > 1000) keepGoing = false;
     } catch (err) {
       errors.push(`Fetch closed markets offset=${offset}: ${err}`);
       keepGoing = false;
@@ -190,7 +190,7 @@ export async function computeAccuracy(): Promise<{
 
   // Fetch all trades for resolved markets
   const resolvedIds = [...resolutionMap.keys()];
-  const ID_BATCH = 200;
+  const ID_BATCH = 100; // reduced from 200 to fit within Vercel 60s
   const allTrades: {
     wallet_address: string;
     market_id: string;

@@ -88,10 +88,10 @@ function computeCostToMove(
 
 export async function snapshotBooks(): Promise<{ updated: number; errors: string[] }> {
   const startTime = Date.now();
-  const TIME_BUDGET_MS = 45_000; // leave 15s buffer for DB writes
+  const TIME_BUDGET_MS = 30_000; // leave 30s buffer for DB writes
   const errors: string[] = [];
   let updated = 0;
-  const MAX_MARKETS = 500; // cap to top markets by volume to fit within Vercel timeout
+  const MAX_MARKETS = 200; // cap to top markets by volume to fit within Vercel 60s
 
   // Get all active markets with their CLOB token IDs (no category filter)
   const { data: markets, error: mktError } = await supabaseAdmin
@@ -138,7 +138,7 @@ export async function snapshotBooks(): Promise<{ updated: number; errors: string
     cost_move_down_5pct: number | null;
   }[] = [];
 
-  const CONCURRENCY = 10;
+  const CONCURRENCY = 5; // reduced from 10 to avoid rate limits
   for (let i = 0; i < markets.length; i += CONCURRENCY) {
     if (Date.now() - startTime > TIME_BUDGET_MS) {
       errors.push(`Time budget reached at market ${i}/${markets.length}, will continue next run`);
@@ -195,59 +195,58 @@ export async function snapshotBooks(): Promise<{ updated: number; errors: string
     }));
   }
 
-  // Update the most recent snapshot for each market with book data in BigQuery
-  // Use (market_id, timestamp) composite key instead of auto-increment id
-  const marketIds = snapshotRows.map((r) => r.market_id);
+  // Batch-upsert book data using MERGE (single DML query per batch of 500)
+  // Include market_id + timestamp so the MERGE can match existing snapshots
   const snapshotMap = new Map(snapshotRows.map((r) => [r.market_id, r]));
+  const marketIds = snapshotRows.map((r) => r.market_id);
 
-  // Fetch latest snapshot timestamp per market in batches
-  const ID_BATCH = 200;
-  const latestByMarket = new Map<string, string>(); // market_id → timestamp
-  for (let i = 0; i < marketIds.length; i += ID_BATCH) {
-    const batch = marketIds.slice(i, i + ID_BATCH);
-    const { data: latestSnaps } = await bq
-      .from('market_snapshots')
-      .select('market_id, timestamp')
-      .in('market_id', batch)
-      .not('volume_24h', 'is', null)
-      .order('timestamp', { ascending: false });
+  // Fetch latest snapshot timestamp per market in one query
+  const { data: latestSnaps } = await bq
+    .from('market_snapshots')
+    .select('market_id, timestamp')
+    .in('market_id', marketIds)
+    .not('volume_24h', 'is', null)
+    .order('timestamp', { ascending: false });
 
-    if (latestSnaps) {
-      for (const s of latestSnaps as { market_id: string; timestamp: string }[]) {
-        // Only keep the first (latest) per market
-        if (!latestByMarket.has(s.market_id)) {
-          latestByMarket.set(s.market_id, s.timestamp);
-        }
+  const latestByMarket = new Map<string, string>();
+  if (latestSnaps) {
+    for (const s of latestSnaps as { market_id: string; timestamp: string }[]) {
+      if (!latestByMarket.has(s.market_id)) {
+        latestByMarket.set(s.market_id, s.timestamp);
       }
     }
   }
 
-  // Update snapshots individually using (market_id, timestamp) composite key
-  const UPDATE_CONCURRENCY = 20;
-  const entries = [...latestByMarket.entries()];
-  for (let i = 0; i < entries.length; i += UPDATE_CONCURRENCY) {
-    const batch = entries.slice(i, i + UPDATE_CONCURRENCY);
-    await Promise.all(batch.map(async ([marketId, timestamp]) => {
-      const row = snapshotMap.get(marketId);
-      if (!row) return;
-      const { error } = await bq
-        .from('market_snapshots')
-        .update({
-          spread: row.spread,
-          book_depth_bid_5c: row.book_depth_bid_5c,
-          book_depth_ask_5c: row.book_depth_ask_5c,
-          book_imbalance: row.book_imbalance,
-          cost_move_up_5pct: row.cost_move_up_5pct,
-          cost_move_down_5pct: row.cost_move_down_5pct,
-        })
-        .eq('market_id', marketId)
-        .eq('timestamp', timestamp);
-      if (error) {
-        errors.push(`Book update ${marketId}: ${error.message}`);
-      } else {
-        updated++;
-      }
-    }));
+  // Build upsert rows with the composite key (market_id + timestamp)
+  const upsertRows = [];
+  for (const [marketId, timestamp] of latestByMarket) {
+    const row = snapshotMap.get(marketId);
+    if (!row) continue;
+    upsertRows.push({
+      market_id: marketId,
+      timestamp,
+      spread: row.spread,
+      book_depth_bid_5c: row.book_depth_bid_5c,
+      book_depth_ask_5c: row.book_depth_ask_5c,
+      book_imbalance: row.book_imbalance,
+      cost_move_up_5pct: row.cost_move_up_5pct,
+      cost_move_down_5pct: row.cost_move_down_5pct,
+    });
+  }
+
+  // Single MERGE per batch instead of individual UPDATEs
+  const UPSERT_BATCH = 500;
+  for (let i = 0; i < upsertRows.length; i += UPSERT_BATCH) {
+    const chunk = upsertRows.slice(i, i + UPSERT_BATCH);
+    const { error } = await bq
+      .from('market_snapshots')
+      .upsert(chunk, { onConflict: 'market_id,timestamp' });
+
+    if (error) {
+      errors.push(`Book upsert batch ${i}: ${error.message}`);
+    } else {
+      updated += chunk.length;
+    }
   }
 
   return { updated, errors };
