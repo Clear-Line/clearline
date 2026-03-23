@@ -91,13 +91,16 @@ export async function snapshotBooks(): Promise<{ updated: number; errors: string
   const TIME_BUDGET_MS = 30_000; // leave 30s buffer for DB writes
   const errors: string[] = [];
   let updated = 0;
-  const MAX_MARKETS = 200; // cap to top markets by volume to fit within Vercel 60s
+  const MAX_MARKETS = 500; // cap to top markets by volume to fit within Vercel timeout
 
-  // Get all active markets with their CLOB token IDs (no category filter)
-  const { data: markets, error: mktError } = await supabaseAdmin
-    .from('markets')
-    .select('condition_id, clob_token_ids, outcomes')
-    .eq('is_active', true);
+  // Get top markets by volume from recent snapshots
+  const { data: topSnaps } = await bq
+    .from('market_snapshots')
+    .select('market_id, volume_24h')
+    .gt('volume_24h', 0)
+    .gte('timestamp', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString())
+    .order('volume_24h', { ascending: false })
+    .limit(MAX_MARKETS);
 
   const topMarketIds = [...new Set((topSnaps ?? []).map((s: { market_id: string }) => s.market_id))];
 
