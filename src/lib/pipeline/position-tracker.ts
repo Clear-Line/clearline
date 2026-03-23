@@ -9,6 +9,7 @@
  */
 
 import { supabaseAdmin } from '../supabase';
+import { bq } from '../bigquery';
 import { fetchMarketHolders } from './polymarket';
 
 export async function trackPositions(): Promise<{
@@ -20,7 +21,7 @@ export async function trackPositions(): Promise<{
 
   // ─── Step 1: Get flagged wallets (composite_score > 0.4) ───
 
-  const { data: flaggedRows, error: fErr } = await supabaseAdmin
+  const { data: flaggedRows, error: fErr } = await bq
     .from('wallet_signals')
     .select('wallet_address, market_id')
     .gt('composite_score', 0.4);
@@ -106,7 +107,7 @@ export async function trackPositions(): Promise<{
   const INSERT_BATCH = 500;
   for (let i = 0; i < positionRows.length; i += INSERT_BATCH) {
     const chunk = positionRows.slice(i, i + INSERT_BATCH);
-    const { error } = await supabaseAdmin
+    const { error } = await bq
       .from('wallet_positions')
       .insert(chunk);
 

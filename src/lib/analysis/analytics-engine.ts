@@ -6,23 +6,20 @@
  *   Volume/Flow:     VWAP, buy/sell ratio, smart money flow
  *   Order Book:      book imbalance, liquidity asymmetry
  *
+ * Each metric has a coverage contract (minimum data requirements).
+ * Each row gets: coverage_by_metric, coverage_score, missing_dependencies, is_publishable.
+ * Markets that fail publishability checks are still stored but gated from serving.
+ *
  * Writes to market_analytics table (one row per market, upserted).
  * Run every 15 minutes.
  */
 
 import { supabaseAdmin } from '../supabase';
+import { bq } from '../bigquery';
 
-// ─── Helpers ───
+// ─── Types ───
 
-/** Standard deviation of an array of numbers. */
-function stddev(values: number[]): number {
-  if (values.length < 2) return 0;
-  const mean = values.reduce((a, b) => a + b, 0) / values.length;
-  const sqDiffs = values.map((v) => (v - mean) ** 2);
-  return Math.sqrt(sqDiffs.reduce((a, b) => a + b, 0) / (values.length - 1));
-}
-
-// ─── Metric Computations ───
+export type MetricStatus = 'computed' | 'insufficient_data' | 'stale_data' | 'no_data';
 
 interface Snapshot {
   yes_price: number;
@@ -42,283 +39,362 @@ interface Trade {
   timestamp: string;
 }
 
-/**
- * Compute momentum: (price_now - price_Xh_ago) / price_Xh_ago
- */
-function computeMomentum(
+interface MetricResult {
+  value: number | null;
+  status: MetricStatus;
+}
+
+// ─── Helpers ───
+
+function stddev(values: number[]): number {
+  if (values.length < 2) return 0;
+  const mean = values.reduce((a, b) => a + b, 0) / values.length;
+  const sqDiffs = values.map((v) => (v - mean) ** 2);
+  return Math.sqrt(sqDiffs.reduce((a, b) => a + b, 0) / (values.length - 1));
+}
+
+function timeSpanMinutes(snapshots: Snapshot[]): number {
+  if (snapshots.length < 2) return 0;
+  const times = snapshots.map((s) => new Date(s.timestamp).getTime());
+  return (Math.max(...times) - Math.min(...times)) / 60000;
+}
+
+// ─── Metric Computations with Coverage Contracts ───
+
+function computeMomentumC(
   snapshots: Snapshot[],
   hoursAgo: number,
-): number | null {
-  if (snapshots.length < 2) return null;
+  minSnaps: number,
+  minSpanMin: number,
+): MetricResult {
+  if (snapshots.length === 0) return { value: null, status: 'no_data' };
+  if (snapshots.length < minSnaps || timeSpanMinutes(snapshots) < minSpanMin) {
+    return { value: null, status: 'insufficient_data' };
+  }
 
   const now = new Date(snapshots[0].timestamp).getTime();
-  const target = now - hoursAgo * 60 * 60 * 1000;
+  const target = now - hoursAgo * 3600000;
   const currentPrice = snapshots[0].yes_price;
 
-  // Find snapshot closest to target time
   let best: Snapshot | null = null;
   let bestDiff = Infinity;
   for (const s of snapshots) {
-    const t = new Date(s.timestamp).getTime();
-    const diff = Math.abs(t - target);
-    if (diff < bestDiff) {
-      bestDiff = diff;
-      best = s;
-    }
+    const diff = Math.abs(new Date(s.timestamp).getTime() - target);
+    if (diff < bestDiff) { bestDiff = diff; best = s; }
   }
 
-  if (!best || best.yes_price === 0) return null;
-  return (currentPrice - best.yes_price) / best.yes_price;
+  if (!best || best.yes_price === 0) return { value: null, status: 'insufficient_data' };
+  return { value: (currentPrice - best.yes_price) / best.yes_price, status: 'computed' };
 }
 
-/**
- * Compute realized volatility (prediction market VIX).
- * Standard deviation of log returns, annualized.
- */
-function computeVolatility(snapshots: Snapshot[]): number | null {
-  if (snapshots.length < 3) return null;
+function computeVolatilityC(snapshots: Snapshot[]): MetricResult {
+  if (snapshots.length === 0) return { value: null, status: 'no_data' };
+  if (snapshots.length < 4) return { value: null, status: 'insufficient_data' };
 
-  // Sort ascending by time for sequential returns
-  const sorted = [...snapshots].sort(
-    (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
-  );
+  const sorted = [...snapshots]
+    .filter((s) => s.yes_price > 0)
+    .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
 
   const logReturns: number[] = [];
   for (let i = 1; i < sorted.length; i++) {
-    const prev = sorted[i - 1].yes_price;
-    const curr = sorted[i].yes_price;
-    if (prev > 0 && curr > 0) {
-      logReturns.push(Math.log(curr / prev));
-    }
+    logReturns.push(Math.log(sorted[i].yes_price / sorted[i - 1].yes_price));
   }
-
-  if (logReturns.length < 2) return null;
+  if (logReturns.length < 2) return { value: null, status: 'insufficient_data' };
 
   const sd = stddev(logReturns);
-  // Annualize: ~12 snapshots per hour * 24h * 365d
-  const annualized = sd * Math.sqrt(365 * 24 * 12);
-  return annualized;
+  return { value: sd * Math.sqrt(365 * 24 * 12), status: 'computed' };
 }
 
-/**
- * Convergence speed: how fast the market is moving toward certainty (0 or 1)
- * relative to time remaining. Higher = faster convergence.
- */
-function computeConvergenceSpeed(
+function computeConvergenceC(
   currentPrice: number,
   endDate: string | null,
   startDate: string | null,
-): number | null {
-  if (!endDate) return null;
+): MetricResult {
+  if (!endDate) return { value: null, status: 'no_data' };
 
   const now = Date.now();
   const end = new Date(endDate).getTime();
-  const start = startDate ? new Date(startDate).getTime() : end - 90 * 24 * 60 * 60 * 1000; // default 90d
+  const start = startDate ? new Date(startDate).getTime() : end - 90 * 86400000;
 
   const totalDuration = end - start;
   const elapsed = now - start;
-  if (totalDuration <= 0 || elapsed <= 0) return null;
+  if (totalDuration <= 0 || elapsed <= 0) return { value: null, status: 'insufficient_data' };
 
-  const timeProgress = Math.min(elapsed / totalDuration, 1); // 0-1, how far through the market's life
-  const certainty = Math.abs(currentPrice - 0.5) * 2; // 0-1, how far from 50/50
+  const timeProgress = Math.min(elapsed / totalDuration, 1);
+  const certainty = Math.abs(currentPrice - 0.5) * 2;
+  if (timeProgress === 0) return { value: null, status: 'insufficient_data' };
 
-  // If the market is ahead of schedule in converging, speed > 1
-  if (timeProgress === 0) return null;
-  return certainty / timeProgress;
+  return { value: certainty / timeProgress, status: 'computed' };
 }
 
-/**
- * Price reversion rate: what % of sharp moves (>5% in 1h) retrace within 48h.
- * Requires enough historical data.
- */
-function computePriceReversionRate(snapshots: Snapshot[]): number | null {
-  if (snapshots.length < 100) return null; // need enough data
+function computeReversionC(snapshots: Snapshot[]): MetricResult {
+  if (snapshots.length === 0) return { value: null, status: 'no_data' };
+  if (snapshots.length < 4) return { value: null, status: 'insufficient_data' };
+  if (timeSpanMinutes(snapshots) < 60) return { value: null, status: 'insufficient_data' };
 
   const sorted = [...snapshots].sort(
     (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
   );
 
-  const ONE_HOUR = 60 * 60 * 1000;
-  const FORTY_EIGHT_HOURS = 48 * ONE_HOUR;
-  const MOVE_THRESHOLD = 0.05; // 5% price move
-
+  const FORTY_EIGHT_H = 48 * 3600000;
+  const THRESHOLD = 0.02;
   let sharpMoves = 0;
   let reversions = 0;
+  const LOOKBACK = 3;
 
-  for (let i = 12; i < sorted.length; i++) {
-    // Look back ~1h (12 snapshots at 5min intervals)
-    const hourAgo = sorted[i - 12];
-    const current = sorted[i];
-    const move = current.yes_price - hourAgo.yes_price;
-
-    if (Math.abs(move) < MOVE_THRESHOLD) continue;
+  for (let i = LOOKBACK; i < sorted.length; i++) {
+    const move = sorted[i].yes_price - sorted[i - LOOKBACK].yes_price;
+    if (Math.abs(move) < THRESHOLD) continue;
     sharpMoves++;
 
-    // Look forward up to 48h for reversion
-    const moveTime = new Date(current.timestamp).getTime();
-    let maxReversion = 0;
-
+    const moveTime = new Date(sorted[i].timestamp).getTime();
+    let maxRev = 0;
     for (let j = i + 1; j < sorted.length; j++) {
-      const futureTime = new Date(sorted[j].timestamp).getTime();
-      if (futureTime - moveTime > FORTY_EIGHT_HOURS) break;
-
-      const reversion = sorted[j].yes_price - current.yes_price;
-      // Reversion is opposite direction to the move
-      if (Math.sign(reversion) !== Math.sign(move)) {
-        maxReversion = Math.max(maxReversion, Math.abs(reversion) / Math.abs(move));
+      if (new Date(sorted[j].timestamp).getTime() - moveTime > FORTY_EIGHT_H) break;
+      const rev = sorted[j].yes_price - sorted[i].yes_price;
+      if (Math.sign(rev) !== Math.sign(move)) {
+        maxRev = Math.max(maxRev, Math.abs(rev) / Math.abs(move));
       }
     }
-
-    if (maxReversion >= 0.5) reversions++; // at least 50% retracement
+    if (maxRev >= 0.3) reversions++;
   }
 
-  if (sharpMoves === 0) return null;
-  return reversions / sharpMoves;
+  if (sharpMoves === 0) return { value: null, status: 'insufficient_data' };
+  return { value: reversions / sharpMoves, status: 'computed' };
 }
 
-/**
- * VWAP: volume-weighted average price from trades.
- */
-function computeVWAP(trades: Trade[]): number | null {
-  if (trades.length === 0) return null;
+function computeVWAPC(trades: Trade[]): MetricResult {
+  if (trades.length === 0) return { value: null, status: 'no_data' };
 
-  let sumPriceVolume = 0;
-  let sumVolume = 0;
-
+  let sumPV = 0, sumV = 0, totalUsdc = 0;
   for (const t of trades) {
     const tokens = Number(t.size_tokens) || 0;
     const price = Number(t.price) || 0;
     if (tokens > 0 && price > 0) {
-      sumPriceVolume += price * tokens;
-      sumVolume += tokens;
+      sumPV += price * tokens;
+      sumV += tokens;
+      totalUsdc += Number(t.size_usdc) || 0;
     }
   }
-
-  if (sumVolume === 0) return null;
-  return sumPriceVolume / sumVolume;
+  if (sumV === 0 || totalUsdc < 10) return { value: null, status: 'insufficient_data' };
+  return { value: sumPV / sumV, status: 'computed' };
 }
 
-/**
- * Buy/sell ratio: total buy volume / total sell volume.
- * > 1 means more buying pressure.
- */
-function computeBuySellRatio(trades: Trade[]): number | null {
-  let buyVol = 0;
-  let sellVol = 0;
+function computeBuySellC(trades: Trade[]): MetricResult {
+  if (trades.length === 0) return { value: null, status: 'no_data' };
 
+  let buyVol = 0, sellVol = 0;
   for (const t of trades) {
     const usdc = Number(t.size_usdc) || 0;
     if (t.side === 'BUY') buyVol += usdc;
     else if (t.side === 'SELL') sellVol += usdc;
   }
-
-  if (sellVol === 0) return buyVol > 0 ? 10 : null; // cap at 10 if no sells
-  return buyVol / sellVol;
+  if (buyVol + sellVol === 0) return { value: null, status: 'insufficient_data' };
+  if (sellVol === 0) return { value: 10, status: 'computed' };
+  return { value: buyVol / sellVol, status: 'computed' };
 }
 
-/**
- * Smart money flow: net USD flow from wallets with accuracy > 70%.
- * Positive = net buying by smart money.
- */
-function computeSmartMoneyFlow(
-  trades: Trade[],
-  smartWallets: Set<string>,
-): number | null {
-  if (smartWallets.size === 0) return null;
+function computeSmartMoneyC(trades: Trade[], smartWallets: Set<string>): MetricResult {
+  if (smartWallets.size === 0) return { value: null, status: 'no_data' };
 
-  let netFlow = 0;
-  let hasSmartTrades = false;
-
+  let netFlow = 0, smartCount = 0, smartVol = 0;
   for (const t of trades) {
     if (!smartWallets.has(t.wallet_address)) continue;
-    hasSmartTrades = true;
+    smartCount++;
     const usdc = Number(t.size_usdc) || 0;
+    smartVol += usdc;
     if (t.side === 'BUY') netFlow += usdc;
     else if (t.side === 'SELL') netFlow -= usdc;
   }
-
-  return hasSmartTrades ? netFlow : null;
+  if (smartCount === 0) return { value: null, status: 'no_data' };
+  if (smartVol < 10) return { value: null, status: 'insufficient_data' };
+  return { value: netFlow, status: 'computed' };
 }
 
-/**
- * Book imbalance: bid_depth / (bid_depth + ask_depth).
- * > 0.5 means more bid support (buying pressure).
- */
-function computeBookImbalance(snapshot: Snapshot | null): number | null {
-  if (!snapshot) return null;
+function computeBookImbalanceC(snapshot: Snapshot | null): MetricResult {
+  if (!snapshot) return { value: null, status: 'no_data' };
   const bid = Number(snapshot.book_depth_bid_5c) || 0;
   const ask = Number(snapshot.book_depth_ask_5c) || 0;
-  if (bid + ask === 0) return null;
-  return bid / (bid + ask);
+  if (bid + ask === 0) return { value: null, status: 'insufficient_data' };
+  return { value: bid / (bid + ask), status: 'computed' };
 }
 
-/**
- * Liquidity asymmetry: cost to move up / cost to move down.
- * > 1 means it's more expensive to push price up (stronger asks).
- */
-function computeLiquidityAsymmetry(snapshot: Snapshot | null): number | null {
-  if (!snapshot) return null;
+function computeLiqAsymmetryC(snapshot: Snapshot | null): MetricResult {
+  if (!snapshot) return { value: null, status: 'no_data' };
   const up = Number(snapshot.cost_move_up_5pct) || 0;
   const down = Number(snapshot.cost_move_down_5pct) || 0;
-  if (down === 0) return up > 0 ? 10 : null;
-  return up / down;
+  if (up === 0 && down === 0) return { value: null, status: 'insufficient_data' };
+  if (down === 0) return { value: 10, status: 'computed' };
+  return { value: up / down, status: 'computed' };
+}
+
+// ─── Coverage Evaluator ───
+
+const METRIC_GROUPS = {
+  price: ['momentum_1h', 'momentum_6h', 'momentum_24h', 'volatility_24h', 'convergence_speed', 'price_reversion_rate'],
+  flow: ['vwap_24h', 'buy_sell_ratio', 'smart_money_flow'],
+  book: ['book_imbalance', 'liquidity_asymmetry'],
+};
+
+const ALL_METRICS = [...METRIC_GROUPS.price, ...METRIC_GROUPS.flow, ...METRIC_GROUPS.book];
+
+function evaluateCoverage(
+  statuses: Record<string, MetricStatus>,
+  snapCount: number,
+  tradeCount: number,
+  hasBook: boolean,
+  snapAgeMin: number,
+  tradeAgeMin: number,
+): {
+  coverageByMetric: Record<string, MetricStatus>;
+  coverageScore: number;
+  missingDependencies: string[];
+  isPublishable: boolean;
+} {
+  const coverageByMetric = { ...statuses };
+  const missing: string[] = [];
+
+  // Freshness gates (relaxed for 2h cron intervals)
+  const snapFresh = snapAgeMin <= 180;
+  const tradeFresh = tradeCount === 0 || tradeAgeMin <= 720;
+
+  if (!snapFresh) {
+    missing.push('stale_snapshots');
+    for (const m of METRIC_GROUPS.price) {
+      if (coverageByMetric[m] === 'computed') coverageByMetric[m] = 'stale_data';
+    }
+  }
+  if (!tradeFresh && tradeCount > 0) {
+    missing.push('stale_trades');
+    for (const m of METRIC_GROUPS.flow) {
+      if (coverageByMetric[m] === 'computed') coverageByMetric[m] = 'stale_data';
+    }
+  }
+
+  if (snapCount < 2) missing.push('not_enough_snapshots');
+  if (tradeCount === 0) missing.push('no_trades');
+  else if (tradeCount < 5) missing.push('not_enough_trades');
+  if (!hasBook) missing.push('book_depth_missing');
+
+  const computedCount = ALL_METRICS.filter((m) => coverageByMetric[m] === 'computed').length;
+  const priceOk = METRIC_GROUPS.price.some((m) => coverageByMetric[m] === 'computed');
+
+  // Score: 60pts metric completeness + 20pts freshness + 20pts dependency density
+  const completeness = computedCount / ALL_METRICS.length;
+  const freshScore = (snapFresh ? 0.5 : 0) + (tradeFresh ? 0.5 : 0);
+  const depScore = Math.min(snapCount / 20, 1) * 0.4 +
+    Math.min(tradeCount / 20, 1) * 0.4 +
+    (hasBook ? 0.2 : 0);
+
+  const coverageScore = Math.round(completeness * 60 + freshScore * 20 + depScore * 20);
+
+  // Publishable: >=2 computed metrics, price group has 1+, fresh snapshots
+  const isPublishable = computedCount >= 2 && priceOk && snapFresh;
+
+  return { coverageByMetric, coverageScore, missingDependencies: missing, isPublishable };
 }
 
 // ─── Main Engine ───
 
 export async function computeAnalytics(): Promise<{
   computed: number;
+  publishable: number;
   errors: string[];
+  telemetry: {
+    marketsProcessed: number;
+    marketsSkipped: number;
+    smartWalletCount: number;
+    avgCoverageScore: number;
+  };
 }> {
+  const startTime = Date.now();
+  const TIME_BUDGET_MS = 50_000; // leave 10s buffer for Vercel's 60s limit
   const errors: string[] = [];
   let computed = 0;
+  let publishable = 0;
+  let totalCoverage = 0;
+  let skipped = 0;
 
-  // Get active markets
-  const { data: markets, error: mErr } = await supabaseAdmin
-    .from('markets')
-    .select('condition_id, start_date, end_date')
-    .eq('is_active', true);
+  const twoDaysAgo = new Date(Date.now() - 48 * 3600000).toISOString();
+  const { data: recentSnaps } = await bq
+    .from('market_snapshots')
+    .select('market_id')
+    .gte('timestamp', twoDaysAgo)
+    .limit(5000);
 
-  if (mErr || !markets) {
-    return { computed: 0, errors: [`Market query failed: ${mErr?.message}`] };
+  const activeMarketIds = [...new Set((recentSnaps ?? []).map((s) => s.market_id))];
+  if (activeMarketIds.length === 0) {
+    return { computed: 0, publishable: 0, errors: ['No markets with recent snapshots found'],
+      telemetry: { marketsProcessed: 0, marketsSkipped: 0, smartWalletCount: 0, avgCoverageScore: 0 } };
   }
 
-  // Get smart wallets (accuracy > 0.70 with meaningful sample)
-  const { data: smartWalletRows } = await supabaseAdmin
+  const markets: { condition_id: string; start_date: string | null; end_date: string | null }[] = [];
+  const META_BATCH = 200;
+  for (let i = 0; i < activeMarketIds.length; i += META_BATCH) {
+    const batch = activeMarketIds.slice(i, i + META_BATCH);
+    const { data, error: mErr } = await supabaseAdmin
+      .from('markets')
+      .select('condition_id, start_date, end_date')
+      .in('condition_id', batch)
+      .eq('is_active', true);
+    if (mErr) { errors.push(`Market metadata batch ${i}: ${mErr.message}`); continue; }
+    if (data) markets.push(...data);
+  }
+
+  if (markets.length === 0) {
+    return { computed: 0, publishable: 0, errors: ['No active markets with recent snapshots'],
+      telemetry: { marketsProcessed: 0, marketsSkipped: 0, smartWalletCount: 0, avgCoverageScore: 0 } };
+  }
+
+  // Hybrid smart wallet detection:
+  // 1. Accuracy-based: accuracy > 0.55 with sample_size >= 2 (relaxed from 0.60/4)
+  // 2. Tier1-based: top wallets by composite_score from wallet_signals
+  // Union of both sets gives much broader smart wallet pool
+
+  const { data: accuracyWallets } = await bq
     .from('wallets')
     .select('address')
-    .gt('accuracy_score', 0.70)
-    .gt('accuracy_sample_size', 5);
+    .gt('accuracy_score', 0.55)
+    .gte('accuracy_sample_size', 2);
 
-  const smartWallets = new Set(
-    (smartWalletRows ?? []).map((w: { address: string }) => w.address),
-  );
+  const { data: tier1Wallets } = await bq
+    .from('wallet_signals')
+    .select('wallet_address')
+    .gt('composite_score', 0.4)
+    .order('composite_score', { ascending: false })
+    .limit(500);
 
-  // Process markets in batches
+  const smartWallets = new Set([
+    ...(accuracyWallets ?? []).map((w: { address: string }) => w.address),
+    ...(tier1Wallets ?? []).map((w: { wallet_address: string }) => w.wallet_address),
+  ]);
+
   const ID_BATCH = 50;
   const analyticsRows: Record<string, unknown>[] = [];
 
   for (let i = 0; i < markets.length; i += ID_BATCH) {
+    if (Date.now() - startTime > TIME_BUDGET_MS) {
+      errors.push(`Time budget reached at market ${i}/${markets.length}, will continue next run`);
+      break;
+    }
     const batch = markets.slice(i, i + ID_BATCH);
     const batchIds = batch.map((m) => m.condition_id);
 
-    // Fetch snapshots for this batch (last ~48h for reversion analysis)
-    const { data: snapshots } = await supabaseAdmin
+    const { data: snapshots } = await bq
       .from('market_snapshots')
       .select('market_id, yes_price, timestamp, book_depth_bid_5c, book_depth_ask_5c, cost_move_up_5pct, cost_move_down_5pct')
       .in('market_id', batchIds)
-      .order('timestamp', { ascending: false })
-      .limit(20000);
+      .gte('timestamp', twoDaysAgo)
+      .order('timestamp', { ascending: false });
 
-    // Fetch trades for this batch (last 24h)
-    const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-    const { data: trades } = await supabaseAdmin
+    // Use 30-day trade window (up from 7d) to capture more activity for sparse markets
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 86400000).toISOString();
+    const { data: trades } = await bq
       .from('trades')
       .select('market_id, price, size_tokens, size_usdc, side, wallet_address, timestamp')
       .in('market_id', batchIds)
-      .gte('timestamp', oneDayAgo);
+      .gte('timestamp', thirtyDaysAgo);
 
-    // Group data by market
     const snapsByMarket = new Map<string, Snapshot[]>();
     for (const s of snapshots ?? []) {
       if (!snapsByMarket.has(s.market_id)) snapsByMarket.set(s.market_id, []);
@@ -331,35 +407,70 @@ export async function computeAnalytics(): Promise<{
       tradesByMarket.get(t.market_id)!.push(t);
     }
 
-    // Compute metrics for each market
     for (const market of batch) {
       try {
         const mSnaps = snapsByMarket.get(market.condition_id) ?? [];
         const mTrades = tradesByMarket.get(market.condition_id) ?? [];
 
-        if (mSnaps.length === 0) continue;
+        if (mSnaps.length === 0) { skipped++; continue; }
 
-        // Latest snapshot with book data
         const latestWithBook = mSnaps.find(
           (s) => s.book_depth_bid_5c != null || s.book_depth_ask_5c != null,
         ) ?? null;
 
         const currentPrice = mSnaps[0].yes_price;
 
+        // Freshness
+        const snapAgeMin = (Date.now() - new Date(mSnaps[0].timestamp).getTime()) / 60000;
+        const tradeAgeMin = mTrades.length > 0
+          ? (Date.now() - Math.max(...mTrades.map((t) => new Date(t.timestamp).getTime()))) / 60000
+          : Infinity;
+
+        // Compute metrics with contracts
+        const m1h = computeMomentumC(mSnaps, 1, 2, 15);
+        const m6h = computeMomentumC(mSnaps, 6, 2, 60);
+        const m24h = computeMomentumC(mSnaps, 24, 3, 180);
+        const vol = computeVolatilityC(mSnaps);
+        const conv = computeConvergenceC(currentPrice, market.end_date, market.start_date);
+        const rev = computeReversionC(mSnaps);
+        const vwap = computeVWAPC(mTrades);
+        const bsr = computeBuySellC(mTrades);
+        const smf = computeSmartMoneyC(mTrades, smartWallets);
+        const bi = computeBookImbalanceC(latestWithBook);
+        const la = computeLiqAsymmetryC(latestWithBook);
+
+        const statuses: Record<string, MetricStatus> = {
+          momentum_1h: m1h.status, momentum_6h: m6h.status, momentum_24h: m24h.status,
+          volatility_24h: vol.status, convergence_speed: conv.status, price_reversion_rate: rev.status,
+          vwap_24h: vwap.status, buy_sell_ratio: bsr.status, smart_money_flow: smf.status,
+          book_imbalance: bi.status, liquidity_asymmetry: la.status,
+        };
+
+        const coverage = evaluateCoverage(
+          statuses, mSnaps.length, mTrades.length, latestWithBook !== null, snapAgeMin, tradeAgeMin,
+        );
+
+        totalCoverage += coverage.coverageScore;
+        if (coverage.isPublishable) publishable++;
+
         analyticsRows.push({
           market_id: market.condition_id,
           computed_at: new Date().toISOString(),
-          momentum_1h: computeMomentum(mSnaps, 1),
-          momentum_6h: computeMomentum(mSnaps, 6),
-          momentum_24h: computeMomentum(mSnaps, 24),
-          volatility_24h: computeVolatility(mSnaps),
-          convergence_speed: computeConvergenceSpeed(currentPrice, market.end_date, market.start_date),
-          price_reversion_rate: computePriceReversionRate(mSnaps),
-          vwap_24h: computeVWAP(mTrades),
-          buy_sell_ratio: computeBuySellRatio(mTrades),
-          smart_money_flow: computeSmartMoneyFlow(mTrades, smartWallets),
-          book_imbalance: computeBookImbalance(latestWithBook),
-          liquidity_asymmetry: computeLiquidityAsymmetry(latestWithBook),
+          momentum_1h: m1h.value,
+          momentum_6h: m6h.value,
+          momentum_24h: m24h.value,
+          volatility_24h: vol.value,
+          convergence_speed: conv.value,
+          price_reversion_rate: rev.value,
+          vwap_24h: vwap.value,
+          buy_sell_ratio: bsr.value,
+          smart_money_flow: smf.value,
+          book_imbalance: bi.value,
+          liquidity_asymmetry: la.value,
+          is_publishable: coverage.isPublishable,
+          coverage_score: coverage.coverageScore,
+          missing_dependencies: coverage.missingDependencies,
+          coverage_by_metric: coverage.coverageByMetric,
         });
       } catch (err) {
         errors.push(`Analytics ${market.condition_id}: ${err}`);
@@ -367,11 +478,10 @@ export async function computeAnalytics(): Promise<{
     }
   }
 
-  // Batch upsert analytics
   const UPSERT_BATCH = 500;
   for (let i = 0; i < analyticsRows.length; i += UPSERT_BATCH) {
     const chunk = analyticsRows.slice(i, i + UPSERT_BATCH);
-    const { error } = await supabaseAdmin
+    const { error } = await bq
       .from('market_analytics')
       .upsert(chunk, { onConflict: 'market_id' });
 
@@ -382,5 +492,15 @@ export async function computeAnalytics(): Promise<{
     }
   }
 
-  return { computed, errors };
+  return {
+    computed,
+    publishable,
+    errors,
+    telemetry: {
+      marketsProcessed: analyticsRows.length,
+      marketsSkipped: skipped,
+      smartWalletCount: smartWallets.size,
+      avgCoverageScore: analyticsRows.length > 0 ? Math.round(totalCoverage / analyticsRows.length) : 0,
+    },
+  };
 }

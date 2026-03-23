@@ -13,11 +13,11 @@ import {
   ArrowRight,
   Globe,
 } from "lucide-react";
-import { Market, mockMarkets } from "../data/mockData";
+import { Market } from "../types/market";
 import { MarketCard } from "../components/MarketCard";
 import { InteractiveGlobe } from "../components/ui/interactive-globe";
 
-type SortOption = "highest-volume" | "biggest-movers" | "highest-odds" | "lowest-odds";
+type SortOption = "highest-volume" | "biggest-movers" | "highest-odds" | "lowest-odds" | "highest-edge";
 
 function formatVolume(v: number): string {
   if (v >= 1_000_000) return `$${(v / 1_000_000).toFixed(1)}M`;
@@ -46,9 +46,10 @@ function formatDate(): string {
 
 export default function Dashboard() {
   const [sortOption, setSortOption] = useState<SortOption>("highest-volume");
-  const [markets, setMarkets] = useState<Market[]>(mockMarkets);
+  const [markets, setMarkets] = useState<Market[]>([]);
   const [loading, setLoading] = useState(true);
   const [isLive, setIsLive] = useState(false);
+  const [fetchError, setFetchError] = useState(false);
   const [currentTime, setCurrentTime] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [showAll, setShowAll] = useState(false);
@@ -62,7 +63,7 @@ export default function Dashboard() {
   useEffect(() => {
     async function fetchMarkets() {
       try {
-        const res = await fetch("/api/markets?limit=100");
+        const res = await fetch("/api/markets?limit=1000");
         if (!res.ok) throw new Error("API error");
         const json = await res.json();
         if (json.markets && json.markets.length > 0) {
@@ -80,12 +81,13 @@ export default function Dashboard() {
             traders: (m.traders as number | null) ?? null,
             lastUpdated: new Date(m.lastUpdated as string),
             liquidity: m.liquidity as number,
+            edge: (m.edge as { score: number; direction: 'bullish' | 'bearish' | 'neutral'; regime: string } | null) ?? null,
           }));
           setMarkets(liveMarkets);
           setIsLive(true);
         }
       } catch {
-        // Keep mock data on failure
+        setFetchError(true);
       } finally {
         setLoading(false);
       }
@@ -114,6 +116,13 @@ export default function Dashboard() {
         break;
       case "lowest-odds":
         filtered.sort((a, b) => a.currentOdds - b.currentOdds);
+        break;
+      case "highest-edge":
+        filtered.sort((a, b) => {
+          const aEdge = a.edge?.score ?? 50;
+          const bEdge = b.edge?.score ?? 50;
+          return Math.abs(bEdge - 50) - Math.abs(aEdge - 50); // strongest signals first (furthest from neutral 50)
+        });
         break;
     }
     return filtered;
@@ -148,7 +157,7 @@ export default function Dashboard() {
                   isLive ? "text-[#10b981]" : "text-[#f59e0b]"
                 }`}
               >
-                {isLive ? "Live" : "Mock"}
+                {isLive ? "Live" : fetchError ? "Offline" : "Connecting..."}
               </span>
             </div>
             <span className="text-[#64748b] font-mono">{currentTime} EST</span>
@@ -300,6 +309,29 @@ export default function Dashboard() {
               </button>
             </div>
 
+            {/* Sort Options */}
+            <div className="flex items-center gap-1 flex-wrap">
+              {([
+                { key: "highest-volume", label: "Volume" },
+                { key: "biggest-movers", label: "Movers" },
+                { key: "highest-edge", label: "Edge Signal" },
+                { key: "highest-odds", label: "High Odds" },
+                { key: "lowest-odds", label: "Low Odds" },
+              ] as { key: SortOption; label: string }[]).map(({ key, label }) => (
+                <button
+                  key={key}
+                  onClick={() => setSortOption(key)}
+                  className={`px-3 py-1 rounded-lg text-[10px] font-medium tracking-wider uppercase transition-colors ${
+                    sortOption === key
+                      ? "bg-[#00d4ff]/10 text-[#00d4ff] border border-[#00d4ff]/30"
+                      : "text-[#64748b] border border-transparent hover:text-white hover:bg-[rgba(255,255,255,0.04)]"
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+
             {/* Market Cards Grid */}
             {loading ? (
               <div className="flex items-center justify-center py-16">
@@ -316,7 +348,8 @@ export default function Dashboard() {
 
             {!loading && sortedMarkets.length === 0 && (
               <div className="text-center py-16">
-                <p className="text-sm text-[#64748b]">No markets found.</p>
+                <p className="text-sm text-[#94a3b8] mb-2">{fetchError ? "Unable to connect to data pipeline." : "No markets found."}</p>
+                {fetchError && <p className="text-xs text-[#64748b]">The pipeline may still be populating data. Try refreshing in a few minutes.</p>}
               </div>
             )}
           </div>

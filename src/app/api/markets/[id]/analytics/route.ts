@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { supabaseAdmin } from '@/lib/supabase';
+import { bq } from '@/lib/bigquery';
 
 export const runtime = 'nodejs';
 
@@ -11,7 +11,7 @@ export async function GET(
 
   // ─── Precomputed analytics from market_analytics table ───
 
-  const { data: analytics } = await supabaseAdmin
+  const { data: analytics } = await bq
     .from('market_analytics')
     .select('*')
     .eq('market_id', marketId)
@@ -19,7 +19,7 @@ export async function GET(
 
   // ─── Volume profile: computed on-the-fly from trades ───
 
-  const { data: trades } = await supabaseAdmin
+  const { data: trades } = await bq
     .from('trades')
     .select('price, size_usdc, side')
     .eq('market_id', marketId);
@@ -28,7 +28,7 @@ export async function GET(
 
   // ─── Position delta for flagged wallets ───
 
-  const { data: positions } = await supabaseAdmin
+  const { data: positions } = await bq
     .from('wallet_positions')
     .select('wallet_address, position_size, outcome, snapshot_time')
     .eq('market_id', marketId)
@@ -39,7 +39,7 @@ export async function GET(
 
   // ─── Smart wallet activity ───
 
-  const { data: smartWallets } = await supabaseAdmin
+  const { data: smartWallets } = await bq
     .from('wallets')
     .select('address, accuracy_score, accuracy_sample_size, credibility_score, total_pnl_usdc')
     .gt('accuracy_score', 0.60)
@@ -48,7 +48,7 @@ export async function GET(
   const smartAddresses = new Set((smartWallets ?? []).map((w) => w.address));
 
   const { data: smartTrades } = smartAddresses.size > 0
-    ? await supabaseAdmin
+    ? await bq
         .from('trades')
         .select('wallet_address, side, size_usdc, price, timestamp')
         .eq('market_id', marketId)
@@ -78,9 +78,17 @@ export async function GET(
     })
     .sort((a, b) => (b.accuracy ?? 0) - (a.accuracy ?? 0));
 
+  // ─── Edge analytics (predictive signals) ───
+
+  const { data: edgeData } = await bq
+    .from('market_edge')
+    .select('*')
+    .eq('market_id', marketId)
+    .single();
+
   // ─── Latest book snapshot for real-time book metrics ───
 
-  const { data: latestBook } = await supabaseAdmin
+  const { data: latestBook } = await bq
     .from('market_snapshots')
     .select('spread, book_depth_bid_5c, book_depth_ask_5c, book_imbalance, cost_move_up_5pct, cost_move_down_5pct, timestamp')
     .eq('market_id', marketId)
@@ -89,9 +97,25 @@ export async function GET(
     .limit(1)
     .single();
 
+  // ─── Build dataQuality object ───
+
+  const coverageByMetric = analytics?.coverage_by_metric ?? null;
+  const isPublishable = analytics?.is_publishable ?? false;
+  const coverageScore = analytics?.coverage_score ?? 0;
+  const missingDeps = analytics?.missing_dependencies ?? [];
+
   return NextResponse.json({
     marketId,
     computedAt: analytics?.computed_at ?? null,
+
+    // Data quality metadata
+    dataQuality: {
+      isPublishable,
+      coverageScore,
+      computedAt: analytics?.computed_at ?? null,
+      missingDependencies: missingDeps,
+      coverageByMetric,
+    },
 
     // Price behavior
     momentum: {
@@ -123,6 +147,45 @@ export async function GET(
     // Insider / smart money
     smartWalletActivity,
     positionDeltas,
+
+    // Edge analytics (predictive signals)
+    edge: edgeData ? {
+      score: edgeData.edge_score ?? null,
+      direction: edgeData.edge_direction ?? null,
+      reasoning: (() => { try { return JSON.parse(edgeData.edge_reasoning ?? '[]'); } catch { return []; } })(),
+      computedAt: edgeData.computed_at ?? null,
+      signals: {
+        smartMoneyLeadLag: {
+          value: edgeData.smart_money_lead_lag ?? null,
+          direction: edgeData.smart_money_direction ?? null,
+          strength: edgeData.smart_money_strength ?? null,
+        },
+        volumePriceDivergence: {
+          value: edgeData.volume_price_divergence ?? null,
+          direction: edgeData.volume_price_direction ?? null,
+          strength: edgeData.volume_price_strength ?? null,
+        },
+        whaleAccumulation: {
+          value: edgeData.whale_accumulation ?? null,
+          direction: edgeData.whale_direction ?? null,
+          strength: edgeData.whale_strength ?? null,
+        },
+        emaMomentum: {
+          value: edgeData.ema_momentum ?? null,
+          direction: edgeData.ema_direction ?? null,
+          strength: edgeData.ema_strength ?? null,
+        },
+        marketRegime: {
+          regime: edgeData.market_regime ?? null,
+          confidence: edgeData.regime_confidence ?? null,
+        },
+      },
+      context: {
+        snapshotCount: edgeData.snapshot_count ?? 0,
+        tradeCount: edgeData.trade_count ?? 0,
+        smartTradeCount: edgeData.smart_trade_count ?? 0,
+      },
+    } : null,
   });
 }
 

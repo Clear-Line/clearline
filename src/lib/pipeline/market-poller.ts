@@ -1,9 +1,12 @@
 /**
- * Market Poller — fetches active markets from Gamma API and upserts into Supabase.
+ * Market Poller — fetches active markets from Gamma API.
+ * Markets metadata → Supabase (small, fast lookups).
+ * Snapshots → BigQuery (high-volume time-series).
  * Run every 5 minutes.
  */
 
 import { supabaseAdmin } from '../supabase';
+import { bq } from '../bigquery';
 import { fetchActiveMarkets, GammaMarket } from './polymarket';
 
 function parseJsonField(raw: string | null | undefined): unknown {
@@ -37,15 +40,21 @@ function categorizeMarket(question: string, tags?: string[]): string {
 }
 
 export async function pollMarkets(): Promise<{ upserted: number; errors: string[] }> {
+  const startTime = Date.now();
+  const TIME_BUDGET_MS = 45_000; // leave 15s buffer for DB writes
   const errors: string[] = [];
   let allMarkets: GammaMarket[] = [];
 
-  // Paginate through all active markets
+  // Paginate through all active markets (with time budget)
   let offset = 0;
   const limit = 100;
   let keepGoing = true;
 
   while (keepGoing) {
+    if (Date.now() - startTime > TIME_BUDGET_MS) {
+      errors.push(`Time budget reached at offset=${offset}, will continue next run`);
+      break;
+    }
     try {
       const batch = await fetchActiveMarkets(limit, offset);
       allMarkets = allMarkets.concat(batch);
@@ -57,19 +66,15 @@ export async function pollMarkets(): Promise<{ upserted: number; errors: string[
     }
   }
 
-  // Filter to politics, economics, and geopolitics/current events
-  const FOCUS_CATEGORIES = new Set(['politics', 'economics', 'geopolitics']);
-  const focusedMarkets = allMarkets.filter((m) =>
-    FOCUS_CATEGORIES.has(categorizeMarket(m.question, m.tags)),
-  );
+  // Process ALL markets — no category filter. Categories are still tagged for display/filtering.
 
   // Build rows for batch upsert
   const marketRows = [];
-  const snapshotRows = [];
+  const snapshotRows: any[] = [];
   const marketSeen = new Set<string>();
   const snapshotSeen = new Set<string>();
 
-  for (const m of focusedMarkets) {
+  for (const m of allMarkets) {
     const outcomes = parseJsonField(m.outcomes);
     const clobTokenIds = parseJsonField(m.clobTokenIds);
     const outcomePrices = parseJsonField(m.outcomePrices) as string[];
@@ -93,18 +98,28 @@ export async function pollMarkets(): Promise<{ upserted: number; errors: string[
     });
 
     if (outcomePrices.length >= 2 && !snapshotSeen.has(m.conditionId)) {
-      snapshotSeen.add(m.conditionId);
-      snapshotRows.push({
-        market_id: m.conditionId,
-        timestamp: new Date().toISOString(),
-        yes_price: parseFloat(outcomePrices[0]) || 0,
-        no_price: parseFloat(outcomePrices[1]) || 0,
-        volume_24h: parseFloat(m.volume24hr) || 0,
-        total_volume: parseFloat(m.volume) || 0,
-        liquidity: parseFloat(m.liquidity) || 0,
-      });
+      const vol24h = parseFloat(m.volume24hr) || 0;
+      const totalVol = parseFloat(m.volume) || 0;
+      const liq = parseFloat(m.liquidity) || 0;
+      if (vol24h > 0 || totalVol > 0 || liq > 0) {
+        snapshotSeen.add(m.conditionId);
+        snapshotRows.push({
+          market_id: m.conditionId,
+          timestamp: new Date().toISOString(),
+          yes_price: parseFloat(outcomePrices[0]) || 0,
+          no_price: parseFloat(outcomePrices[1]) || 0,
+          volume_24h: vol24h,
+          total_volume: totalVol,
+          liquidity: liq,
+        });
+      }
     }
   }
+
+  // Top 5000 markets by volume — covers all meaningful activity within timeout
+  const MAX_SNAPSHOTS = 5000;
+  snapshotRows.sort((a, b) => (b.volume_24h ?? 0) - (a.volume_24h ?? 0));
+  const cappedSnapshots = snapshotRows.slice(0, MAX_SNAPSHOTS);
 
   // Batch upsert markets in chunks of 500
   let upserted = 0;
@@ -123,10 +138,10 @@ export async function pollMarkets(): Promise<{ upserted: number; errors: string[
     }
   }
 
-  // Batch insert snapshots in chunks of 500
-  for (let i = 0; i < snapshotRows.length; i += BATCH_SIZE) {
-    const batch = snapshotRows.slice(i, i + BATCH_SIZE);
-    const { error } = await supabaseAdmin
+  // Batch insert snapshots into BigQuery in chunks of 500
+  for (let i = 0; i < cappedSnapshots.length; i += BATCH_SIZE) {
+    const batch = cappedSnapshots.slice(i, i + BATCH_SIZE);
+    const { error } = await bq
       .from('market_snapshots')
       .insert(batch);
 

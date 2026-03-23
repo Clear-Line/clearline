@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { snapshotBooks } from '@/lib/pipeline/book-snapshotter';
+import { computeEdgeAnalytics } from '@/lib/analysis/edge-analytics';
 import { shouldRetry, scheduleRetry, getRetryCount } from '@/lib/pipeline/self-retry';
 
 export const runtime = 'nodejs';
@@ -14,7 +14,7 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const result = await snapshotBooks();
+    const result = await computeEdgeAnalytics();
     const retryCount = getRetryCount(req);
 
     if (shouldRetry(result.errors)) {
@@ -23,7 +23,8 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      updated: result.updated,
+      computed: result.computed,
+      telemetry: result.telemetry,
       retryCount,
       errors: result.errors.slice(0, 10),
     });

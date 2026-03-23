@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { computeCorrelations } from '@/lib/analysis/correlation-engine';
+import { shouldRetry, scheduleRetry, getRetryCount } from '@/lib/pipeline/self-retry';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -14,9 +15,16 @@ export async function GET(req: NextRequest) {
 
   try {
     const result = await computeCorrelations();
+    const retryCount = getRetryCount(req);
+
+    if (shouldRetry(result.errors)) {
+      scheduleRetry(req, retryCount);
+    }
+
     return NextResponse.json({
       success: true,
       computed: result.computed,
+      retryCount,
       errors: result.errors.slice(0, 10),
     });
   } catch (err) {

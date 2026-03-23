@@ -9,6 +9,7 @@
  */
 
 import { supabaseAdmin } from '../supabase';
+import { bq } from '../bigquery';
 import { GammaMarket } from './polymarket';
 
 const GAMMA_API = 'https://gamma-api.polymarket.com';
@@ -66,17 +67,26 @@ export async function computeAccuracy(): Promise<{
   let walletsUpdated = 0;
 
   // ─── Step 1: Find markets in our DB that are not yet marked resolved ───
+  // Paginate to avoid pulling all 29K at once
+  const unresolvedIds = new Set<string>();
+  let unresolvedOffset = 0;
+  const UNRESOLVED_PAGE = 1000;
 
-  const { data: unresolvedMarkets, error: dbErr } = await supabaseAdmin
-    .from('markets')
-    .select('condition_id')
-    .eq('is_resolved', false);
+  while (true) {
+    const { data: page, error: dbErr } = await supabaseAdmin
+      .from('markets')
+      .select('condition_id')
+      .eq('is_resolved', false)
+      .range(unresolvedOffset, unresolvedOffset + UNRESOLVED_PAGE - 1);
 
-  if (dbErr || !unresolvedMarkets) {
-    return { resolved: 0, walletsUpdated: 0, errors: [`DB query failed: ${dbErr?.message}`] };
+    if (dbErr) {
+      return { resolved: 0, walletsUpdated: 0, errors: [`DB query failed: ${dbErr.message}`] };
+    }
+    if (!page || page.length === 0) break;
+    for (const m of page) unresolvedIds.add(m.condition_id);
+    if (page.length < UNRESOLVED_PAGE) break;
+    unresolvedOffset += UNRESOLVED_PAGE;
   }
-
-  const unresolvedIds = new Set(unresolvedMarkets.map((m) => m.condition_id));
 
   // ─── Step 2: Paginate through closed markets from Gamma ───
   // Time budget: stop after ~45s to stay within Vercel's 60s limit
@@ -143,15 +153,33 @@ export async function computeAccuracy(): Promise<{
   }
 
   // ─── Step 4: Compute accuracy scores across ALL resolved markets ───
+  // Check time budget before starting expensive accuracy computation
+  if (Date.now() - startTime > TIME_BUDGET_MS) {
+    errors.push('Time budget reached before accuracy computation, will continue next run');
+    return { resolved, walletsUpdated: 0, errors };
+  }
 
-  // Get all resolved markets with their outcomes
-  const { data: resolvedMarkets, error: resErr } = await supabaseAdmin
-    .from('markets')
-    .select('condition_id, resolution_outcome')
-    .eq('is_resolved', true)
-    .not('resolution_outcome', 'is', null);
+  // Get resolved markets with outcomes (paginated)
+  const resolvedMarkets: { condition_id: string; resolution_outcome: string }[] = [];
+  let resOffset = 0;
+  const RES_PAGE = 1000;
 
-  if (resErr || !resolvedMarkets || resolvedMarkets.length === 0) {
+  while (true) {
+    if (Date.now() - startTime > TIME_BUDGET_MS) break;
+    const { data: page, error: resErr } = await supabaseAdmin
+      .from('markets')
+      .select('condition_id, resolution_outcome')
+      .eq('is_resolved', true)
+      .not('resolution_outcome', 'is', null)
+      .range(resOffset, resOffset + RES_PAGE - 1);
+
+    if (resErr || !page || page.length === 0) break;
+    resolvedMarkets.push(...page);
+    if (page.length < RES_PAGE) break;
+    resOffset += RES_PAGE;
+  }
+
+  if (resolvedMarkets.length === 0) {
     return { resolved, walletsUpdated: 0, errors };
   }
 
@@ -172,8 +200,12 @@ export async function computeAccuracy(): Promise<{
   }[] = [];
 
   for (let i = 0; i < resolvedIds.length; i += ID_BATCH) {
+    if (Date.now() - startTime > TIME_BUDGET_MS) {
+      errors.push(`Time budget reached at trade fetch batch ${i}/${resolvedIds.length}`);
+      break;
+    }
     const batch = resolvedIds.slice(i, i + ID_BATCH);
-    const { data, error } = await supabaseAdmin
+    const { data, error } = await bq
       .from('trades')
       .select('wallet_address, market_id, side, outcome, size_usdc')
       .in('market_id', batch);
@@ -225,7 +257,7 @@ export async function computeAccuracy(): Promise<{
   const UPSERT_BATCH = 500;
   for (let i = 0; i < walletRows.length; i += UPSERT_BATCH) {
     const chunk = walletRows.slice(i, i + UPSERT_BATCH);
-    const { error } = await supabaseAdmin
+    const { error } = await bq
       .from('wallets')
       .upsert(chunk, { onConflict: 'address' });
 

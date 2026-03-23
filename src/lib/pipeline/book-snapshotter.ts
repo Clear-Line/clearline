@@ -5,6 +5,7 @@
  */
 
 import { supabaseAdmin } from '../supabase';
+import { bq } from '../bigquery';
 import { fetchOrderBook, fetchSpread } from './polymarket';
 
 function computeDepthWithin5Cents(
@@ -86,26 +87,52 @@ function computeCostToMove(
 }
 
 export async function snapshotBooks(): Promise<{ updated: number; errors: string[] }> {
+  const startTime = Date.now();
+  const TIME_BUDGET_MS = 45_000; // leave 15s buffer for DB writes
   const errors: string[] = [];
   let updated = 0;
+  const MAX_MARKETS = 500; // cap to top markets by volume to fit within Vercel timeout
 
-  // Get active political/economic markets with their CLOB token IDs
-  const { data: markets, error: mktError } = await supabaseAdmin
-    .from('markets')
-    .select('condition_id, clob_token_ids, outcomes')
-    .eq('is_active', true)
-    .in('category', ['politics', 'economics', 'geopolitics', 'other']);
+  // Get top markets by volume from recent snapshots
+  const { data: topSnaps } = await bq
+    .from('market_snapshots')
+    .select('market_id, volume_24h')
+    .gt('volume_24h', 0)
+    .gte('timestamp', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString())
+    .order('volume_24h', { ascending: false })
+    .limit(MAX_MARKETS);
 
-  if (mktError || !markets) {
-    return { updated: 0, errors: [`Failed to fetch markets: ${mktError?.message}`] };
+  const topMarketIds = [...new Set((topSnaps ?? []).map((s: { market_id: string }) => s.market_id))];
+
+  if (topMarketIds.length === 0) {
+    return { updated: 0, errors: ['No recent snapshots with volume found'] };
   }
 
-  // Process markets concurrently in batches of 10, collect snapshot rows
+  // Fetch CLOB token IDs from Supabase for these markets only
+  const ID_BATCH_SIZE = 200;
+  const markets: { condition_id: string; clob_token_ids: string[]; outcomes: string[] }[] = [];
+  for (let i = 0; i < topMarketIds.length; i += ID_BATCH_SIZE) {
+    const batch = topMarketIds.slice(i, i + ID_BATCH_SIZE);
+    const { data, error: mktError } = await supabaseAdmin
+      .from('markets')
+      .select('condition_id, clob_token_ids, outcomes')
+      .in('condition_id', batch)
+      .eq('is_active', true);
+
+    if (mktError) {
+      errors.push(`Failed to fetch markets batch ${i}: ${mktError.message}`);
+      continue;
+    }
+    if (data) markets.push(...data);
+  }
+
+  if (markets.length === 0) {
+    return { updated: 0, errors: ['No active markets with CLOB token IDs found'] };
+  }
+
+  // Process markets concurrently in batches of 10, collect book data
   const snapshotRows: {
     market_id: string;
-    timestamp: string;
-    yes_price: number;
-    no_price: number;
     spread: number | null;
     book_depth_bid_5c: number;
     book_depth_ask_5c: number;
@@ -116,6 +143,10 @@ export async function snapshotBooks(): Promise<{ updated: number; errors: string
 
   const CONCURRENCY = 10;
   for (let i = 0; i < markets.length; i += CONCURRENCY) {
+    if (Date.now() - startTime > TIME_BUDGET_MS) {
+      errors.push(`Time budget reached at market ${i}/${markets.length}, will continue next run`);
+      break;
+    }
     const batch = markets.slice(i, i + CONCURRENCY);
 
     await Promise.all(batch.map(async (market) => {
@@ -154,9 +185,6 @@ export async function snapshotBooks(): Promise<{ updated: number; errors: string
 
         snapshotRows.push({
           market_id: market.condition_id,
-          timestamp: new Date().toISOString(),
-          yes_price: midpoint,
-          no_price: 1 - midpoint,
           spread: spread > 0 ? spread : null,
           book_depth_bid_5c: bidDepth,
           book_depth_ask_5c: askDepth,
@@ -170,19 +198,59 @@ export async function snapshotBooks(): Promise<{ updated: number; errors: string
     }));
   }
 
-  // Batch insert all snapshots
-  const BATCH_SIZE = 500;
-  for (let i = 0; i < snapshotRows.length; i += BATCH_SIZE) {
-    const batch = snapshotRows.slice(i, i + BATCH_SIZE);
-    const { error } = await supabaseAdmin
-      .from('market_snapshots')
-      .insert(batch);
+  // Update the most recent snapshot for each market with book data in BigQuery
+  // Use (market_id, timestamp) composite key instead of auto-increment id
+  const marketIds = snapshotRows.map((r) => r.market_id);
+  const snapshotMap = new Map(snapshotRows.map((r) => [r.market_id, r]));
 
-    if (error) {
-      errors.push(`Snapshot batch offset=${i}: ${error.message}`);
-    } else {
-      updated += batch.length;
+  // Fetch latest snapshot timestamp per market in batches
+  const ID_BATCH = 200;
+  const latestByMarket = new Map<string, string>(); // market_id → timestamp
+  for (let i = 0; i < marketIds.length; i += ID_BATCH) {
+    const batch = marketIds.slice(i, i + ID_BATCH);
+    const { data: latestSnaps } = await bq
+      .from('market_snapshots')
+      .select('market_id, timestamp')
+      .in('market_id', batch)
+      .not('volume_24h', 'is', null)
+      .order('timestamp', { ascending: false });
+
+    if (latestSnaps) {
+      for (const s of latestSnaps as { market_id: string; timestamp: string }[]) {
+        // Only keep the first (latest) per market
+        if (!latestByMarket.has(s.market_id)) {
+          latestByMarket.set(s.market_id, s.timestamp);
+        }
+      }
     }
+  }
+
+  // Update snapshots individually using (market_id, timestamp) composite key
+  const UPDATE_CONCURRENCY = 20;
+  const entries = [...latestByMarket.entries()];
+  for (let i = 0; i < entries.length; i += UPDATE_CONCURRENCY) {
+    const batch = entries.slice(i, i + UPDATE_CONCURRENCY);
+    await Promise.all(batch.map(async ([marketId, timestamp]) => {
+      const row = snapshotMap.get(marketId);
+      if (!row) return;
+      const { error } = await bq
+        .from('market_snapshots')
+        .update({
+          spread: row.spread,
+          book_depth_bid_5c: row.book_depth_bid_5c,
+          book_depth_ask_5c: row.book_depth_ask_5c,
+          book_imbalance: row.book_imbalance,
+          cost_move_up_5pct: row.cost_move_up_5pct,
+          cost_move_down_5pct: row.cost_move_down_5pct,
+        })
+        .eq('market_id', marketId)
+        .eq('timestamp', timestamp);
+      if (error) {
+        errors.push(`Book update ${marketId}: ${error.message}`);
+      } else {
+        updated++;
+      }
+    }));
   }
 
   return { updated, errors };

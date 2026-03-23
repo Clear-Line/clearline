@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { pollMarkets } from '@/lib/pipeline/market-poller';
+import { shouldRetry, scheduleRetry, getRetryCount } from '@/lib/pipeline/self-retry';
 
 export const runtime = 'nodejs';
-export const maxDuration = 60; // seconds
+export const maxDuration = 60;
 
 export async function GET(req: NextRequest) {
-  // Simple auth: check for a secret header to prevent public access
   const authHeader = req.headers.get('authorization');
   const cronSecret = process.env.CRON_SECRET;
 
@@ -15,10 +15,17 @@ export async function GET(req: NextRequest) {
 
   try {
     const result = await pollMarkets();
+    const retryCount = getRetryCount(req);
+
+    if (shouldRetry(result.errors)) {
+      scheduleRetry(req, retryCount);
+    }
+
     return NextResponse.json({
       success: true,
       upserted: result.upserted,
-      errors: result.errors.slice(0, 10), // cap error output
+      retryCount,
+      errors: result.errors.slice(0, 10),
     });
   } catch (err) {
     return NextResponse.json(

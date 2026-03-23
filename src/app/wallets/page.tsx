@@ -1,28 +1,78 @@
 "use client";
 
-import { useState } from "react";
-import { Search, TrendingUp, Clock, Target, ExternalLink } from "lucide-react";
-import { mockWallets } from "../../data/mockData";
-import {
-  LineChart,
-  Line,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
-} from "recharts";
+import { useState, useEffect } from "react";
+import { Search, TrendingUp, Clock, Target, ExternalLink, Loader2 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
+
+interface WalletData {
+  id: string;
+  fullAddress: string;
+  username: string | null;
+  accuracy: number;
+  sampleSize: number;
+  totalTrades: number;
+  compositeScore: number | null;
+  recentActivity: {
+    marketTitle: string;
+    position: string;
+    timestamp: string;
+  }[];
+}
 
 export default function WalletTracker() {
   const [searchQuery, setSearchQuery] = useState("");
-  const [selectedWallet, setSelectedWallet] = useState(mockWallets[0]);
+  const [wallets, setWallets] = useState<WalletData[]>([]);
+  const [selectedWallet, setSelectedWallet] = useState<WalletData | null>(null);
+  const [loading, setLoading] = useState(true);
 
-  const filteredWallets = mockWallets.filter(
+  useEffect(() => {
+    async function fetchWallets() {
+      try {
+        const res = await fetch("/api/wallets");
+        if (!res.ok) throw new Error("API error");
+        const json = await res.json();
+        if (json.wallets && json.wallets.length > 0) {
+          setWallets(json.wallets);
+          setSelectedWallet(json.wallets[0]);
+        }
+      } catch {
+        // Failed to load wallets
+      } finally {
+        setLoading(false);
+      }
+    }
+    fetchWallets();
+  }, []);
+
+  const filteredWallets = wallets.filter(
     (wallet) =>
       wallet.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      wallet.specialization.toLowerCase().includes(searchQuery.toLowerCase()),
+      (wallet.username && wallet.username.toLowerCase().includes(searchQuery.toLowerCase())) ||
+      wallet.fullAddress.toLowerCase().includes(searchQuery.toLowerCase()),
   );
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-32">
+        <Loader2 className="h-5 w-5 animate-spin text-blue-600" />
+        <span className="ml-2 text-sm text-gray-500">Loading wallets...</span>
+      </div>
+    );
+  }
+
+  if (wallets.length === 0) {
+    return (
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <div className="mb-8">
+          <h1 className="text-3xl font-semibold text-gray-900 mb-2">Wallet Tracker</h1>
+          <p className="text-gray-600">Track high-accuracy prediction market traders and their positions</p>
+        </div>
+        <div className="text-center py-16">
+          <p className="text-sm text-gray-500">No wallet data available yet. The pipeline needs to run to populate wallet accuracy scores.</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
@@ -55,35 +105,45 @@ export default function WalletTracker() {
           <div className="bg-white rounded-lg border border-gray-200 divide-y divide-gray-200 max-h-[600px] overflow-y-auto">
             {filteredWallets.map((wallet) => (
               <button
-                key={wallet.id}
+                key={wallet.fullAddress}
                 onClick={() => setSelectedWallet(wallet)}
                 className={`w-full p-4 text-left hover:bg-gray-50 transition-colors ${
-                  selectedWallet.id === wallet.id
+                  selectedWallet?.fullAddress === wallet.fullAddress
                     ? "bg-blue-50 hover:bg-blue-50"
                     : ""
                 }`}
               >
                 <div className="flex items-start justify-between mb-2">
-                  <span className="font-mono text-sm font-medium text-gray-900">
-                    {wallet.id}
-                  </span>
+                  <div>
+                    <span className="font-mono text-sm font-medium text-gray-900">
+                      {wallet.id}
+                    </span>
+                    {wallet.username && (
+                      <span className="ml-2 text-xs text-gray-500">({wallet.username})</span>
+                    )}
+                  </div>
                   <span
                     className={`text-lg font-semibold ${
                       wallet.accuracy >= 70
                         ? "text-green-600"
-                        : "text-yellow-600"
+                        : wallet.accuracy >= 50
+                          ? "text-yellow-600"
+                          : "text-gray-600"
                     }`}
                   >
                     {wallet.accuracy}%
                   </span>
                 </div>
-                <div className="text-xs text-gray-600 mb-1">
-                  {wallet.specialization}
-                </div>
                 <div className="flex items-center gap-3 text-xs text-gray-500">
                   <span>{wallet.totalTrades} trades</span>
                   <span>·</span>
-                  <span>{wallet.avgLeadTime}h lead time</span>
+                  <span>{wallet.sampleSize} resolved</span>
+                  {wallet.compositeScore !== null && (
+                    <>
+                      <span>·</span>
+                      <span>Score: {wallet.compositeScore.toFixed(2)}</span>
+                    </>
+                  )}
                 </div>
               </button>
             ))}
@@ -91,139 +151,98 @@ export default function WalletTracker() {
         </div>
 
         {/* Wallet Detail */}
-        <div className="lg:col-span-2 space-y-6">
-          {/* Wallet Overview */}
-          <div className="bg-white rounded-lg border border-gray-200 p-6">
-            <div className="flex items-start justify-between mb-6">
-              <div>
-                <h2 className="text-2xl font-semibold text-gray-900 mb-2">
-                  {selectedWallet.id}
-                </h2>
-                <p className="text-gray-600">{selectedWallet.specialization}</p>
+        {selectedWallet && (
+          <div className="lg:col-span-2 space-y-6">
+            {/* Wallet Overview */}
+            <div className="bg-white rounded-lg border border-gray-200 p-6">
+              <div className="flex items-start justify-between mb-6">
+                <div>
+                  <h2 className="text-2xl font-semibold text-gray-900 mb-1">
+                    {selectedWallet.id}
+                  </h2>
+                  {selectedWallet.username && (
+                    <p className="text-gray-600">{selectedWallet.username}</p>
+                  )}
+                  <p className="text-xs text-gray-400 font-mono mt-1">{selectedWallet.fullAddress}</p>
+                </div>
               </div>
-              <button className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors">
-                Follow Wallet
-              </button>
-            </div>
 
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              <div className="p-4 bg-gray-50 rounded-lg">
-                <div className="flex items-center gap-2 text-gray-600 mb-1">
-                  <Target className="h-4 w-4" />
-                  <span className="text-xs">Accuracy</span>
-                </div>
-                <div className="text-2xl font-semibold text-green-600">
-                  {selectedWallet.accuracy}%
-                </div>
-              </div>
-              <div className="p-4 bg-gray-50 rounded-lg">
-                <div className="flex items-center gap-2 text-gray-600 mb-1">
-                  <TrendingUp className="h-4 w-4" />
-                  <span className="text-xs">Total Trades</span>
-                </div>
-                <div className="text-2xl font-semibold text-gray-900">
-                  {selectedWallet.totalTrades}
-                </div>
-              </div>
-              <div className="p-4 bg-gray-50 rounded-lg">
-                <div className="flex items-center gap-2 text-gray-600 mb-1">
-                  <Clock className="h-4 w-4" />
-                  <span className="text-xs">Avg Lead Time</span>
-                </div>
-                <div className="text-2xl font-semibold text-gray-900">
-                  {selectedWallet.avgLeadTime}h
-                </div>
-              </div>
-              <div className="p-4 bg-gray-50 rounded-lg">
-                <div className="flex items-center gap-2 text-gray-600 mb-1">
-                  <ExternalLink className="h-4 w-4" />
-                  <span className="text-xs">Specialization</span>
-                </div>
-                <div className="text-sm font-medium text-gray-900 line-clamp-2">
-                  {selectedWallet.specialization}
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Performance History Chart */}
-          <div className="bg-white rounded-lg border border-gray-200 p-6">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">
-              Performance History
-            </h3>
-            <ResponsiveContainer width="100%" height={250}>
-              <LineChart data={selectedWallet.performanceHistory}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-                <XAxis dataKey="month" stroke="#6b7280" fontSize={12} />
-                <YAxis domain={[60, 80]} stroke="#6b7280" fontSize={12} />
-                <Tooltip
-                  contentStyle={{
-                    backgroundColor: "white",
-                    border: "1px solid #e5e7eb",
-                    borderRadius: "8px",
-                  }}
-                />
-                <Line
-                  type="monotone"
-                  dataKey="accuracy"
-                  stroke="#10b981"
-                  strokeWidth={2}
-                  dot={{ r: 4, fill: "#10b981" }}
-                />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
-
-          {/* Recent Activity */}
-          <div className="bg-white rounded-lg border border-gray-200 p-6">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">
-              Recent Activity
-            </h3>
-            <div className="space-y-3">
-              {selectedWallet.recentActivity.map((activity, index) => (
-                <div
-                  key={index}
-                  className="flex items-center justify-between p-3 bg-gray-50 rounded-lg"
-                >
-                  <div className="flex-1">
-                    <div className="font-medium text-gray-900 mb-1">
-                      {activity.marketTitle}
-                    </div>
-                    <div className="text-sm text-gray-600">
-                      {formatDistanceToNow(activity.timestamp, {
-                        addSuffix: true,
-                      })}
-                    </div>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div className="p-4 bg-gray-50 rounded-lg">
+                  <div className="flex items-center gap-2 text-gray-600 mb-1">
+                    <Target className="h-4 w-4" />
+                    <span className="text-xs">Accuracy</span>
                   </div>
-                  <div className="text-right">
-                    <div className="font-semibold text-blue-600">
-                      {activity.position}
-                    </div>
+                  <div className={`text-2xl font-semibold ${selectedWallet.accuracy >= 70 ? 'text-green-600' : selectedWallet.accuracy >= 50 ? 'text-yellow-600' : 'text-gray-600'}`}>
+                    {selectedWallet.accuracy}%
                   </div>
                 </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Pro Features Hint */}
-          <div className="bg-gray-50 border-2 border-dashed border-gray-300 rounded-lg p-6 text-center">
-            <div className="mb-3">
-              <div className="inline-flex items-center justify-center h-12 w-12 bg-blue-100 rounded-full mb-3">
-                <TrendingUp className="h-6 w-6 text-blue-600" />
+                <div className="p-4 bg-gray-50 rounded-lg">
+                  <div className="flex items-center gap-2 text-gray-600 mb-1">
+                    <TrendingUp className="h-4 w-4" />
+                    <span className="text-xs">Total Trades</span>
+                  </div>
+                  <div className="text-2xl font-semibold text-gray-900">
+                    {selectedWallet.totalTrades}
+                  </div>
+                </div>
+                <div className="p-4 bg-gray-50 rounded-lg">
+                  <div className="flex items-center gap-2 text-gray-600 mb-1">
+                    <Clock className="h-4 w-4" />
+                    <span className="text-xs">Resolved Markets</span>
+                  </div>
+                  <div className="text-2xl font-semibold text-gray-900">
+                    {selectedWallet.sampleSize}
+                  </div>
+                </div>
+                <div className="p-4 bg-gray-50 rounded-lg">
+                  <div className="flex items-center gap-2 text-gray-600 mb-1">
+                    <ExternalLink className="h-4 w-4" />
+                    <span className="text-xs">Composite Score</span>
+                  </div>
+                  <div className="text-2xl font-semibold text-gray-900">
+                    {selectedWallet.compositeScore !== null ? selectedWallet.compositeScore.toFixed(2) : '—'}
+                  </div>
+                </div>
               </div>
-              <h3 className="text-lg font-semibold text-gray-900 mb-2">
-                Get alerts for wallet activity
+            </div>
+
+            {/* Recent Activity */}
+            <div className="bg-white rounded-lg border border-gray-200 p-6">
+              <h3 className="text-lg font-semibold text-gray-900 mb-4">
+                Recent Activity
               </h3>
-              <p className="text-sm text-gray-600 mb-4">
-                Upgrade to Pro to follow wallets and receive instant
-                notifications when they enter new positions
-              </p>
-              <button className="px-6 py-2 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 transition-colors">
-                Upgrade to Pro
-              </button>
+              {selectedWallet.recentActivity.length > 0 ? (
+                <div className="space-y-3">
+                  {selectedWallet.recentActivity.map((activity, index) => (
+                    <div
+                      key={index}
+                      className="flex items-center justify-between p-3 bg-gray-50 rounded-lg"
+                    >
+                      <div className="flex-1">
+                        <div className="font-medium text-gray-900 mb-1 line-clamp-1">
+                          {activity.marketTitle}
+                        </div>
+                        <div className="text-sm text-gray-600">
+                          {formatDistanceToNow(new Date(activity.timestamp), {
+                            addSuffix: true,
+                          })}
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <div className="font-semibold text-blue-600">
+                          {activity.position}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-sm text-gray-500">No recent trade activity found.</p>
+              )}
             </div>
           </div>
-        </div>
+        )}
       </div>
     </div>
   );

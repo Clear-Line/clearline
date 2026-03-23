@@ -1,9 +1,9 @@
 name: Full Pipeline (Trades + Wallets + Signals)
 
 on:
-  schedule:
-    # Every 2 hours
-    - cron: '0 */2 * * *'
+  # Disabled — using cron-job.org instead of GitHub Actions
+  # schedule:
+  #   - cron: '0 */2 * * *'
   workflow_dispatch:
 
 concurrency:
@@ -81,6 +81,14 @@ jobs:
             -H "Authorization: Bearer ${CRON_SECRET}" \
             "${APP_URL}/api/analysis/moves"
 
+      - name: Snapshot Order Books
+        run: |
+          set -euo pipefail
+          echo "Snapshotting order book depth..."
+          curl -L --fail-with-body --max-time 120 \
+            -H "Authorization: Bearer ${CRON_SECRET}" \
+            "${APP_URL}/api/pipeline/books"
+
       - name: Compute Accuracy Scores
         run: |
           set -euo pipefail
@@ -88,6 +96,14 @@ jobs:
           curl -L --fail-with-body --max-time 300 \
             -H "Authorization: Bearer ${CRON_SECRET}" \
             "${APP_URL}/api/pipeline/accuracy"
+
+      - name: Compute Analytics
+        run: |
+          set -euo pipefail
+          echo "Computing market analytics..."
+          curl -L --fail-with-body --max-time 120 \
+            -H "Authorization: Bearer ${CRON_SECRET}" \
+            "${APP_URL}/api/pipeline/analytics"
 
       - name: Track Flagged Wallet Positions
         run: |
@@ -110,3 +126,11 @@ jobs:
           else
             echo "Skipping correlations (only runs on Sundays)"
           fi
+
+      - name: Cleanup Old Data
+        run: |
+          set -euo pipefail
+          echo "Running data retention cleanup..."
+          curl -L --fail-with-body --max-time 120 \
+            -H "Authorization: Bearer ${CRON_SECRET}" \
+            "${APP_URL}/api/pipeline/cleanup"

@@ -8,14 +8,15 @@
  *   4. Stores results in flagged_moves table
  */
 
-import { supabaseAdmin } from '../supabase';
+import { bq } from '../bigquery';
 
 // ---- Config ----
 
 const CLUSTER_COMPOSITE_THRESHOLD = 0.4; // min composite_score to be "flagged"
 const MIN_CLUSTER_SIZE = 2;              // need at least 2 flagged wallets
 const MIN_DIRECTIONAL_RATIO = 0.6;       // at least 60% agreement on side
-const LOOKBACK_HOURS = 6;                // match the cron interval
+const LOOKBACK_HOURS = 24;               // scan last 24h of trades
+const DEDUP_COOLDOWN_HOURS = 12;         // allow re-flagging same market after 12h
 const PAGE_SIZE = 1000;                  // rows per paginated fetch
 
 // ---- Types ----
@@ -47,7 +48,7 @@ async function fetchSignalsPaginated(): Promise<{ data: SignalRow[]; error: stri
   const all: SignalRow[] = [];
   let offset = 0;
   while (true) {
-    const { data, error } = await supabaseAdmin
+    const { data, error } = await bq
       .from('wallet_signals')
       .select('wallet_address, market_id, composite_score')
       .gt('composite_score', CLUSTER_COMPOSITE_THRESHOLD)
@@ -65,7 +66,7 @@ async function fetchRecentTradesPaginated(sinceISO: string): Promise<{ data: Tra
   const all: TradeRow[] = [];
   let offset = 0;
   while (true) {
-    const { data, error } = await supabaseAdmin
+    const { data, error } = await bq
       .from('trades')
       .select('wallet_address, market_id, side, size_usdc, timestamp')
       .gte('timestamp', sinceISO)
@@ -79,20 +80,27 @@ async function fetchRecentTradesPaginated(sinceISO: string): Promise<{ data: Tra
   return { data: all, error: null };
 }
 
-async function fetchSnapshotsPaginated(): Promise<{ data: SnapshotRow[]; error: string | null }> {
+async function fetchSnapshotsPaginated(marketIds: string[], sinceISO: string): Promise<{ data: SnapshotRow[]; error: string | null }> {
   const all: SnapshotRow[] = [];
-  let offset = 0;
-  while (true) {
-    const { data, error } = await supabaseAdmin
-      .from('market_snapshots')
-      .select('market_id, timestamp, yes_price, book_depth_bid_5c')
-      .order('timestamp', { ascending: false })
-      .range(offset, offset + PAGE_SIZE - 1);
-    if (error) return { data: all, error: error.message };
-    if (!data || data.length === 0) break;
-    all.push(...(data as SnapshotRow[]));
-    if (data.length < PAGE_SIZE) break;
-    offset += PAGE_SIZE;
+  // Fetch only snapshots for relevant markets within the lookback window
+  const BATCH = 200;
+  for (let i = 0; i < marketIds.length; i += BATCH) {
+    const idBatch = marketIds.slice(i, i + BATCH);
+    let offset = 0;
+    while (true) {
+      const { data, error } = await bq
+        .from('market_snapshots')
+        .select('market_id, timestamp, yes_price, book_depth_bid_5c')
+        .in('market_id', idBatch)
+        .gte('timestamp', sinceISO)
+        .order('timestamp', { ascending: false })
+        .range(offset, offset + PAGE_SIZE - 1);
+      if (error) return { data: all, error: error.message };
+      if (!data || data.length === 0) break;
+      all.push(...(data as SnapshotRow[]));
+      if (data.length < PAGE_SIZE) break;
+      offset += PAGE_SIZE;
+    }
   }
   return { data: all, error: null };
 }
@@ -169,12 +177,21 @@ export async function detectAndFlagMoves(): Promise<{
   const now = new Date();
   const lookbackISO = new Date(now.getTime() - LOOKBACK_HOURS * 60 * 60 * 1000).toISOString();
 
-  // ---- Phase 1: Parallel paginated data fetch ----
-  const [signalsResult, tradesResult, snapshotsResult] = await Promise.all([
+  // ---- Phase 1: Fetch signals and trades first, then snapshots only for relevant markets ----
+  const [signalsResult, tradesResult] = await Promise.all([
     fetchSignalsPaginated(),
     fetchRecentTradesPaginated(lookbackISO),
-    fetchSnapshotsPaginated(),
   ]);
+
+  // Collect unique market IDs from signals and trades to scope snapshot fetch
+  const relevantMarketIds = [...new Set([
+    ...signalsResult.data.map((s) => s.market_id),
+    ...tradesResult.data.map((t) => t.market_id),
+  ])];
+
+  const snapshotsResult = relevantMarketIds.length > 0
+    ? await fetchSnapshotsPaginated(relevantMarketIds, lookbackISO)
+    : { data: [] as SnapshotRow[], error: null };
 
   if (signalsResult.error || tradesResult.error) {
     return {
@@ -213,9 +230,9 @@ export async function detectAndFlagMoves(): Promise<{
     if (arr.length < 2) arr.push(snap);
   }
 
-  // ---- Phase 3: Deduplication — check existing flags from last 6h ----
-  const dedupeStart = lookbackISO;
-  const { data: existingFlags } = await supabaseAdmin
+  // ---- Phase 3: Deduplication — check existing flags within cooldown window ----
+  const dedupeStart = new Date(now.getTime() - DEDUP_COOLDOWN_HOURS * 60 * 60 * 1000).toISOString();
+  const { data: existingFlags } = await bq
     .from('flagged_moves')
     .select('market_id')
     .eq('catalyst_type', 'wallet_cluster')
@@ -345,7 +362,7 @@ export async function detectAndFlagMoves(): Promise<{
     const CHUNK = 50;
     for (let i = 0; i < flagRows.length; i += CHUNK) {
       const chunk = flagRows.slice(i, i + CHUNK);
-      const { error: insertErr } = await supabaseAdmin.from('flagged_moves').insert(chunk);
+      const { error: insertErr } = await bq.from('flagged_moves').insert(chunk);
 
       if (insertErr) {
         errors.push(`Batch insert offset=${i}: ${insertErr.message}`);

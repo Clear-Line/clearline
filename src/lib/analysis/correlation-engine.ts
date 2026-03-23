@@ -10,6 +10,7 @@
  */
 
 import { supabaseAdmin } from '../supabase';
+import { bq } from '../bigquery';
 
 // ─── Pearson Correlation ───
 
@@ -44,6 +45,8 @@ export async function computeCorrelations(): Promise<{
   computed: number;
   errors: string[];
 }> {
+  const startTime = Date.now();
+  const TIME_BUDGET_MS = 50_000; // leave 10s buffer for Vercel's 60s limit
   const errors: string[] = [];
   let computed = 0;
 
@@ -82,8 +85,12 @@ export async function computeCorrelations(): Promise<{
   const allSnapshots: { market_id: string; yes_price: number; timestamp: string }[] = [];
 
   for (let i = 0; i < allMarketIds.length; i += ID_BATCH) {
+    if (Date.now() - startTime > TIME_BUDGET_MS) {
+      errors.push(`Time budget reached at snapshot fetch ${i}/${allMarketIds.length}, will continue next run`);
+      break;
+    }
     const batch = allMarketIds.slice(i, i + ID_BATCH);
-    const { data } = await supabaseAdmin
+    const { data } = await bq
       .from('market_snapshots')
       .select('market_id, yes_price, timestamp')
       .in('market_id', batch)
@@ -161,7 +168,7 @@ export async function computeCorrelations(): Promise<{
   const BATCH = 500;
   for (let i = 0; i < correlationRows.length; i += BATCH) {
     const chunk = correlationRows.slice(i, i + BATCH);
-    const { error } = await supabaseAdmin
+    const { error } = await bq
       .from('market_correlations')
       .upsert(chunk, { onConflict: 'market_id_a,market_id_b,window_hours' });
 
@@ -220,7 +227,7 @@ export async function detectArbitrage(): Promise<{
 
   for (let i = 0; i < eventMarketIds.length; i += ID_BATCH) {
     const batch = eventMarketIds.slice(i, i + ID_BATCH);
-    const { data: snaps } = await supabaseAdmin
+    const { data: snaps } = await bq
       .from('market_snapshots')
       .select('market_id, yes_price, timestamp')
       .in('market_id', batch)

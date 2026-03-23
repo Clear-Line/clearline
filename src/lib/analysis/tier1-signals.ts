@@ -14,6 +14,7 @@
  */
 
 import { supabaseAdmin } from '../supabase';
+import { bq } from '../bigquery';
 
 // ---- Config ----
 
@@ -21,8 +22,8 @@ const PAGE_SIZE = 1000;         // rows per paginated fetch
 const WALLET_BATCH = 200;       // wallets to process per batch
 const UPSERT_CHUNK = 100;       // rows per upsert call
 const IN_BATCH = 200;           // max .in() filter size
-const TRADE_LOOKBACK_DAYS = 14; // only analyze trades from last N days
-const MAX_TRADES = 50_000;      // cap total trades fetched to stay within timeout
+const TRADE_LOOKBACK_DAYS = 7;  // only analyze trades from last N days
+const MAX_TRADES = 20_000;      // cap total trades fetched to stay within timeout
 
 // ---- Types ----
 
@@ -234,7 +235,7 @@ export async function computeTier1Signals(): Promise<{
   {
     let offset = 0;
     while (allTradesRaw.length < MAX_TRADES) {
-      const { data, error } = await supabaseAdmin
+      const { data, error } = await bq
         .from('trades')
         .select('market_id, wallet_address, side, size_usdc, price, timestamp')
         .gte('timestamp', lookbackISO)
@@ -268,8 +269,7 @@ export async function computeTier1Signals(): Promise<{
       .from('markets')
       .select('condition_id')
       .in('condition_id', idBatch)
-      .eq('is_active', true)
-      .in('category', ['politics', 'economics', 'geopolitics', 'other']);
+      .eq('is_active', true);
     if (data) for (const m of data) focusMarketIdSet.add(m.condition_id);
   }
 
@@ -289,7 +289,7 @@ export async function computeTier1Signals(): Promise<{
   const volumeSnaps: { market_id: string; volume_24h: number }[] = [];
   for (let b = 0; b < focusMarketIds.length; b += IN_BATCH) {
     const idBatch = focusMarketIds.slice(b, b + IN_BATCH);
-    const { data } = await supabaseAdmin
+    const { data } = await bq
       .from('market_snapshots')
       .select('market_id, volume_24h')
       .in('market_id', idBatch)
@@ -304,7 +304,7 @@ export async function computeTier1Signals(): Promise<{
 
   for (let i = 0; i < activeWalletAddresses.length; i += IN_BATCH) {
     const batch = activeWalletAddresses.slice(i, i + IN_BATCH);
-    const { data: walletBatch, error: wErr } = await supabaseAdmin
+    const { data: walletBatch, error: wErr } = await bq
       .from('wallets')
       .select('address, first_seen_polymarket')
       .in('address', batch);
@@ -347,7 +347,7 @@ export async function computeTier1Signals(): Promise<{
 
   // Find the last wallet we computed in the current 6h cycle
   const cycleStart = new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString();
-  const { data: lastComputed } = await supabaseAdmin
+  const { data: lastComputed } = await bq
     .from('wallet_signals')
     .select('wallet_address')
     .gte('computed_at', cycleStart)
@@ -378,7 +378,7 @@ export async function computeTier1Signals(): Promise<{
     const batchResults: Tier1Scores[] = [];
 
     // Check if we're running low on time (leave 10s buffer)
-    if (Date.now() - startTime > 48_000) {
+    if (Date.now() - startTime > 42_000) {
       errors.push(`Timeout approaching at wallet ${wi}/${allWallets.length}, saving progress`);
       break;
     }
@@ -433,7 +433,7 @@ export async function computeTier1Signals(): Promise<{
     if (batchResults.length > 0) {
       for (let i = 0; i < batchResults.length; i += UPSERT_CHUNK) {
         const chunk = batchResults.slice(i, i + UPSERT_CHUNK);
-        const { error: insertErr } = await supabaseAdmin
+        const { error: insertErr } = await bq
           .from('wallet_signals')
           .upsert(
             chunk.map((r) => ({
