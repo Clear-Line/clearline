@@ -13,8 +13,8 @@ import { supabaseAdmin } from '../supabase';
 import { bq } from '../bigquery';
 import { fetchMarketTradesPaginated } from './polymarket';
 
-const BATCH_SIZE = 5;          // concurrent market fetches (down from 10)
-const MAX_PAGES_PER_MARKET = 3; // reduced from 5 to fit within Vercel 60s
+const BATCH_SIZE = 10;          // concurrent market fetches
+const MAX_PAGES_PER_MARKET = 2; // fewer pages per market = more markets covered
 const PAGE_SIZE = 100;
 
 export async function pollTrades(): Promise<{
@@ -34,7 +34,7 @@ export async function pollTrades(): Promise<{
   };
 }> {
   const startTime = Date.now();
-  const TIME_BUDGET_MS = 40_000; // leave 20s buffer for Vercel 60s limit
+  const TIME_BUDGET_MS = 50_000; // leave 10s buffer for Vercel 60s limit
   const errors: string[] = [];
   let inserted = 0;
   let skipped = 0;
@@ -64,7 +64,7 @@ export async function pollTrades(): Promise<{
     if (!seen.has(s.market_id)) {
       seen.add(s.market_id);
       volMarketIds.push(s.market_id);
-      if (volMarketIds.length >= 300) break; // reduced from 800 to fit within Vercel 60s
+      if (volMarketIds.length >= 500) break; // more market candidates for better coverage
     }
   }
 
@@ -97,7 +97,38 @@ export async function pollTrades(): Promise<{
     };
   }
 
-  // --- Process markets with paginated fetch + retry ---
+  // --- Prioritize markets without recent trades ---
+  // Fetch markets that already have trades from the last 24h so we can deprioritize them
+  const allCandidateIds = markets.map((m) => m.condition_id);
+  const recentTradeIds = new Set<string>();
+  for (let i = 0; i < allCandidateIds.length; i += ID_BATCH) {
+    const batch = allCandidateIds.slice(i, i + ID_BATCH);
+    const { data: recentTrades } = await bq
+      .from('trades')
+      .select('market_id')
+      .in('market_id', batch)
+      .gte('timestamp', new Date(Date.now() - 24 * 3600000).toISOString());
+    if (recentTrades) {
+      for (const t of recentTrades) recentTradeIds.add(t.market_id);
+    }
+  }
+
+  // Put markets without recent trades first, then markets with trades
+  const marketsWithout = markets.filter((m) => !recentTradeIds.has(m.condition_id));
+  const marketsWith = markets.filter((m) => recentTradeIds.has(m.condition_id));
+  markets.length = 0;
+  markets.push(...marketsWithout, ...marketsWith);
+
+  // --- Fetch trades from all markets, then batch-write to BigQuery ---
+  // Collect all trade/wallet rows in memory first to avoid concurrent DML limits
+  const allTradeRows: {
+    market_id: string; wallet_address: string; side: string;
+    size_tokens: number; price: number; size_usdc: number;
+    outcome: string; outcome_index: number;
+    transaction_hash: string; timestamp: string;
+  }[] = [];
+  const allWalletMap = new Map<string, { address: string; username: string | null; pseudonym: string | null; last_updated: string }>();
+
   for (let i = 0; i < markets.length; i += BATCH_SIZE) {
     if (Date.now() - startTime > TIME_BUDGET_MS) {
       errors.push(`Time budget reached at market ${i}/${markets.length}, will continue next run`);
@@ -123,10 +154,9 @@ export async function pollTrades(): Promise<{
 
         marketsSucceeded++;
 
-        // Build batch rows
-        const tradeRows = result.trades
-          .filter((t) => t.transactionHash && t.proxyWallet)
-          .map((t) => ({
+        for (const t of result.trades) {
+          if (!t.transactionHash || !t.proxyWallet) continue;
+          allTradeRows.push({
             market_id: market.condition_id,
             wallet_address: t.proxyWallet,
             side: t.side,
@@ -137,46 +167,14 @@ export async function pollTrades(): Promise<{
             outcome_index: t.outcomeIndex,
             transaction_hash: t.transactionHash,
             timestamp: new Date(t.timestamp * 1000).toISOString(),
-          }));
+          });
 
-        // Batch upsert trades
-        if (tradeRows.length > 0) {
-          const beforeCount = inserted;
-          const { error: insertError, count } = await bq
-            .from('trades')
-            .upsert(tradeRows, { onConflict: 'transaction_hash', ignoreDuplicates: true, count: 'exact' });
-
-          if (insertError) {
-            errors.push(`Trades ${market.condition_id}: ${insertError.message}`);
-          } else {
-            const actualInserted = count ?? 0;
-            inserted += actualInserted;
-            duplicatesSkipped += tradeRows.length - actualInserted;
-          }
-        }
-
-        // Batch upsert wallets
-        const walletMap = new Map<string, { address: string; username: string | null; pseudonym: string | null; last_updated: string }>();
-        for (const t of result.trades) {
-          if (!t.proxyWallet) continue;
-          walletMap.set(t.proxyWallet, {
+          allWalletMap.set(t.proxyWallet, {
             address: t.proxyWallet,
             username: t.name || null,
             pseudonym: t.pseudonym || null,
             last_updated: new Date().toISOString(),
           });
-        }
-
-        const walletRows = Array.from(walletMap.values());
-        if (walletRows.length > 0) {
-          const { error: walletErr } = await bq
-            .from('wallets')
-            .upsert(walletRows, { onConflict: 'address' });
-          if (walletErr) {
-            errors.push(`Wallets ${market.condition_id}: ${walletErr.message}`);
-          } else {
-            walletsUpserted += walletRows.length;
-          }
         }
       } catch (err) {
         const errStr = String(err);
@@ -186,6 +184,38 @@ export async function pollTrades(): Promise<{
         errors.push(`Market ${market.condition_id}: ${err}`);
       }
     }));
+  }
+
+  // --- Sequential batch writes to BigQuery (avoids concurrent DML limit) ---
+  const UPSERT_BATCH = 500;
+  for (let i = 0; i < allTradeRows.length; i += UPSERT_BATCH) {
+    const chunk = allTradeRows.slice(i, i + UPSERT_BATCH);
+    const { error: insertError, count } = await bq
+      .from('trades')
+      .upsert(chunk, { onConflict: 'transaction_hash', ignoreDuplicates: true, count: 'exact' });
+
+    if (insertError) {
+      errors.push(`Trade upsert batch ${i}: ${insertError.message}`);
+    } else {
+      const actualInserted = count ?? 0;
+      inserted += actualInserted;
+      duplicatesSkipped += chunk.length - actualInserted;
+    }
+  }
+
+  const walletRows = Array.from(allWalletMap.values());
+  if (walletRows.length > 0) {
+    for (let i = 0; i < walletRows.length; i += UPSERT_BATCH) {
+      const chunk = walletRows.slice(i, i + UPSERT_BATCH);
+      const { error: walletErr } = await bq
+        .from('wallets')
+        .upsert(chunk, { onConflict: 'address' });
+      if (walletErr) {
+        errors.push(`Wallet upsert batch ${i}: ${walletErr.message}`);
+      } else {
+        walletsUpserted += chunk.length;
+      }
+    }
   }
 
   return {

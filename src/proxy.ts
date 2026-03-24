@@ -12,6 +12,7 @@ const isPublicRoute = createRouteMatcher([
   '/api/pipeline(.*)',
   '/api/analysis(.*)',
   '/api/analytics(.*)',
+  '/api/alerts(.*)',
   '/market(.*)',
   '/news(.*)',
   '/wallets(.*)',

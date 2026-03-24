@@ -172,14 +172,11 @@ export async function GET(request: Request) {
     if (data?.length) markets.push(...data);
   }
 
-  // Count unique wallets per market — only for markets that have trades (top ~900)
-  // Querying all 2K+ markets would be too slow
+  // Count unique wallets per market from trades table
   const traderCountByMarket = new Map<string, number>();
   const marketIds = markets.map((m) => m.condition_id);
-  const TOP_TRADE_MARKETS = 500; // only count traders for top markets by volume
-  const topMarketIds = marketIds.slice(0, TOP_TRADE_MARKETS);
-  for (let i = 0; i < topMarketIds.length; i += ID_BATCH) {
-    const batch = topMarketIds.slice(i, i + ID_BATCH);
+  for (let i = 0; i < marketIds.length; i += ID_BATCH) {
+    const batch = marketIds.slice(i, i + ID_BATCH);
     const { data: tradeCounts } = await bq
       .from('trades')
       .select('market_id, wallet_address')

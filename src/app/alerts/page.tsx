@@ -1,168 +1,418 @@
-import { Bell, Plus, Trash2, Mail, Smartphone } from "lucide-react";
-import { ConfidenceBadge } from "../../components/ConfidenceBadge";
+"use client";
 
-const mockAlerts = [
-  {
-    id: "1",
-    name: "Michigan Senate high-confidence moves",
-    description:
-      "Alert me when Michigan Senate market has a high-confidence move",
-    type: "market",
-    channel: "email",
-    enabled: true,
+import { useState, useEffect } from "react";
+import Link from "next/link";
+import {
+  Bell,
+  Loader2,
+  ArrowRight,
+  TrendingUp,
+  Zap,
+  ShieldAlert,
+  Target,
+} from "lucide-react";
+
+// ---- Types (mirrors API response) ----
+
+type AlertType =
+  | "VOLUME_EXPLOSION"
+  | "SMART_MONEY_ENTRY"
+  | "RANGE_BREAKOUT"
+  | "MANIPULATION_WARNING";
+
+interface AlertMetrics {
+  price_current: number;
+  price_previous: number;
+  price_delta: number;
+  volume_24h: number;
+  volume_multiple?: number;
+  wallet_count?: number;
+  combined_volume_usdc?: number;
+  avg_accuracy?: number;
+  range_days?: number;
+  breakout_magnitude?: number;
+  concentration_top1?: number;
+  cluster_score?: number;
+  direction?: string;
+}
+
+interface Alert {
+  id: string;
+  type: AlertType;
+  market_id: string;
+  market_question: string;
+  category: string;
+  detected_at: string;
+  signal_strength: number;
+  summary: string;
+  metrics: AlertMetrics;
+}
+
+// ---- Config ----
+
+type FilterOption = "ALL" | AlertType;
+
+const ALERT_CONFIG: Record<
+  AlertType,
+  { label: string; color: string; bgClass: string; textClass: string; borderColor: string }
+> = {
+  VOLUME_EXPLOSION: {
+    label: "VOLUME EXPLOSION",
+    color: "#ef4444",
+    bgClass: "bg-[#ef4444]/10",
+    textClass: "text-[#ef4444]",
+    borderColor: "#ef4444",
   },
-  {
-    id: "2",
-    name: "Top wallet activity",
-    description: "Alert me when wallet w-4d5e6f enters a new position",
-    type: "wallet",
-    channel: "push",
-    enabled: true,
+  SMART_MONEY_ENTRY: {
+    label: "SMART MONEY ENTRY",
+    color: "#f59e0b",
+    bgClass: "bg-[#f59e0b]/10",
+    textClass: "text-[#f59e0b]",
+    borderColor: "#f59e0b",
   },
-  {
-    id: "3",
-    name: "Presidential markets volume spikes",
-    description:
-      "Alert me when any presidential market has a volume spike >$1M",
-    type: "volume",
-    channel: "email",
-    enabled: false,
+  RANGE_BREAKOUT: {
+    label: "RANGE BREAKOUT",
+    color: "#10b981",
+    bgClass: "bg-[#10b981]/10",
+    textClass: "text-[#10b981]",
+    borderColor: "#10b981",
   },
+  MANIPULATION_WARNING: {
+    label: "MANIPULATION WARNING",
+    color: "#f59e0b",
+    bgClass: "bg-[#f59e0b]/10",
+    textClass: "text-[#f59e0b]",
+    borderColor: "#f59e0b",
+  },
+};
+
+const FILTER_BUTTONS: { key: FilterOption; label: string }[] = [
+  { key: "ALL", label: "All" },
+  { key: "VOLUME_EXPLOSION", label: "Volume" },
+  { key: "SMART_MONEY_ENTRY", label: "Smart Money" },
+  { key: "RANGE_BREAKOUT", label: "Breakout" },
+  { key: "MANIPULATION_WARNING", label: "Manipulation" },
 ];
 
-export default function Alerts() {
+// ---- Helpers ----
+
+function formatVolume(v: number): string {
+  if (v >= 1_000_000) return `$${(v / 1_000_000).toFixed(1)}M`;
+  if (v >= 1_000) return `$${(v / 1_000).toFixed(1)}K`;
+  return `$${v.toFixed(0)}`;
+}
+
+function formatTimeAgo(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime();
+  const mins = Math.floor(diff / 60_000);
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
+}
+
+function formatScanTime(iso: string): string {
+  return new Date(iso).toLocaleTimeString("en-US", {
+    hour12: false,
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone: "America/New_York",
+  });
+}
+
+function AlertIcon({ type }: { type: AlertType }) {
+  const cls = "h-3.5 w-3.5";
+  switch (type) {
+    case "VOLUME_EXPLOSION":
+      return <Zap className={cls} />;
+    case "SMART_MONEY_ENTRY":
+      return <Target className={cls} />;
+    case "RANGE_BREAKOUT":
+      return <TrendingUp className={cls} />;
+    case "MANIPULATION_WARNING":
+      return <ShieldAlert className={cls} />;
+  }
+}
+
+// ---- Metric Pills ----
+
+function MetricPill({ value, label }: { value: string; label: string }) {
   return (
-    <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-      {/* Header */}
-      <div className="mb-8">
-        <h1 className="text-3xl font-semibold text-gray-900 mb-2">
-          Alert System
-        </h1>
-        <p className="text-gray-600">
-          Configure custom alerts for market movements, wallet activity, and
-          volume spikes
-        </p>
+    <div className="flex flex-col items-center px-3 py-1.5">
+      <span className="text-white font-bold font-mono text-sm leading-tight">
+        {value}
+      </span>
+      <span className="text-[#64748b] text-[9px] tracking-[0.1em] uppercase mt-0.5">
+        {label}
+      </span>
+    </div>
+  );
+}
+
+function AlertMetricRow({ alert }: { alert: Alert }) {
+  const m = alert.metrics;
+  const pills: { value: string; label: string }[] = [];
+
+  // Price move (all types)
+  if (m.price_delta !== 0) {
+    const pts = Math.round(m.price_delta * 100);
+    pills.push({
+      value: `${pts >= 0 ? "+" : ""}${pts}pts`,
+      label: "Price Move",
+    });
+  }
+
+  // Current price
+  if (m.price_current > 0) {
+    pills.push({
+      value: `${(m.price_current * 100).toFixed(0)}c`,
+      label: "Current",
+    });
+  }
+
+  // Type-specific metrics
+  switch (alert.type) {
+    case "VOLUME_EXPLOSION":
+      if (m.volume_multiple) {
+        pills.push({ value: `${m.volume_multiple.toFixed(1)}x`, label: "Vol Multiple" });
+      }
+      if (m.volume_24h > 0) {
+        pills.push({ value: formatVolume(m.volume_24h), label: "24h Volume" });
+      }
+      break;
+    case "SMART_MONEY_ENTRY":
+      if (m.wallet_count) {
+        pills.push({ value: `${m.wallet_count}`, label: "Smart Wallets" });
+      }
+      if (m.combined_volume_usdc) {
+        pills.push({ value: formatVolume(m.combined_volume_usdc), label: "Combined" });
+      }
+      if (m.avg_accuracy) {
+        pills.push({ value: `${(m.avg_accuracy * 100).toFixed(0)}%`, label: "Avg Accuracy" });
+      }
+      break;
+    case "RANGE_BREAKOUT":
+      if (m.range_days) {
+        pills.push({ value: `${m.range_days}d`, label: "Range" });
+      }
+      if (m.volume_multiple) {
+        pills.push({ value: `${m.volume_multiple.toFixed(1)}x`, label: "Vol Multiple" });
+      }
+      break;
+    case "MANIPULATION_WARNING":
+      if (m.concentration_top1) {
+        pills.push({ value: `${(m.concentration_top1 * 100).toFixed(0)}%`, label: "Top Wallet" });
+      }
+      if (m.wallet_count) {
+        pills.push({ value: `${m.wallet_count}`, label: "Flagged" });
+      }
+      if (m.cluster_score) {
+        pills.push({ value: `${m.cluster_score}`, label: "Cluster Score" });
+      }
+      break;
+  }
+
+  return (
+    <div className="flex items-center gap-1 flex-wrap -mx-1">
+      {pills.map((p, i) => (
+        <MetricPill key={i} value={p.value} label={p.label} />
+      ))}
+    </div>
+  );
+}
+
+// ---- Signal Strength Bar ----
+
+function SignalBar({ strength, color }: { strength: number; color: string }) {
+  return (
+    <div className="flex items-center gap-2 flex-1">
+      <span className="text-[9px] text-[#64748b] tracking-[0.1em] uppercase whitespace-nowrap">
+        Signal
+      </span>
+      <div className="flex-1 h-1 bg-[rgba(255,255,255,0.06)] rounded-full overflow-hidden">
+        <div
+          className="h-full rounded-full transition-all"
+          style={{ width: `${Math.min(strength, 100)}%`, backgroundColor: color }}
+        />
+      </div>
+      <span className="text-[10px] font-mono text-[#94a3b8]">{strength}</span>
+    </div>
+  );
+}
+
+// ---- Alert Card ----
+
+function AlertCard({ alert }: { alert: Alert }) {
+  const config = ALERT_CONFIG[alert.type];
+
+  return (
+    <div
+      className="bg-[#0d1117] border border-[rgba(255,255,255,0.06)] rounded-2xl p-5 border-l-[3px]"
+      style={{ borderLeftColor: config.borderColor }}
+    >
+      {/* Row 1: Type badge + timestamp */}
+      <div className="flex items-center justify-between mb-3">
+        <div className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[10px] font-bold tracking-wider uppercase ${config.bgClass} ${config.textClass}`}>
+          <AlertIcon type={alert.type} />
+          {config.label}
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] text-[#475569] tracking-wide uppercase">
+            {formatTimeAgo(alert.detected_at)}
+          </span>
+        </div>
       </div>
 
-      {/* Pro Feature Lock */}
-      <div className="bg-gradient-to-r from-blue-600 to-blue-700 rounded-lg p-8 mb-8 text-white text-center">
-        <div className="inline-flex items-center justify-center h-16 w-16 bg-white/20 rounded-full mb-4">
-          <Bell className="h-8 w-8" />
-        </div>
-        <h2 className="text-2xl font-semibold mb-3">
-          Custom alerts are a Pro feature
-        </h2>
-        <p className="text-blue-100 mb-6 max-w-2xl mx-auto">
-          Upgrade to Clearline Pro to receive instant notifications when
-          high-confidence moves happen, when specific wallets trade, or when
-          markets experience unusual volume.
-        </p>
-        <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
-          <button className="px-8 py-3 bg-white text-blue-600 font-medium rounded-lg hover:bg-blue-50 transition-colors">
-            Upgrade to Pro — $30/month
-          </button>
-          <button className="px-8 py-3 bg-transparent border-2 border-white text-white font-medium rounded-lg hover:bg-white/10 transition-colors">
-            View Pro features
-          </button>
-        </div>
+      {/* Row 2: Market question */}
+      <h3 className="text-white font-medium text-sm mb-3 leading-snug">
+        {alert.market_question}
+      </h3>
+
+      {/* Row 3: Key metrics */}
+      <div className="mb-3 border border-[rgba(255,255,255,0.04)] rounded-xl bg-[#080b12]/50 py-1 px-1">
+        <AlertMetricRow alert={alert} />
       </div>
 
-      {/* Alert Configuration Preview */}
-      <div className="bg-white rounded-lg border border-gray-200">
-        <div className="p-6 border-b border-gray-200">
-          <div className="flex items-center justify-between">
-            <h2 className="text-lg font-semibold text-gray-900">Your Alerts</h2>
-            <button
-              disabled
-              className="inline-flex items-center gap-2 px-4 py-2 bg-gray-100 text-gray-400 font-medium rounded-lg cursor-not-allowed"
-            >
-              <Plus className="h-4 w-4" />
-              Create alert
-            </button>
+      {/* Row 4: Summary */}
+      <p className="text-[#94a3b8] text-sm leading-relaxed mb-4">
+        {alert.summary}
+      </p>
+
+      {/* Row 5: Signal strength + View link */}
+      <div className="flex items-center justify-between gap-4">
+        <SignalBar strength={alert.signal_strength} color={config.color} />
+        <Link
+          href={`/market/${alert.market_id}`}
+          className="flex items-center gap-1 text-[#00d4ff] text-[10px] font-medium tracking-[0.1em] uppercase hover:text-[#00bde0] transition-colors whitespace-nowrap shrink-0"
+        >
+          View Analysis
+          <ArrowRight className="h-3 w-3" />
+        </Link>
+      </div>
+    </div>
+  );
+}
+
+// ---- Page ----
+
+export default function AlertsPage() {
+  const [alerts, setAlerts] = useState<Alert[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
+  const [scanTime, setScanTime] = useState("");
+  const [activeFilter, setActiveFilter] = useState<FilterOption>("ALL");
+
+  useEffect(() => {
+    async function fetchAlerts() {
+      try {
+        const res = await fetch("/api/alerts/feed");
+        if (!res.ok) throw new Error("API error");
+        const json = await res.json();
+        setAlerts(json.alerts ?? []);
+        setScanTime(json.scan_time ?? "");
+      } catch {
+        setError(true);
+      } finally {
+        setLoading(false);
+      }
+    }
+    fetchAlerts();
+  }, []);
+
+  const filtered =
+    activeFilter === "ALL"
+      ? alerts
+      : alerts.filter((a) => a.type === activeFilter);
+
+  return (
+    <div className="min-h-screen">
+      <div className="max-w-[1400px] mx-auto px-4 sm:px-6 lg:px-8 py-6">
+        {/* Header */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+          <div className="flex items-center gap-4">
+            <div className="h-12 w-12 rounded-xl bg-gradient-to-br from-[#00d4ff] to-[#0088aa] flex items-center justify-center">
+              <Bell className="h-6 w-6 text-white" />
+            </div>
+            <div>
+              <h1 className="text-2xl font-bold text-white tracking-tight">
+                SIGNAL FEED
+              </h1>
+              <p className="text-[#00d4ff] text-xs tracking-[0.2em] uppercase font-medium">
+                Curated Market Alerts
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-4">
+            {!loading && (
+              <span className="text-[10px] text-[#64748b] tracking-wide uppercase">
+                {alerts.length} active signal{alerts.length !== 1 ? "s" : ""}
+              </span>
+            )}
+            {scanTime && (
+              <span className="text-[10px] text-[#475569] font-mono">
+                Last scan: {formatScanTime(scanTime)} EST
+              </span>
+            )}
           </div>
         </div>
 
-        <div className="divide-y divide-gray-200">
-          {mockAlerts.map((alert) => (
-            <div key={alert.id} className="p-6 opacity-50">
-              <div className="flex items-start justify-between gap-4">
-                <div className="flex-1">
-                  <div className="flex items-center gap-3 mb-2">
-                    <h3 className="font-medium text-gray-900">{alert.name}</h3>
-                    <span
-                      className={`px-2 py-0.5 text-xs font-medium rounded-full ${
-                        alert.enabled
-                          ? "bg-green-100 text-green-700"
-                          : "bg-gray-100 text-gray-600"
-                      }`}
-                    >
-                      {alert.enabled ? "Enabled" : "Disabled"}
-                    </span>
-                  </div>
-                  <p className="text-sm text-gray-600 mb-3">
-                    {alert.description}
-                  </p>
-                  <div className="flex items-center gap-4 text-sm">
-                    <div className="flex items-center gap-1 text-gray-500">
-                      {alert.channel === "email" ? (
-                        <Mail className="h-4 w-4" />
-                      ) : (
-                        <Smartphone className="h-4 w-4" />
-                      )}
-                      <span className="capitalize">{alert.channel}</span>
-                    </div>
-                    <span className="text-gray-300">·</span>
-                    <span className="text-gray-500 capitalize">
-                      {alert.type} alert
-                    </span>
-                  </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    disabled
-                    className="p-2 text-gray-300 hover:bg-gray-50 rounded-lg transition-colors cursor-not-allowed"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </button>
-                </div>
-              </div>
-            </div>
+        {/* Filter bar */}
+        <div className="flex items-center gap-1 flex-wrap mb-6">
+          {FILTER_BUTTONS.map(({ key, label }) => (
+            <button
+              key={key}
+              onClick={() => setActiveFilter(key)}
+              className={`px-3 py-1 rounded-lg text-[10px] font-medium tracking-wider uppercase transition-colors ${
+                activeFilter === key
+                  ? "bg-[#00d4ff]/10 text-[#00d4ff] border border-[#00d4ff]/30"
+                  : "text-[#64748b] border border-transparent hover:text-white hover:bg-[rgba(255,255,255,0.04)]"
+              }`}
+            >
+              {label}
+            </button>
           ))}
         </div>
-      </div>
 
-      {/* Alert Types Info */}
-      <div className="mt-8 grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div className="bg-white rounded-lg border border-gray-200 p-6">
-          <div className="h-10 w-10 bg-blue-100 rounded-lg flex items-center justify-center mb-4">
-            <ConfidenceBadge confidence="high" size="sm" />
+        {/* Content */}
+        {loading ? (
+          <div className="flex items-center justify-center py-20">
+            <Loader2 className="h-5 w-5 animate-spin text-[#00d4ff]" />
+            <span className="ml-2 text-sm text-[#64748b]">
+              Scanning for signals...
+            </span>
           </div>
-          <h3 className="font-semibold text-gray-900 mb-2">Market Moves</h3>
-          <p className="text-sm text-gray-600">
-            Get notified when markets you care about have high-confidence
-            movements
-          </p>
-        </div>
-
-        <div className="bg-white rounded-lg border border-gray-200 p-6">
-          <div className="h-10 w-10 bg-green-100 rounded-lg flex items-center justify-center mb-4">
-            <Bell className="h-5 w-5 text-green-600" />
+        ) : error ? (
+          <div className="text-center py-20">
+            <p className="text-sm text-[#94a3b8] mb-2">
+              Unable to connect to the signal scanner.
+            </p>
+            <p className="text-xs text-[#64748b]">
+              The pipeline may still be initializing. Try refreshing in a few
+              minutes.
+            </p>
           </div>
-          <h3 className="font-semibold text-gray-900 mb-2">Wallet Activity</h3>
-          <p className="text-sm text-gray-600">
-            Track when specific high-accuracy wallets enter new positions
-          </p>
-        </div>
-
-        <div className="bg-white rounded-lg border border-gray-200 p-6">
-          <div className="h-10 w-10 bg-yellow-100 rounded-lg flex items-center justify-center mb-4">
-            <Bell className="h-5 w-5 text-yellow-600" />
+        ) : filtered.length === 0 ? (
+          <div className="text-center py-20">
+            <div className="inline-flex items-center justify-center h-14 w-14 rounded-xl bg-[#0d1117] border border-[rgba(255,255,255,0.06)] mb-4">
+              <Bell className="h-6 w-6 text-[#475569]" />
+            </div>
+            <p className="text-sm text-[#94a3b8] mb-2">
+              {activeFilter === "ALL"
+                ? "No active signals detected"
+                : `No ${FILTER_BUTTONS.find((f) => f.key === activeFilter)?.label.toLowerCase()} signals detected`}
+            </p>
+            <p className="text-xs text-[#64748b]">
+              The scanner runs every 2 hours. Check back soon.
+            </p>
           </div>
-          <h3 className="font-semibold text-gray-900 mb-2">Volume Spikes</h3>
-          <p className="text-sm text-gray-600">
-            Be alerted when markets experience unusual trading volume
-          </p>
-        </div>
+        ) : (
+          <div className="space-y-4">
+            {filtered.map((alert) => (
+              <AlertCard key={alert.id} alert={alert} />
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
