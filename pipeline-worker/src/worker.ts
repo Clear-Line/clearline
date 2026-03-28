@@ -83,6 +83,7 @@ registerJob('edge-analytics', '*/10 * * * *', async () => {
 registerJob('candidates', '*/10 * * * *', async () => {
   const result = await computeCandidateScores();
   console.log(`  → Candidates scored: ${result.computed}, top: ${result.telemetry.topScore}, filtered: ${result.telemetry.filteredOut}`);
+  if (result.errors.length > 0) console.log(`  → Candidate errors: ${result.errors.slice(0, 3).join('; ')}`);
 });
 
 // Enrichment: every 30 minutes
