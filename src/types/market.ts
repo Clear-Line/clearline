@@ -3,8 +3,8 @@ export type ConfidenceLevel = 'high' | 'medium' | 'low';
 export interface Market {
   id: string;
   title: string;
-  category: 'presidential' | 'senate' | 'gubernatorial' | 'policy' | 'crypto' | 'economic' | 'weather' | 'sports' | 'entertainment' | 'geopolitics';
-  section: 'political' | 'economics' | 'geopolitics' | 'crypto' | 'other';
+  category: string;
+  section: string;
   currentOdds: number;
   previousOdds: number;
   change: number;
@@ -14,9 +14,12 @@ export interface Market {
   traders: number | null;
   lastUpdated: Date;
   liquidity: number;
-  edge: {
-    score: number;
-    direction: 'bullish' | 'bearish' | 'neutral';
-    regime: string;
-  } | null;
+  spread: number | null;
+  // Smart money signal
+  signal: 'BUY' | 'SELL' | 'NEUTRAL';
+  signalConfidence: number;
+  smartBuyVolume: number;
+  smartSellVolume: number;
+  smartWalletCount: number;
+  topSmartWallets: { address: string; accuracy: number; side: string; volume: number }[];
 }

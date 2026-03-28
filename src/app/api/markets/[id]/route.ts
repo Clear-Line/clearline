@@ -4,33 +4,48 @@ import { bq } from '@/lib/bigquery';
 
 export const runtime = 'nodejs';
 
+/**
+ * GET /api/markets/[id] — market detail.
+ * Simplified: price chart + smart money activity + trades.
+ * No more analytics, edge scores, flagged moves.
+ */
 export async function GET(
   _request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
 
-  // Fetch the market
-  const { data: market, error: mErr } = await supabaseAdmin
-    .from('markets')
-    .select('condition_id, question, category, outcomes, start_date, end_date, is_active, updated_at')
-    .eq('condition_id', id)
-    .single();
+  // Fetch market metadata + market card + snapshots + trades in parallel
+  const [marketRes, cardRes, snapshotsRes, tradesRes] = await Promise.all([
+    supabaseAdmin
+      .from('markets')
+      .select('condition_id, question, category, outcomes, start_date, end_date, is_active, updated_at')
+      .eq('condition_id', id)
+      .single(),
+    bq.from('market_cards')
+      .select('*')
+      .eq('market_id', id)
+      .limit(1),
+    bq.from('market_snapshots')
+      .select('yes_price, no_price, volume_24h, total_volume, liquidity, timestamp')
+      .eq('market_id', id)
+      .not('volume_24h', 'is', null)
+      .order('timestamp', { ascending: false })
+      .limit(50),
+    bq.from('trades')
+      .select('wallet_address, size_usdc, side, timestamp')
+      .eq('market_id', id)
+      .order('timestamp', { ascending: false })
+      .limit(500),
+  ]);
 
-  if (mErr || !market) {
+  const market = marketRes.data;
+  if (marketRes.error || !market) {
     return NextResponse.json({ error: 'Market not found' }, { status: 404 });
   }
 
-  // Fetch last 50 snapshots with actual volume data (from Gamma API, not CLOB)
-  const { data: snapshots } = await bq
-    .from('market_snapshots')
-    .select('yes_price, no_price, volume_24h, total_volume, liquidity, timestamp')
-    .eq('market_id', id)
-    .not('volume_24h', 'is', null)
-    .order('timestamp', { ascending: false })
-    .limit(50);
-
-  const snaps = snapshots ?? [];
+  const card = (cardRes.data ?? [])[0] ?? null;
+  const snaps = snapshotsRes.data ?? [];
   const latest = snaps[0];
   const prev = snaps.length > 1 ? snaps[1] : null;
 
@@ -48,20 +63,12 @@ export async function GET(
     volume: Number(s.volume_24h) || 0,
   }));
 
-  // Fetch trades for this market to build wallet breakdown
-  const { data: trades } = await bq
-    .from('trades')
-    .select('wallet_address, size_usdc, side, timestamp')
-    .eq('market_id', id)
-    .order('timestamp', { ascending: false })
-    .limit(500);
-
-  // Aggregate wallet activity
+  // Aggregate wallet activity from trades
   const walletMap = new Map<string, { volume: number; count: number; sides: string[] }>();
   let totalTradeVolume = 0;
   const uniqueWallets = new Set<string>();
 
-  for (const t of trades ?? []) {
+  for (const t of tradesRes.data ?? []) {
     uniqueWallets.add(t.wallet_address);
     const size = Number(t.size_usdc) || 0;
     totalTradeVolume += size;
@@ -75,12 +82,11 @@ export async function GET(
     }
   }
 
-  // Sort wallets by volume and take top 5
+  // Top 5 wallets by volume — look up accuracy
   const sortedWallets = [...walletMap.entries()]
     .sort((a, b) => b[1].volume - a[1].volume)
     .slice(0, 5);
 
-  // Look up wallet accuracy for top wallets
   const topAddresses = sortedWallets.map(([addr]) => addr);
   const { data: walletData } = topAddresses.length > 0
     ? await bq
@@ -90,55 +96,39 @@ export async function GET(
     : { data: [] };
 
   const walletAccuracyMap = new Map(
-    (walletData ?? []).map((w) => [w.address, w]),
+    (walletData ?? []).map((w: Record<string, unknown>) => [w.address as string, w]),
   );
 
   const walletBreakdown = sortedWallets.map(([addr, data]) => {
-    const walletInfo = walletAccuracyMap.get(addr);
+    const walletInfo = walletAccuracyMap.get(addr) as Record<string, unknown> | undefined;
     const pct = totalTradeVolume > 0 ? Math.round((data.volume / totalTradeVolume) * 100) : 0;
     return {
       walletId: `${addr.slice(0, 6)}...${addr.slice(-4)}`,
       fullAddress: addr,
       percentage: pct,
-      accuracy: walletInfo?.accuracy_score ? Math.round(walletInfo.accuracy_score * 100) : null,
+      accuracy: walletInfo?.accuracy_score ? Math.round(Number(walletInfo.accuracy_score) * 100) : null,
       tradeCount: data.count,
-      totalMarkets: walletInfo?.total_markets_traded ?? null,
+      totalMarkets: (walletInfo?.total_markets_traded as number) ?? null,
     };
   });
 
-  const topWalletConcentration = walletBreakdown.length > 0 ? walletBreakdown[0].percentage / 100 : 0;
+  // Smart money signal from pre-computed card
+  let topSmartWallets: unknown[] = [];
+  try {
+    if (card?.top_smart_wallets) topSmartWallets = JSON.parse(card.top_smart_wallets);
+  } catch { /* ignore */ }
 
-  // Fetch flagged moves for this market
-  const { data: flaggedMoves } = await bq
-    .from('flagged_moves')
-    .select('summary_text, confidence_score, catalyst_type, catalyst_description, detection_timestamp, price_delta, signal_direction')
-    .eq('market_id', id)
-    .order('detection_timestamp', { ascending: false })
-    .limit(5);
-
-  // Build catalysts from flagged moves
-  const catalysts = (flaggedMoves ?? [])
-    .filter((fm) => fm.catalyst_type)
-    .map((fm) => ({
-      type: fm.catalyst_type,
-      description: fm.catalyst_description || fm.summary_text,
-      timestamp: fm.detection_timestamp,
-    }));
+  const section = market.category === 'politics' ? 'political'
+    : market.category === 'geopolitics' ? 'geopolitics'
+    : market.category === 'crypto' ? 'crypto'
+    : 'economics';
 
   // Confidence
   const absDelta = Math.abs(change);
   let confidence: 'high' | 'medium' | 'low' = 'low';
-  if (absDelta >= 0.03 && volume24h > 50_000) {
-    confidence = 'high';
-  } else if (absDelta >= 0.01 || volume24h > 20_000) {
-    confidence = 'medium';
-  } else if (volume24h > 0 || liquidity > 10_000) {
-    confidence = 'medium';
-  }
-
-  const section = market.category === 'politics' ? 'political'
-    : market.category === 'geopolitics' ? 'geopolitics'
-    : 'economics';
+  if (absDelta >= 0.03 && volume24h > 50_000) confidence = 'high';
+  else if (absDelta >= 0.01 || volume24h > 20_000) confidence = 'medium';
+  else if (volume24h > 0 || liquidity > 10_000) confidence = 'medium';
 
   return NextResponse.json({
     id: market.condition_id,
@@ -160,16 +150,15 @@ export async function GET(
     volumeProfile: {
       totalVolume,
       uniqueWallets: uniqueWallets.size,
-      topWalletConcentration,
+      topWalletConcentration: walletBreakdown.length > 0 ? walletBreakdown[0].percentage / 100 : 0,
     },
     walletBreakdown,
-    catalysts,
-    flaggedMoves: (flaggedMoves ?? []).map((fm) => ({
-      summary: fm.summary_text,
-      confidence: fm.confidence_score,
-      direction: fm.signal_direction,
-      priceDelta: fm.price_delta,
-      timestamp: fm.detection_timestamp,
-    })),
+    // Smart money signal
+    signal: card?.signal || 'NEUTRAL',
+    signalConfidence: Number(card?.signal_confidence) || 0,
+    smartBuyVolume: Number(card?.smart_buy_volume) || 0,
+    smartSellVolume: Number(card?.smart_sell_volume) || 0,
+    smartWalletCount: Number(card?.smart_wallet_count) || 0,
+    topSmartWallets,
   });
 }

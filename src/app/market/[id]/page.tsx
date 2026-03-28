@@ -11,17 +11,14 @@ import {
   Minus,
   ExternalLink,
   Loader2,
-  AlertTriangle,
   Activity,
   BarChart3,
-  BookOpen,
-  Zap,
-  Target,
+  ArrowUpCircle,
+  ArrowDownCircle,
+  MinusCircle,
   ArrowUpRight,
   ArrowDownRight,
 } from "lucide-react";
-import { ConfidenceBadge } from "../../../components/ConfidenceBadge";
-import { ConfidenceLevel } from "../../../types/market";
 import {
   LineChart,
   Line,
@@ -32,7 +29,6 @@ import {
   CartesianGrid,
   Tooltip,
   ResponsiveContainer,
-  ReferenceLine,
   Cell,
 } from "recharts";
 
@@ -49,7 +45,7 @@ interface MarketDetail {
   volume24h: number;
   totalVolume: number;
   liquidity: number;
-  confidence: ConfidenceLevel;
+  confidence: string;
   lastUpdated: string;
   startDate: string | null;
   endDate: string | null;
@@ -68,89 +64,13 @@ interface MarketDetail {
     tradeCount: number;
     totalMarkets: number | null;
   }[];
-  catalysts: {
-    type: string;
-    description: string;
-    timestamp: string;
-  }[];
-  flaggedMoves: {
-    summary: string;
-    confidence: number;
-    direction: string;
-    priceDelta: number;
-    timestamp: string;
-  }[];
-}
-
-type MetricStatus = 'computed' | 'insufficient_data' | 'stale_data' | 'no_data';
-
-interface DataQuality {
-  isPublishable: boolean;
-  coverageScore: number;
-  computedAt: string | null;
-  missingDependencies: string[];
-  coverageByMetric: Record<string, MetricStatus> | null;
-}
-
-interface EdgeSignal {
-  value: number | null;
-  direction: string | null;
-  strength: number | null;
-}
-
-interface EdgeAnalytics {
-  score: number | null;
-  direction: string | null;
-  reasoning: string[];
-  computedAt: string | null;
-  signals: {
-    smartMoneyLeadLag: EdgeSignal;
-    volumePriceDivergence: EdgeSignal;
-    whaleAccumulation: EdgeSignal;
-    emaMomentum: EdgeSignal;
-    marketRegime: { regime: string | null; confidence: number | null };
-  };
-  context: {
-    snapshotCount: number;
-    tradeCount: number;
-    smartTradeCount: number;
-  };
-}
-
-interface Analytics {
-  dataQuality: DataQuality | null;
-  momentum: { "1h": number | null; "6h": number | null; "24h": number | null };
-  volatility24h: number | null;
-  convergenceSpeed: number | null;
-  priceReversionRate: number | null;
-  vwap24h: number | null;
-  buySellRatio: number | null;
-  smartMoneyFlow: number | null;
-  bookImbalance: number | null;
-  liquidityAsymmetry: number | null;
-  spread: number | null;
-  bookDepthBid: number | null;
-  bookDepthAsk: number | null;
-  costMoveUp5pct: number | null;
-  costMoveDown5pct: number | null;
-  volumeProfile: { priceRange: string; volume: number; buyPct: number; tradeCount: number }[];
-  smartWalletActivity: {
-    address: string;
-    fullAddress: string;
-    accuracy: number;
-    netDirection: string;
-    buyVolume: number;
-    sellVolume: number;
-    tradeCount: number;
-  }[];
-  positionDeltas: {
-    wallet: string;
-    fullAddress: string;
-    currentSize: number;
-    delta: number;
-    outcome: string;
-  }[];
-  edge: EdgeAnalytics | null;
+  // Smart money signal
+  signal: 'BUY' | 'SELL' | 'NEUTRAL';
+  signalConfidence: number;
+  smartBuyVolume: number;
+  smartSellVolume: number;
+  smartWalletCount: number;
+  topSmartWallets: { address: string; accuracy: number; side: string; volume: number }[];
 }
 
 // ─── Formatters ───
@@ -161,71 +81,13 @@ function formatVol(v: number): string {
   return `$${v.toFixed(0)}`;
 }
 
-function formatPct(v: number | null, decimals = 1): string {
-  if (v === null || v === undefined) return "\u2014";
-  return `${(v * 100).toFixed(decimals)}%`;
-}
-
-function formatNum(v: number | null, decimals = 2): string {
-  if (v === null || v === undefined) return "\u2014";
-  return v.toFixed(decimals);
-}
-
-function signColor(v: number | null): string {
-  if (v === null) return "text-[#64748b]";
-  if (v > 0) return "text-[#10b981]";
-  if (v < 0) return "text-[#ef4444]";
-  return "text-[#64748b]";
-}
-
-function signPrefix(v: number | null): string {
-  if (v === null) return "";
-  if (v > 0) return "+";
-  return "";
-}
-
-// ─── Metric Status Helper ───
-
-function metricLabel(status: MetricStatus | undefined): string | null {
-  if (!status || status === 'computed') return null;
-  if (status === 'insufficient_data') return 'low data';
-  if (status === 'stale_data') return 'stale';
-  if (status === 'no_data') return 'no data';
-  return null;
-}
-
-// ─── Data Quality Badge ───
-
-function DataQualityBadge({ dq }: { dq: DataQuality | null }) {
-  if (!dq) return null;
-  const score = dq.coverageScore;
-  const color = score >= 60 ? "text-[#10b981] border-[#10b981]/30" :
-    score >= 30 ? "text-[#f59e0b] border-[#f59e0b]/30" :
-    "text-[#ef4444] border-[#ef4444]/30";
-  const bg = score >= 60 ? "bg-[#10b981]/10" :
-    score >= 30 ? "bg-[#f59e0b]/10" :
-    "bg-[#ef4444]/10";
-  return (
-    <div className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[9px] font-mono border ${color} ${bg}`}>
-      <span className="tracking-wider uppercase">Coverage</span>
-      <span className="font-bold">{score}</span>
-    </div>
-  );
-}
-
 // ─── Stat Cell ───
 
-function Stat({ label, value, sub, color, metricStatus }: { label: string; value: string; sub?: string; color?: string; metricStatus?: MetricStatus }) {
-  const statusLabel = metricLabel(metricStatus);
-  const isInsufficient = metricStatus && metricStatus !== 'computed';
+function Stat({ label, value, sub, color }: { label: string; value: string; sub?: string; color?: string }) {
   return (
     <div className="px-3 py-2">
       <div className="text-[9px] text-[#64748b] tracking-[0.15em] uppercase mb-0.5">{label}</div>
-      {isInsufficient && value === "\u2014" ? (
-        <div className="text-[10px] font-mono text-[#475569] italic">{statusLabel}</div>
-      ) : (
-        <div className={`text-sm font-mono font-medium ${color || "text-white"}`}>{value}</div>
-      )}
+      <div className={`text-sm font-mono font-medium ${color || "text-white"}`}>{value}</div>
       {sub && <div className="text-[9px] text-[#475569] mt-0.5">{sub}</div>}
     </div>
   );
@@ -258,36 +120,46 @@ function TerminalTooltip({ active, payload, label }: { active?: boolean; payload
   );
 }
 
+// ─── Signal Badge ───
+
+function SignalBadge({ signal, confidence }: { signal: string; confidence: number }) {
+  const config = signal === 'BUY'
+    ? { color: 'text-[#10b981]', bg: 'bg-[#10b981]/10 border-[#10b981]/30', Icon: ArrowUpCircle }
+    : signal === 'SELL'
+    ? { color: 'text-[#ef4444]', bg: 'bg-[#ef4444]/10 border-[#ef4444]/30', Icon: ArrowDownCircle }
+    : { color: 'text-[#64748b]', bg: 'bg-[#64748b]/10 border-[#64748b]/30', Icon: MinusCircle };
+
+  return (
+    <div className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border ${config.bg}`}>
+      <config.Icon className={`h-5 w-5 ${config.color}`} />
+      <div>
+        <div className={`text-sm font-bold tracking-wider ${config.color}`}>{signal}</div>
+        {confidence > 0 && (
+          <div className="text-[9px] text-[#64748b]">{Math.round(confidence * 100)}% confidence</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ─── Main Page ───
 
 export default function MarketDetailPage() {
   const params = useParams();
   const id = params.id as string;
   const [market, setMarket] = useState<MarketDetail | null>(null);
-  const [analytics, setAnalytics] = useState<Analytics | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     async function fetchData() {
       try {
-        const [marketRes, analyticsRes] = await Promise.all([
-          fetch(`/api/markets/${id}`),
-          fetch(`/api/markets/${id}/analytics`),
-        ]);
-
-        if (!marketRes.ok) {
-          setError(marketRes.status === 404 ? "Market not found" : "Failed to load market data");
+        const res = await fetch(`/api/markets/${id}`);
+        if (!res.ok) {
+          setError(res.status === 404 ? "Market not found" : "Failed to load market data");
           return;
         }
-
-        const marketData = await marketRes.json();
-        setMarket(marketData);
-
-        if (analyticsRes.ok) {
-          const analyticsData = await analyticsRes.json();
-          setAnalytics(analyticsData);
-        }
+        setMarket(await res.json());
       } catch {
         setError("Failed to load market data");
       } finally {
@@ -318,9 +190,6 @@ export default function MarketDetailPage() {
   const isPositive = market.change > 0;
   const isNegative = market.change < 0;
   const changeColor = isPositive ? "text-[#10b981]" : isNegative ? "text-[#ef4444]" : "text-[#64748b]";
-  const vwap = analytics?.vwap24h;
-  const ms = analytics?.dataQuality?.coverageByMetric;
-  const mst = (key: string): MetricStatus | undefined => ms?.[key] as MetricStatus | undefined;
 
   return (
     <div className="min-h-screen">
@@ -333,11 +202,7 @@ export default function MarketDetailPage() {
           </Link>
           <span className="text-[rgba(255,255,255,0.15)]">|</span>
           <span className="text-[#00d4ff] font-medium tracking-wide uppercase">{market.category}</span>
-          <span className="text-[rgba(255,255,255,0.15)]">|</span>
-          <span className="text-[#64748b] truncate max-w-[300px] font-mono">{market.id.slice(0, 10)}...{market.id.slice(-6)}</span>
           <div className="ml-auto flex items-center gap-3">
-            <DataQualityBadge dq={analytics?.dataQuality ?? null} />
-            <ConfidenceBadge confidence={market.confidence} size="sm" />
             <span className="text-[#475569]">
               Updated {new Date(market.lastUpdated).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
             </span>
@@ -346,17 +211,12 @@ export default function MarketDetailPage() {
       </div>
 
       <div className="max-w-[1600px] mx-auto px-4 py-4">
-        {/* Market Title + Price */}
+        {/* Market Title + Price + Signal */}
         <div className="bg-[#0d1117] border border-[rgba(255,255,255,0.06)] rounded-lg p-4 mb-3">
           <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-4">
             <div className="flex-1 min-w-0">
-              <h1 className="text-lg font-semibold text-white leading-snug mb-2">{market.title}</h1>
-              {market.flaggedMoves.length > 0 && (
-                <div className="flex items-center gap-2 text-[11px] text-[#f59e0b]">
-                  <AlertTriangle className="h-3 w-3 shrink-0" />
-                  <span className="truncate">{market.flaggedMoves[0].summary}</span>
-                </div>
-              )}
+              <h1 className="text-lg font-semibold text-white leading-snug mb-3">{market.title}</h1>
+              <SignalBadge signal={market.signal} confidence={market.signalConfidence} />
             </div>
             <div className="flex items-baseline gap-4 shrink-0">
               <div>
@@ -378,116 +238,67 @@ export default function MarketDetailPage() {
             <Stat label="Total Volume" value={formatVol(market.volumeProfile.totalVolume)} />
             <Stat label="Liquidity" value={formatVol(market.liquidity)} />
             <Stat label="Wallets" value={market.volumeProfile.uniqueWallets.toString()} />
-            <Stat label="Top Wallet %" value={`${(market.volumeProfile.topWalletConcentration * 100).toFixed(0)}%`} />
             {market.endDate && (
               <Stat label="End Date" value={new Date(market.endDate).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })} />
             )}
           </div>
         </div>
 
-        {/* Edge Analytics Panel */}
-        {analytics?.edge && analytics.edge.score !== null && (
+        {/* Smart Money Panel */}
+        {market.smartWalletCount > 0 && (
           <div className="bg-[#0d1117] border border-[rgba(255,255,255,0.06)] rounded-lg p-4 mb-3">
-            <div className="flex items-center justify-between mb-3">
-              <SectionHeader icon={Zap} title="Edge Analysis" />
-              <div className="flex items-center gap-2">
-                {analytics.edge.signals.marketRegime.regime && (
-                  <span className="text-[9px] font-mono tracking-wider uppercase px-2 py-0.5 rounded border border-[rgba(255,255,255,0.1)] text-[#64748b]">
-                    {analytics.edge.signals.marketRegime.regime.replace('_', ' ')}
-                  </span>
-                )}
-                {analytics.edge.computedAt && (
-                  <span className="text-[9px] text-[#475569]">
-                    {new Date(analytics.edge.computedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                  </span>
-                )}
+            <SectionHeader icon={Activity} title="Smart Money Activity" />
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
+              <div>
+                <div className="text-[9px] text-[#64748b] tracking-[0.15em] uppercase mb-1">Smart Wallets</div>
+                <div className="text-2xl font-bold text-white font-mono">{market.smartWalletCount}</div>
+              </div>
+              <div>
+                <div className="text-[9px] text-[#64748b] tracking-[0.15em] uppercase mb-1">Buy Volume</div>
+                <div className="text-2xl font-bold text-[#10b981] font-mono">{formatVol(market.smartBuyVolume)}</div>
+              </div>
+              <div>
+                <div className="text-[9px] text-[#64748b] tracking-[0.15em] uppercase mb-1">Sell Volume</div>
+                <div className="text-2xl font-bold text-[#ef4444] font-mono">{formatVol(market.smartSellVolume)}</div>
+              </div>
+              <div>
+                <div className="text-[9px] text-[#64748b] tracking-[0.15em] uppercase mb-1">Confidence</div>
+                <div className="text-2xl font-bold text-white font-mono">{Math.round(market.signalConfidence * 100)}%</div>
               </div>
             </div>
 
-            <div className="flex items-start gap-6">
-              {/* Big Edge Score */}
-              <div className="shrink-0 text-center">
-                <div className={`text-5xl font-bold font-mono tabular-nums ${
-                  analytics.edge.score >= 65 ? "text-[#10b981]" :
-                  analytics.edge.score <= 35 ? "text-[#ef4444]" :
-                  "text-[#f59e0b]"
-                }`}>
-                  {analytics.edge.score}
+            {/* Top Smart Wallets Table */}
+            {market.topSmartWallets.length > 0 && (
+              <div>
+                <div className="flex items-center gap-2 text-[9px] text-[#475569] tracking-wider uppercase px-1 pb-2 border-b border-[rgba(255,255,255,0.04)]">
+                  <span className="w-24">Wallet</span>
+                  <span className="w-14 text-right">Accuracy</span>
+                  <span className="flex-1 text-right">Volume</span>
+                  <span className="w-16 text-right">Side</span>
                 </div>
-                <div className="text-[9px] text-[#64748b] tracking-[0.15em] uppercase mt-1">Edge Score</div>
-                <div className={`text-[11px] font-bold tracking-wider uppercase mt-1 ${
-                  analytics.edge.direction === "bullish" ? "text-[#10b981]" :
-                  analytics.edge.direction === "bearish" ? "text-[#ef4444]" :
-                  "text-[#f59e0b]"
-                }`}>
-                  {analytics.edge.direction}
-                </div>
-              </div>
-
-              {/* Signal Breakdown */}
-              <div className="flex-1 min-w-0">
-                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-3">
-                  {[
-                    { label: "Smart Money", signal: analytics.edge.signals.smartMoneyLeadLag, format: (v: number) => `${(v * 100).toFixed(0)}%` },
-                    { label: "Vol/Price Div", signal: analytics.edge.signals.volumePriceDivergence, format: (v: number) => v.toFixed(2) },
-                    { label: "Whale Accum", signal: analytics.edge.signals.whaleAccumulation, format: (v: number) => `${(v * 100).toFixed(0)}` },
-                    { label: "EMA Momentum", signal: analytics.edge.signals.emaMomentum, format: (v: number) => (v * 100).toFixed(2) },
-                  ].map(({ label, signal, format }) => (
-                    <div key={label} className="bg-[rgba(255,255,255,0.02)] rounded px-3 py-2">
-                      <div className="text-[9px] text-[#64748b] tracking-[0.12em] uppercase mb-1">{label}</div>
-                      {signal.value !== null ? (
-                        <>
-                          <div className={`text-sm font-mono font-medium ${
-                            signal.direction === "bullish" ? "text-[#10b981]" :
-                            signal.direction === "bearish" ? "text-[#ef4444]" :
-                            "text-[#64748b]"
-                          }`}>
-                            {format(signal.value)}
-                          </div>
-                          <div className="mt-1 h-1 bg-[#151b27] rounded-full overflow-hidden">
-                            <div
-                              className={`h-full rounded-full ${
-                                signal.direction === "bullish" ? "bg-[#10b981]" :
-                                signal.direction === "bearish" ? "bg-[#ef4444]" :
-                                "bg-[#64748b]"
-                              }`}
-                              style={{ width: `${(signal.strength ?? 0) * 100}%` }}
-                            />
-                          </div>
-                        </>
+                {market.topSmartWallets.map((w, i) => (
+                  <div key={i} className="flex items-center gap-2 text-[11px] font-mono px-1 py-1.5 border-b border-[rgba(255,255,255,0.02)] hover:bg-[rgba(255,255,255,0.02)]">
+                    <span className="text-[#94a3b8] w-24 truncate">{w.address}</span>
+                    <span className={`w-14 text-right ${w.accuracy >= 70 ? "text-[#10b981]" : "text-[#f59e0b]"}`}>
+                      {w.accuracy}%
+                    </span>
+                    <span className="text-white flex-1 text-right">{formatVol(w.volume)}</span>
+                    <span className={`w-16 text-right font-bold ${w.side === "BUY" || w.side === "buy" ? "text-[#10b981]" : "text-[#ef4444]"}`}>
+                      {w.side === "BUY" || w.side === "buy" ? (
+                        <span className="flex items-center justify-end gap-0.5"><ArrowUpRight className="h-3 w-3" />BUY</span>
                       ) : (
-                        <div className="text-[10px] font-mono text-[#475569] italic">no data</div>
+                        <span className="flex items-center justify-end gap-0.5"><ArrowDownRight className="h-3 w-3" />SELL</span>
                       )}
-                    </div>
-                  ))}
-                </div>
-
-                {/* Reasoning */}
-                {analytics.edge.reasoning.length > 0 && (
-                  <div className="space-y-1">
-                    {analytics.edge.reasoning.map((reason, i) => (
-                      <div key={i} className="flex items-start gap-2 text-[11px] text-[#94a3b8]">
-                        <span className="text-[#00d4ff] shrink-0 mt-0.5">&#8226;</span>
-                        <span>{reason}</span>
-                      </div>
-                    ))}
+                    </span>
                   </div>
-                )}
-
-                {/* Context */}
-                <div className="flex items-center gap-4 mt-2 pt-2 border-t border-[rgba(255,255,255,0.04)] text-[9px] text-[#475569]">
-                  <span>{analytics.edge.context.snapshotCount} snapshots</span>
-                  <span>{analytics.edge.context.tradeCount} trades</span>
-                  <span>{analytics.edge.context.smartTradeCount} smart trades</span>
-                </div>
+                ))}
               </div>
-            </div>
+            )}
           </div>
         )}
 
-        {/* Main Grid: Charts + Analytics */}
+        {/* Charts */}
         <div className="grid grid-cols-1 xl:grid-cols-12 gap-3 mb-3">
-          {/* Left: Charts */}
           <div className="xl:col-span-8 space-y-3">
             {/* Price Chart */}
             {market.chartData.length > 1 ? (
@@ -499,14 +310,6 @@ export default function MarketDetailPage() {
                     <XAxis dataKey="time" stroke="#475569" fontSize={10} tickLine={false} />
                     <YAxis stroke="#475569" fontSize={10} domain={[0, 100]} tickLine={false} />
                     <Tooltip content={<TerminalTooltip />} />
-                    {vwap && (
-                      <ReferenceLine
-                        y={vwap * 100}
-                        stroke="#f59e0b"
-                        strokeDasharray="5 5"
-                        label={{ value: `VWAP ${(vwap * 100).toFixed(1)}`, fill: "#f59e0b", fontSize: 9, position: "right" }}
-                      />
-                    )}
                     <Line type="monotone" dataKey="odds" stroke="#00d4ff" strokeWidth={2} dot={false} />
                   </LineChart>
                 </ResponsiveContainer>
@@ -536,233 +339,62 @@ export default function MarketDetailPage() {
                 </ResponsiveContainer>
               </div>
             )}
-
-            {/* Volume Profile */}
-            {analytics?.volumeProfile && analytics.volumeProfile.length > 0 && (
-              <div className="bg-[#0d1117] border border-[rgba(255,255,255,0.06)] rounded-lg p-4">
-                <SectionHeader icon={BarChart3} title="Volume Profile" />
-                <div className="space-y-1">
-                  {analytics.volumeProfile.map((bucket, i) => (
-                    <div key={i} className="flex items-center gap-2 text-[11px]">
-                      <span className="font-mono text-[#64748b] w-16 shrink-0">{bucket.priceRange}</span>
-                      <div className="flex-1 h-4 bg-[#151b27] rounded overflow-hidden flex">
-                        <div className="h-full bg-[#10b981]" style={{ width: `${bucket.buyPct}%` }} />
-                        <div className="h-full bg-[#ef4444]" style={{ width: `${100 - bucket.buyPct}%` }} />
-                      </div>
-                      <span className="font-mono text-white w-16 text-right">{formatVol(bucket.volume)}</span>
-                      <span className="font-mono text-[#475569] w-8 text-right">{bucket.tradeCount}</span>
-                    </div>
-                  ))}
-                  <div className="flex items-center gap-3 mt-2 text-[9px] text-[#64748b]">
-                    <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-sm bg-[#10b981]" />BUY</span>
-                    <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-sm bg-[#ef4444]" />SELL</span>
-                  </div>
-                </div>
-              </div>
-            )}
           </div>
 
-          {/* Right: Analytics Panel */}
-          <div className="xl:col-span-4 space-y-3">
-            {/* Momentum & Price Behavior */}
+          {/* Right: Top Wallets */}
+          <div className="xl:col-span-4">
             <div className="bg-[#0d1117] border border-[rgba(255,255,255,0.06)] rounded-lg p-4">
-              <SectionHeader icon={TrendingUp} title="Price Behavior" />
-              <div className="grid grid-cols-3 gap-0 -mx-3">
-                <Stat label="Mom 1H" value={`${signPrefix(analytics?.momentum?.["1h"] ?? null)}${formatPct(analytics?.momentum?.["1h"] ?? null)}`} color={signColor(analytics?.momentum?.["1h"] ?? null)} metricStatus={mst("momentum_1h")} />
-                <Stat label="Mom 6H" value={`${signPrefix(analytics?.momentum?.["6h"] ?? null)}${formatPct(analytics?.momentum?.["6h"] ?? null)}`} color={signColor(analytics?.momentum?.["6h"] ?? null)} metricStatus={mst("momentum_6h")} />
-                <Stat label="Mom 24H" value={`${signPrefix(analytics?.momentum?.["24h"] ?? null)}${formatPct(analytics?.momentum?.["24h"] ?? null)}`} color={signColor(analytics?.momentum?.["24h"] ?? null)} metricStatus={mst("momentum_24h")} />
-              </div>
-              <div className="grid grid-cols-2 gap-0 -mx-3 mt-1 pt-2 border-t border-[rgba(255,255,255,0.04)]">
-                <Stat label="Volatility (VIX)" value={formatNum(analytics?.volatility24h)} sub="24h annualized" metricStatus={mst("volatility_24h")} />
-                <Stat label="Convergence" value={formatNum(analytics?.convergenceSpeed)} sub="speed to certainty" metricStatus={mst("convergence_speed")} />
-              </div>
-              <div className="-mx-3 pt-2 border-t border-[rgba(255,255,255,0.04)]">
-                <Stat label="Reversion Rate" value={formatPct(analytics?.priceReversionRate ?? null)} sub="% of 2%+ moves that retrace" metricStatus={mst("price_reversion_rate")} />
-              </div>
-            </div>
-
-            {/* Volume & Flow */}
-            <div className="bg-[#0d1117] border border-[rgba(255,255,255,0.06)] rounded-lg p-4">
-              <SectionHeader icon={Zap} title="Volume & Flow" />
-              <div className="grid grid-cols-2 gap-0 -mx-3">
-                <Stat label="VWAP 24H" value={analytics?.vwap24h ? `${(analytics.vwap24h * 100).toFixed(1)}%` : "\u2014"} metricStatus={mst("vwap_24h")} />
-                <Stat
-                  label="Buy/Sell"
-                  value={formatNum(analytics?.buySellRatio)}
-                  color={analytics?.buySellRatio ? (analytics.buySellRatio > 1 ? "text-[#10b981]" : "text-[#ef4444]") : undefined}
-                  sub={analytics?.buySellRatio ? (analytics.buySellRatio > 1 ? "buy pressure" : "sell pressure") : undefined}
-                  metricStatus={mst("buy_sell_ratio")}
-                />
-              </div>
-              <div className="-mx-3 pt-2 border-t border-[rgba(255,255,255,0.04)]">
-                <Stat
-                  label="Smart Money Flow"
-                  value={analytics?.smartMoneyFlow !== null && analytics?.smartMoneyFlow !== undefined ? formatVol(Math.abs(analytics.smartMoneyFlow)) : "\u2014"}
-                  color={signColor(analytics?.smartMoneyFlow ?? null)}
-                  sub={analytics?.smartMoneyFlow ? (analytics.smartMoneyFlow > 0 ? "net buying (accuracy >60%)" : "net selling (accuracy >60%)") : "wallets with >60% accuracy"}
-                  metricStatus={mst("smart_money_flow")}
-                />
-              </div>
-            </div>
-
-            {/* Order Book */}
-            <div className="bg-[#0d1117] border border-[rgba(255,255,255,0.06)] rounded-lg p-4">
-              <SectionHeader icon={BookOpen} title="Order Book" />
-              <div className="grid grid-cols-2 gap-0 -mx-3">
-                <Stat label="Spread" value={analytics?.spread ? `${(analytics.spread * 100).toFixed(2)}c` : "\u2014"} />
-                <Stat
-                  label="Imbalance"
-                  value={analytics?.bookImbalance ? formatPct(analytics.bookImbalance, 0) : "\u2014"}
-                  color={analytics?.bookImbalance ? (analytics.bookImbalance > 0.5 ? "text-[#10b981]" : "text-[#ef4444]") : undefined}
-                  sub={analytics?.bookImbalance ? (analytics.bookImbalance > 0.5 ? "bid heavy" : "ask heavy") : undefined}
-                  metricStatus={mst("book_imbalance")}
-                />
-              </div>
-              <div className="grid grid-cols-2 gap-0 -mx-3 pt-2 border-t border-[rgba(255,255,255,0.04)]">
-                <Stat label="Bid Depth 5c" value={analytics?.bookDepthBid ? formatVol(analytics.bookDepthBid) : "\u2014"} />
-                <Stat label="Ask Depth 5c" value={analytics?.bookDepthAsk ? formatVol(analytics.bookDepthAsk) : "\u2014"} />
-              </div>
-              {(analytics?.costMoveUp5pct || analytics?.costMoveDown5pct) && (
-                <div className="grid grid-cols-2 gap-0 -mx-3 pt-2 border-t border-[rgba(255,255,255,0.04)]">
-                  <Stat label="Cost +5%" value={analytics?.costMoveUp5pct ? formatVol(analytics.costMoveUp5pct) : "\u2014"} />
-                  <Stat label="Cost -5%" value={analytics?.costMoveDown5pct ? formatVol(analytics.costMoveDown5pct) : "\u2014"} />
+              <SectionHeader icon={Users} title="Top Wallets by Volume" />
+              {market.walletBreakdown.length > 0 ? (
+                <div className="space-y-2">
+                  {market.walletBreakdown.map((wallet, i) => (
+                    <div key={i} className="flex items-center gap-3">
+                      <span className="text-[10px] font-mono text-[#475569] w-4">{i + 1}</span>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between mb-1">
+                          <div className="flex items-center gap-2">
+                            <span className="font-mono text-xs text-white">{wallet.walletId}</span>
+                            <Link href="/wallets" className="text-[9px] text-[#00d4ff] hover:underline flex items-center gap-0.5">
+                              profile <ExternalLink className="h-2.5 w-2.5" />
+                            </Link>
+                          </div>
+                          <div className="flex items-center gap-3 text-[10px]">
+                            {wallet.accuracy !== null && (
+                              <span className="text-[#64748b]">
+                                acc <span className={`font-mono ${wallet.accuracy >= 70 ? "text-[#10b981]" : wallet.accuracy >= 50 ? "text-[#f59e0b]" : "text-[#ef4444]"}`}>{wallet.accuracy}%</span>
+                              </span>
+                            )}
+                            <span className="text-[#475569] font-mono">{wallet.tradeCount} trades</span>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <div className="flex-1 h-1.5 bg-[#151b27] rounded-full overflow-hidden">
+                            <div className="h-full bg-[#00d4ff] rounded-full" style={{ width: `${wallet.percentage}%` }} />
+                          </div>
+                          <span className="text-[10px] font-mono text-white w-10 text-right">{wallet.percentage}%</span>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
                 </div>
+              ) : (
+                <p className="text-[#475569] text-xs">No trade data collected yet.</p>
               )}
             </div>
           </div>
         </div>
 
-        {/* Bottom: Wallets + Smart Activity */}
-        <div className="grid grid-cols-1 xl:grid-cols-2 gap-3 mb-3">
-          {/* Top Wallets */}
-          <div className="bg-[#0d1117] border border-[rgba(255,255,255,0.06)] rounded-lg p-4">
-            <SectionHeader icon={Users} title="Top Wallets by Volume" />
-            {market.walletBreakdown.length > 0 ? (
-              <div className="space-y-2">
-                {market.walletBreakdown.map((wallet, i) => (
-                  <div key={i} className="flex items-center gap-3">
-                    <span className="text-[10px] font-mono text-[#475569] w-4">{i + 1}</span>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center justify-between mb-1">
-                        <div className="flex items-center gap-2">
-                          <span className="font-mono text-xs text-white">{wallet.walletId}</span>
-                          <Link href="/wallets" className="text-[9px] text-[#00d4ff] hover:underline flex items-center gap-0.5">
-                            profile <ExternalLink className="h-2.5 w-2.5" />
-                          </Link>
-                        </div>
-                        <div className="flex items-center gap-3 text-[10px]">
-                          {wallet.accuracy !== null && (
-                            <span className="text-[#64748b]">
-                              acc <span className={`font-mono ${wallet.accuracy >= 70 ? "text-[#10b981]" : wallet.accuracy >= 50 ? "text-[#f59e0b]" : "text-[#ef4444]"}`}>{wallet.accuracy}%</span>
-                            </span>
-                          )}
-                          <span className="text-[#475569] font-mono">{wallet.tradeCount} trades</span>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <div className="flex-1 h-1.5 bg-[#151b27] rounded-full overflow-hidden">
-                          <div className="h-full bg-[#00d4ff] rounded-full" style={{ width: `${wallet.percentage}%` }} />
-                        </div>
-                        <span className="text-[10px] font-mono text-white w-10 text-right">{wallet.percentage}%</span>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <p className="text-[#475569] text-xs">No trade data collected yet.</p>
-            )}
-          </div>
-
-          {/* Smart Wallet Activity */}
-          <div className="bg-[#0d1117] border border-[rgba(255,255,255,0.06)] rounded-lg p-4">
-            <SectionHeader icon={Target} title="Smart Wallet Activity" />
-            {analytics?.smartWalletActivity && analytics.smartWalletActivity.length > 0 ? (
-              <div className="space-y-0">
-                <div className="flex items-center gap-2 text-[9px] text-[#475569] tracking-wider uppercase px-1 pb-2 border-b border-[rgba(255,255,255,0.04)]">
-                  <span className="w-20">Wallet</span>
-                  <span className="w-10 text-right">Acc</span>
-                  <span className="flex-1 text-right">Buy</span>
-                  <span className="flex-1 text-right">Sell</span>
-                  <span className="w-12 text-right">Signal</span>
-                </div>
-                {analytics.smartWalletActivity.slice(0, 10).map((w, i) => (
-                  <div key={i} className="flex items-center gap-2 text-[11px] font-mono px-1 py-1.5 border-b border-[rgba(255,255,255,0.02)] hover:bg-[rgba(255,255,255,0.02)]">
-                    <span className="text-[#94a3b8] w-20 truncate">{w.address}</span>
-                    <span className={`w-10 text-right ${w.accuracy >= 0.7 ? "text-[#10b981]" : "text-[#f59e0b]"}`}>
-                      {(w.accuracy * 100).toFixed(0)}%
-                    </span>
-                    <span className="flex-1 text-right text-[#10b981]">{formatVol(w.buyVolume)}</span>
-                    <span className="flex-1 text-right text-[#ef4444]">{formatVol(w.sellVolume)}</span>
-                    <span className={`w-12 text-right font-bold ${w.netDirection === "BUY" ? "text-[#10b981]" : "text-[#ef4444]"}`}>
-                      {w.netDirection === "BUY" ? (
-                        <span className="flex items-center justify-end gap-0.5"><ArrowUpRight className="h-3 w-3" />BUY</span>
-                      ) : (
-                        <span className="flex items-center justify-end gap-0.5"><ArrowDownRight className="h-3 w-3" />SELL</span>
-                      )}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <p className="text-[#475569] text-xs">No smart wallet trades detected for this market.</p>
-            )}
-          </div>
+        {/* Polymarket Link */}
+        <div className="text-center py-4">
+          <a
+            href={`https://polymarket.com/event/${market.id}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1.5 text-xs text-[#64748b] hover:text-[#00d4ff] transition-colors"
+          >
+            View on Polymarket <ExternalLink className="h-3 w-3" />
+          </a>
         </div>
-
-        {/* Flagged Moves */}
-        {market.flaggedMoves.length > 0 && (
-          <div className="bg-[#0d1117] border border-[rgba(255,255,255,0.06)] rounded-lg p-4 mb-3">
-            <SectionHeader icon={AlertTriangle} title="Flagged Moves" />
-            <div className="space-y-2">
-              {market.flaggedMoves.map((move, i) => (
-                <div key={i} className="flex items-start gap-3 p-3 bg-[rgba(255,255,255,0.02)] border border-[rgba(255,255,255,0.04)] rounded-lg">
-                  <div className={`mt-0.5 h-2 w-2 rounded-full shrink-0 ${move.direction === "BUY" ? "bg-[#10b981]" : "bg-[#ef4444]"}`} />
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-3 mb-1">
-                      <span className={`text-[10px] font-bold tracking-wider uppercase ${move.direction === "BUY" ? "text-[#10b981]" : "text-[#ef4444]"}`}>
-                        {move.direction === "BUY" ? "Bullish" : "Bearish"}
-                      </span>
-                      <span className="text-[10px] text-[#64748b] font-mono">conf {move.confidence}/100</span>
-                      <span className="text-[10px] text-[#475569]">
-                        {new Date(move.timestamp).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
-                      </span>
-                    </div>
-                    <p className="text-xs text-[#94a3b8] leading-relaxed">{move.summary}</p>
-                    <div className="mt-1 text-[10px] font-mono text-[#475569]">
-                      price delta: {signPrefix(move.priceDelta)}{(move.priceDelta * 100).toFixed(1)}%
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Position Deltas */}
-        {analytics?.positionDeltas && analytics.positionDeltas.length > 0 && (
-          <div className="bg-[#0d1117] border border-[rgba(255,255,255,0.06)] rounded-lg p-4 mb-3">
-            <SectionHeader icon={Activity} title="Position Changes (Flagged Wallets)" />
-            <div className="space-y-0">
-              <div className="flex items-center gap-2 text-[9px] text-[#475569] tracking-wider uppercase px-1 pb-2 border-b border-[rgba(255,255,255,0.04)]">
-                <span className="w-24">Wallet</span>
-                <span className="w-14 text-right">Outcome</span>
-                <span className="flex-1 text-right">Position</span>
-                <span className="w-20 text-right">Delta</span>
-              </div>
-              {analytics.positionDeltas.slice(0, 10).map((p, i) => (
-                <div key={i} className="flex items-center gap-2 text-[11px] font-mono px-1 py-1.5 border-b border-[rgba(255,255,255,0.02)] hover:bg-[rgba(255,255,255,0.02)]">
-                  <span className="text-[#94a3b8] w-24 truncate">{p.wallet}</span>
-                  <span className="text-[#64748b] w-14 text-right">{p.outcome}</span>
-                  <span className="text-white flex-1 text-right">{p.currentSize.toFixed(1)}</span>
-                  <span className={`w-20 text-right font-medium ${signColor(p.delta)}`}>
-                    {signPrefix(p.delta)}{p.delta.toFixed(1)}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
       </div>
     </div>
   );

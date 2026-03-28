@@ -7,12 +7,12 @@ import {
   Activity,
   TrendingUp,
   DollarSign,
-  Users,
   Search,
   Zap,
-  Download,
   ArrowRight,
   Globe,
+  ArrowUpCircle,
+  ArrowDownCircle,
 } from "lucide-react";
 import { Market } from "../types/market";
 import { MarketCard } from "../components/MarketCard";
@@ -22,7 +22,7 @@ const InteractiveGlobe = dynamic(
   { ssr: false, loading: () => <div className="w-full aspect-square bg-[#0d1117] rounded-full animate-pulse" /> },
 );
 
-type SortOption = "highest-volume" | "biggest-movers" | "highest-odds" | "lowest-odds" | "highest-edge";
+type SortOption = "highest-volume" | "biggest-movers" | "smart-money" | "highest-odds" | "lowest-odds";
 
 function formatVolume(v: number): string {
   if (v >= 1_000_000) return `$${(v / 1_000_000).toFixed(1)}M`;
@@ -49,7 +49,6 @@ function formatDate(): string {
   });
 }
 
-/** Isolated clock component — re-renders every second without touching the rest of the page */
 const Clock = memo(function Clock() {
   const [time, setTime] = useState("");
   useEffect(() => {
@@ -79,8 +78,8 @@ export default function Dashboard() {
           const liveMarkets: Market[] = json.markets.map((m: Record<string, unknown>) => ({
             id: m.id as string,
             title: m.title as string,
-            category: m.category as Market["category"],
-            section: m.section as Market["section"],
+            category: m.category as string,
+            section: m.section as string,
             currentOdds: m.currentOdds as number,
             previousOdds: m.previousOdds as number,
             change: m.change as number,
@@ -90,7 +89,13 @@ export default function Dashboard() {
             traders: (m.traders as number | null) ?? null,
             lastUpdated: new Date(m.lastUpdated as string),
             liquidity: m.liquidity as number,
-            edge: (m.edge as { score: number; direction: 'bullish' | 'bearish' | 'neutral'; regime: string } | null) ?? null,
+            spread: (m.spread as number | null) ?? null,
+            signal: (m.signal as Market["signal"]) ?? 'NEUTRAL',
+            signalConfidence: (m.signalConfidence as number) ?? 0,
+            smartBuyVolume: (m.smartBuyVolume as number) ?? 0,
+            smartSellVolume: (m.smartSellVolume as number) ?? 0,
+            smartWalletCount: (m.smartWalletCount as number) ?? 0,
+            topSmartWallets: (m.topSmartWallets as Market["topSmartWallets"]) ?? [],
           }));
           setMarkets(liveMarkets);
           setIsLive(true);
@@ -107,7 +112,6 @@ export default function Dashboard() {
   const sortedMarkets = useMemo(() => {
     let filtered = [...markets];
 
-    // Apply search filter
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
       filtered = filtered.filter((m) => m.title.toLowerCase().includes(q));
@@ -120,33 +124,36 @@ export default function Dashboard() {
       case "biggest-movers":
         filtered.sort((a, b) => Math.abs(b.change) - Math.abs(a.change));
         break;
+      case "smart-money":
+        filtered.sort((a, b) => {
+          // Signal markets first, then by smart wallet count
+          const aHasSignal = a.signal !== 'NEUTRAL' ? 1 : 0;
+          const bHasSignal = b.signal !== 'NEUTRAL' ? 1 : 0;
+          if (bHasSignal !== aHasSignal) return bHasSignal - aHasSignal;
+          return b.smartWalletCount - a.smartWalletCount;
+        });
+        break;
       case "highest-odds":
         filtered.sort((a, b) => b.currentOdds - a.currentOdds);
         break;
       case "lowest-odds":
         filtered.sort((a, b) => a.currentOdds - b.currentOdds);
         break;
-      case "highest-edge":
-        filtered.sort((a, b) => {
-          const aEdge = a.edge?.score ?? 50;
-          const bEdge = b.edge?.score ?? 50;
-          return Math.abs(bEdge - 50) - Math.abs(aEdge - 50); // strongest signals first (furthest from neutral 50)
-        });
-        break;
     }
     return filtered;
   }, [markets, sortOption, searchQuery]);
 
   const totalVolume = markets.reduce((sum, m) => sum + m.volume24h, 0);
-  const totalTraders = markets.reduce((sum, m) => sum + (m.traders ?? 0), 0);
+  const signalCount = markets.filter(m => m.signal !== 'NEUTRAL').length;
 
   const tickerItems = markets
-    .filter((m) => Math.abs(m.change) > 0.01)
-    .slice(0, 6)
+    .filter((m) => m.signal !== 'NEUTRAL')
+    .slice(0, 8)
     .map((m) => ({
-      category: m.category.toUpperCase(),
+      title: m.title.length > 40 ? m.title.slice(0, 40) + '...' : m.title,
+      signal: m.signal,
       odds: `${(m.currentOdds * 100).toFixed(0)}%`,
-      change: m.change,
+      wallets: m.smartWalletCount,
     }));
 
   return (
@@ -179,9 +186,9 @@ export default function Dashboard() {
               <span className="text-white font-medium">{markets.length}</span>
             </span>
             <span className="flex items-center gap-1.5">
-              <Users className="h-3 w-3 text-[#00d4ff]" />
-              <span className="uppercase">Traders:</span>
-              <span className="text-white font-medium">{(totalTraders / 1000).toFixed(1)}K</span>
+              <Zap className="h-3 w-3 text-[#10b981]" />
+              <span className="uppercase">Signals:</span>
+              <span className="text-white font-medium">{signalCount}</span>
             </span>
             <span className="flex items-center gap-1.5">
               <DollarSign className="h-3 w-3 text-[#00d4ff]" />
@@ -202,18 +209,9 @@ export default function Dashboard() {
             <div>
               <h1 className="text-2xl font-bold text-white tracking-tight">CLEARLINE TERMINAL</h1>
               <p className="text-[#00d4ff] text-xs tracking-[0.2em] uppercase font-medium">
-                Prediction Market Intelligence
+                Smart Money Signals
               </p>
             </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <button className="flex items-center gap-2 px-4 py-2 text-xs font-medium tracking-wide uppercase text-[#94a3b8] border border-[rgba(255,255,255,0.1)] hover:border-[rgba(255,255,255,0.2)] hover:text-white rounded-lg transition-colors">
-              <Download className="h-3.5 w-3.5" />
-              Export Data
-            </button>
-            <button className="flex items-center gap-2 px-4 py-2 text-xs font-bold tracking-wide uppercase text-[#080b12] bg-[#00d4ff] hover:bg-[#00bde0] rounded-lg transition-colors">
-              Upgrade Pro
-            </button>
           </div>
         </div>
 
@@ -246,7 +244,6 @@ export default function Dashboard() {
                 </h2>
               </div>
 
-              {/* Globe Visualization */}
               <div className="relative mx-auto mb-8 aspect-square w-full max-w-[260px]">
                 <InteractiveGlobe
                   size={260}
@@ -259,18 +256,14 @@ export default function Dashboard() {
 
               <div className="border-t border-[rgba(255,255,255,0.06)] pt-5" />
 
-              <div className="grid grid-cols-3 gap-3">
+              <div className="grid grid-cols-2 gap-3">
                 <div className="text-center">
-                  <div className="text-xl font-bold text-[#00d4ff]">150+</div>
-                  <div className="text-[9px] text-[#64748b] tracking-[0.15em] uppercase mt-0.5">Regions</div>
+                  <div className="text-xl font-bold text-[#10b981]">{signalCount}</div>
+                  <div className="text-[9px] text-[#64748b] tracking-[0.15em] uppercase mt-0.5">Active Signals</div>
                 </div>
                 <div className="text-center">
-                  <div className="text-xl font-bold text-[#00d4ff]">&lt;2s</div>
-                  <div className="text-[9px] text-[#64748b] tracking-[0.15em] uppercase mt-0.5">Latency</div>
-                </div>
-                <div className="text-center">
-                  <div className="text-xl font-bold text-[#00d4ff]">99.9%</div>
-                  <div className="text-[9px] text-[#64748b] tracking-[0.15em] uppercase mt-0.5">Uptime</div>
+                  <div className="text-xl font-bold text-[#00d4ff]">{markets.length}</div>
+                  <div className="text-[9px] text-[#64748b] tracking-[0.15em] uppercase mt-0.5">Markets</div>
                 </div>
               </div>
             </div>
@@ -278,35 +271,42 @@ export default function Dashboard() {
 
           {/* Right: Live Feed + Market Movers */}
           <div className="lg:col-span-8 xl:col-span-9 space-y-5">
-            {/* Live Feed Ticker */}
-            <div className="bg-[#0d1117] border border-[rgba(255,255,255,0.06)] rounded-2xl overflow-hidden">
-              <div className="flex items-center h-10 px-4">
-                <div className="flex items-center gap-2 pr-4 border-r border-[rgba(255,255,255,0.08)] mr-4 shrink-0">
-                  <Zap className="h-3 w-3 text-[#f59e0b]" />
-                  <span className="text-[10px] font-bold text-[#f59e0b] tracking-[0.15em] uppercase">Live Feed:</span>
-                </div>
-                <div className="overflow-hidden flex-1">
-                  <div className="flex items-center gap-6 animate-ticker whitespace-nowrap">
-                    {[...tickerItems, ...tickerItems].map((item, i) => (
-                      <span key={i} className="flex items-center gap-2 text-xs">
-                        <span className="text-[#00d4ff] font-bold tracking-wider uppercase">{item.category}</span>
-                        <span className="text-white font-medium">{item.odds}</span>
-                        <span className={`font-medium ${item.change > 0 ? "text-[#10b981]" : "text-[#ef4444]"}`}>
-                          {item.change > 0 ? "\u25B2" : "\u25BC"}{(Math.abs(item.change) * 100).toFixed(1)}%
+            {/* Smart Money Ticker */}
+            {tickerItems.length > 0 && (
+              <div className="bg-[#0d1117] border border-[rgba(255,255,255,0.06)] rounded-2xl overflow-hidden">
+                <div className="flex items-center h-10 px-4">
+                  <div className="flex items-center gap-2 pr-4 border-r border-[rgba(255,255,255,0.08)] mr-4 shrink-0">
+                    <Zap className="h-3 w-3 text-[#10b981]" />
+                    <span className="text-[10px] font-bold text-[#10b981] tracking-[0.15em] uppercase">Smart Money:</span>
+                  </div>
+                  <div className="overflow-hidden flex-1">
+                    <div className="flex items-center gap-6 animate-ticker whitespace-nowrap">
+                      {[...tickerItems, ...tickerItems].map((item, i) => (
+                        <span key={i} className="flex items-center gap-2 text-xs">
+                          {item.signal === 'BUY' ? (
+                            <ArrowUpCircle className="h-3 w-3 text-[#10b981]" />
+                          ) : (
+                            <ArrowDownCircle className="h-3 w-3 text-[#ef4444]" />
+                          )}
+                          <span className="text-[#94a3b8] truncate max-w-[200px]">{item.title}</span>
+                          <span className="text-white font-medium">{item.odds}</span>
+                          <span className={`font-bold ${item.signal === 'BUY' ? 'text-[#10b981]' : 'text-[#ef4444]'}`}>
+                            {item.signal}
+                          </span>
                         </span>
-                      </span>
-                    ))}
+                      ))}
+                    </div>
                   </div>
                 </div>
               </div>
-            </div>
+            )}
 
-            {/* Top Market Movers Header */}
+            {/* Header */}
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <TrendingUp className="h-4 w-4 text-[#00d4ff]" />
                 <h2 className="text-[11px] font-bold text-white tracking-[0.15em] uppercase">
-                  Top Market Movers
+                  Market Dashboard
                 </h2>
               </div>
               <button
@@ -323,7 +323,7 @@ export default function Dashboard() {
               {([
                 { key: "highest-volume", label: "Volume" },
                 { key: "biggest-movers", label: "Movers" },
-                { key: "highest-edge", label: "Edge Signal" },
+                { key: "smart-money", label: "Smart Money" },
                 { key: "highest-odds", label: "High Odds" },
                 { key: "lowest-odds", label: "Low Odds" },
               ] as { key: SortOption; label: string }[]).map(({ key, label }) => (
