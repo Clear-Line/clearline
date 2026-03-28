@@ -34,6 +34,14 @@ import { detectAndFlagMoves } from './intelligence/move-detector.js';
 // ─── WebSocket ───
 // import { startWsConsumer, updateSubscriptions } from './ingestion/ws-consumer.js';
 
+// ─── Health endpoint for Railway ───
+import http from 'node:http';
+const PORT = parseInt(process.env.PORT || '3000', 10);
+http.createServer((_req, res) => {
+  res.writeHead(200, { 'Content-Type': 'text/plain' });
+  res.end('ok');
+}).listen(PORT, () => console.log(`[Worker] Health server on port ${PORT}`));
+
 // ─── Startup ───
 
 console.log('╔══════════════════════════════════════╗');
