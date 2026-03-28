@@ -69,7 +69,10 @@ registerJob('wallet-profiler', '*/30 * * * *', async () => {
 // Intelligence: every 10 minutes — builds market_cards table
 registerJob('smart-money-scanner', '*/10 * * * *', async () => {
   const result = await scanSmartMoney();
-  console.log(`  -> Cards built: ${result.cards}, with signal: ${result.telemetry.marketsWithSignal}, smart wallets: ${result.telemetry.smartWalletsUsed}`);
+  const t = result.telemetry;
+  console.log(`  -> Cards: ${result.cards}, signals: ${t.marketsWithSignal}, wallets: ${t.smartWalletsUsed}${t.falconEnriched ? ' (Falcon enriched)' : ''}`);
+  if (t.divergencesDetected > 0) console.log(`  -> Volume divergences: ${t.divergencesDetected}`);
+  if (t.vacuumsDetected > 0) console.log(`  -> Liquidity vacuums: ${t.vacuumsDetected}`);
   if (result.errors.length > 0) console.log(`  -> Errors: ${result.errors.slice(0, 3).join('; ')}`);
 });
 
@@ -103,7 +106,10 @@ async function runInitialPipeline(): Promise<void> {
 
     console.log('[4/4] Smart money scanner (building market_cards)...');
     const smartMoney = await scanSmartMoney();
-    console.log(`  -> Cards: ${smartMoney.cards}, with signal: ${smartMoney.telemetry.marketsWithSignal}`);
+    const smt = smartMoney.telemetry;
+    console.log(`  -> Cards: ${smartMoney.cards}, signals: ${smt.marketsWithSignal}, wallets: ${smt.smartWalletsUsed}${smt.falconEnriched ? ' (Falcon enriched)' : ''}`);
+    if (smt.divergencesDetected > 0) console.log(`  -> Volume divergences: ${smt.divergencesDetected}`);
+    if (smt.vacuumsDetected > 0) console.log(`  -> Liquidity vacuums: ${smt.vacuumsDetected}`);
     if (smartMoney.errors.length > 0) console.log(`  -> Errors: ${smartMoney.errors.slice(0, 3).join('; ')}`);
 
     console.log('\n[Worker] Initial pipeline complete. Scheduler is running.\n');

@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Activity, Wallet, Bell, Menu, X } from 'lucide-react';
+import { Activity, Wallet, Bell, Menu, X, ArrowRight } from 'lucide-react';
 import { useState } from 'react';
 import { SignedIn, SignedOut, SignInButton, UserButton } from '@clerk/nextjs';
 
@@ -12,10 +12,19 @@ export function Navbar() {
 
   if (pathname.startsWith('/sign-in')) return null;
 
-  const navigation = [
-    { name: 'Terminal', href: '/', icon: Activity },
+  const isMarketingPage = pathname === '/';
+
+  const productNavigation = [
+    { name: 'Terminal', href: '/terminal', icon: Activity },
     { name: 'Wallet Tracker', href: '/wallets', icon: Wallet },
     { name: 'Alerts', href: '/alerts', icon: Bell },
+  ];
+
+  const marketingNavigation = [
+    { name: 'How It Works', href: '#how-it-works' },
+    { name: 'Products', href: '#products' },
+    { name: 'Pipeline', href: '#pipeline' },
+    { name: 'Why Clearline', href: '#support' },
   ];
 
   return (
@@ -33,25 +42,39 @@ export function Navbar() {
               </div>
             </Link>
 
-            <nav className="hidden lg:flex items-center gap-0.5">
-              {navigation.map((item) => {
-                const isActive = pathname === item.href;
-                return (
-                  <Link
+            {isMarketingPage ? (
+              <nav className="hidden lg:flex items-center gap-0.5">
+                {marketingNavigation.map((item) => (
+                  <a
                     key={item.name}
                     href={item.href}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium tracking-wide uppercase transition-colors ${
-                      isActive
-                        ? 'bg-[#00d4ff]/10 text-[#00d4ff]'
-                        : 'text-[#94a3b8] hover:text-white hover:bg-white/5'
-                    }`}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium tracking-wide uppercase text-[#94a3b8] transition-colors hover:text-white hover:bg-white/5"
                   >
-                    <item.icon className="h-3.5 w-3.5" />
                     {item.name}
-                  </Link>
-                );
-              })}
-            </nav>
+                  </a>
+                ))}
+              </nav>
+            ) : (
+              <nav className="hidden lg:flex items-center gap-0.5">
+                {productNavigation.map((item) => {
+                  const isActive = pathname === item.href;
+                  return (
+                    <Link
+                      key={item.name}
+                      href={item.href}
+                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium tracking-wide uppercase transition-colors ${
+                        isActive
+                          ? 'bg-[#00d4ff]/10 text-[#00d4ff]'
+                          : 'text-[#94a3b8] hover:text-white hover:bg-white/5'
+                      }`}
+                    >
+                      <item.icon className="h-3.5 w-3.5" />
+                      {item.name}
+                    </Link>
+                  );
+                })}
+              </nav>
+            )}
           </div>
 
           <div className="flex items-center gap-2">
@@ -65,9 +88,22 @@ export function Navbar() {
             <SignedIn>
               <UserButton afterSignOutUrl="/sign-in" />
             </SignedIn>
-            <button className="hidden md:block px-3 py-1.5 text-xs font-bold tracking-wide uppercase text-[#080b12] bg-[#00d4ff] hover:bg-[#00bde0] rounded-md transition-colors">
-              Upgrade Pro
-            </button>
+            {isMarketingPage ? (
+              <Link
+                href="/terminal"
+                className="hidden md:inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold tracking-wide uppercase text-[#080b12] bg-[#00d4ff] hover:bg-[#00bde0] rounded-md transition-colors"
+              >
+                Open Terminal
+                <ArrowRight className="h-3.5 w-3.5" />
+              </Link>
+            ) : (
+              <Link
+                href="/"
+                className="hidden md:block px-3 py-1.5 text-xs font-bold tracking-wide uppercase text-[#080b12] bg-[#00d4ff] hover:bg-[#00bde0] rounded-md transition-colors"
+              >
+                View Home
+              </Link>
+            )}
 
             <button
               className="lg:hidden p-2 text-[#94a3b8] hover:text-white hover:bg-white/5 rounded-md"
@@ -82,24 +118,35 @@ export function Navbar() {
       {mobileMenuOpen && (
         <div className="lg:hidden border-t border-[rgba(255,255,255,0.08)] bg-[#0a0e17]">
           <nav className="px-4 py-3 space-y-1">
-            {navigation.map((item) => {
-              const isActive = pathname === item.href;
-              return (
-                <Link
-                  key={item.name}
-                  href={item.href}
-                  onClick={() => setMobileMenuOpen(false)}
-                  className={`flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium tracking-wide uppercase transition-colors ${
-                    isActive
-                      ? 'bg-[#00d4ff]/10 text-[#00d4ff]'
-                      : 'text-[#94a3b8] hover:text-white hover:bg-white/5'
-                  }`}
-                >
-                  <item.icon className="h-4 w-4" />
-                  {item.name}
-                </Link>
-              );
-            })}
+            {isMarketingPage
+              ? marketingNavigation.map((item) => (
+                  <a
+                    key={item.name}
+                    href={item.href}
+                    onClick={() => setMobileMenuOpen(false)}
+                    className="flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium tracking-wide uppercase text-[#94a3b8] transition-colors hover:text-white hover:bg-white/5"
+                  >
+                    {item.name}
+                  </a>
+                ))
+              : productNavigation.map((item) => {
+                  const isActive = pathname === item.href;
+                  return (
+                    <Link
+                      key={item.name}
+                      href={item.href}
+                      onClick={() => setMobileMenuOpen(false)}
+                      className={`flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium tracking-wide uppercase transition-colors ${
+                        isActive
+                          ? 'bg-[#00d4ff]/10 text-[#00d4ff]'
+                          : 'text-[#94a3b8] hover:text-white hover:bg-white/5'
+                      }`}
+                    >
+                      <item.icon className="h-4 w-4" />
+                      {item.name}
+                    </Link>
+                  );
+                })}
             <div className="pt-3 flex flex-col gap-2">
               <SignedOut>
                 <SignInButton mode="redirect">
@@ -108,9 +155,13 @@ export function Navbar() {
                   </button>
                 </SignInButton>
               </SignedOut>
-              <button className="w-full px-4 py-2 text-xs font-bold tracking-wide uppercase text-[#080b12] bg-[#00d4ff] rounded-md">
-                Upgrade Pro
-              </button>
+              <Link
+                href={isMarketingPage ? '/terminal' : '/'}
+                onClick={() => setMobileMenuOpen(false)}
+                className="w-full px-4 py-2 text-center text-xs font-bold tracking-wide uppercase text-[#080b12] bg-[#00d4ff] rounded-md"
+              >
+                {isMarketingPage ? 'Open Terminal' : 'View Home'}
+              </Link>
             </div>
           </nav>
         </div>

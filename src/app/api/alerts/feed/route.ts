@@ -13,7 +13,7 @@ export async function GET(req: NextRequest) {
 
   const { data, error } = await bq
     .from('market_cards')
-    .select('market_id, title, category, signal, signal_confidence, smart_buy_volume, smart_sell_volume, smart_wallet_count, top_smart_wallets, current_price, price_change, volume_24h, computed_at')
+    .select('market_id, title, category, signal, signal_confidence, smart_buy_volume, smart_sell_volume, smart_wallet_count, top_smart_wallets, current_price, price_change, volume_24h, volume_divergence, spread_ratio, depth_ratio, liquidity_vacuum, computed_at')
     .order('signal_confidence', { ascending: false })
     .limit(50);
 
@@ -28,6 +28,17 @@ export async function GET(req: NextRequest) {
       try {
         if (row.top_smart_wallets) topWallets = JSON.parse(row.top_smart_wallets as string);
       } catch { /* ignore */ }
+
+      const volumeDivergence = Number(row.volume_divergence) || null;
+      const spreadRatio = Number(row.spread_ratio) || null;
+      const depthRatio = Number(row.depth_ratio) || null;
+      const liquidityVacuum = Boolean(row.liquidity_vacuum);
+
+      // Compute compound badges
+      const badges: string[] = [];
+      if (volumeDivergence != null && volumeDivergence > 5) badges.push('VOLUME_ACCUMULATION');
+      if (liquidityVacuum) badges.push('LIQUIDITY_WARNING');
+      if (badges.length > 0 && row.signal !== 'NEUTRAL') badges.push('HIGH_CONVICTION');
 
       return {
         id: `${row.market_id}-${row.signal}`,
@@ -45,6 +56,11 @@ export async function GET(req: NextRequest) {
         price_change: Number(row.price_change) || 0,
         volume_24h: Number(row.volume_24h) || 0,
         top_wallets: topWallets,
+        volume_divergence: volumeDivergence,
+        spread_ratio: spreadRatio,
+        depth_ratio: depthRatio,
+        liquidity_vacuum: liquidityVacuum,
+        badges,
       };
     });
 

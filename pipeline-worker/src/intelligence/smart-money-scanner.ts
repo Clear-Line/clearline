@@ -1,14 +1,16 @@
 /**
  * Smart Money Scanner — the single intelligence module.
  *
- * Replaces: analytics-engine, edge-engine, tier1-signals, correlation-engine,
- *           position-tracker, candidate-ranker, move-detector
- *
  * Signal: "Are high-accuracy wallets buying or selling this market?"
  *
- * Reads:
- *   - BigQuery: trades (last 12h), market_snapshots (latest), wallets (accuracy)
+ * Data sources:
+ *   - BigQuery: trades (last 12h), market_snapshots (latest + 48h), wallets (accuracy)
  *   - Supabase: markets (title, category, end_date)
+ *   - Heisenberg API: Falcon Score leaderboard (enrichment layer, optional)
+ *
+ * Enrichment signals (computed from local data):
+ *   - Volume-price divergence (Edge 3)
+ *   - Liquidity vacuum detection (Edge 5)
  *
  * Writes:
  *   - BigQuery: market_cards (one row per market, upserted)
@@ -16,6 +18,7 @@
 
 import { bq } from '../core/bigquery.js';
 import { supabaseAdmin } from '../core/supabase.js';
+import { getFalconLeaderboard, type FalconWallet } from '../core/heisenberg-client.js';
 
 // ─── Types ───
 
@@ -66,7 +69,20 @@ interface MarketCard {
   smart_sell_volume: number;
   smart_wallet_count: number;
   top_smart_wallets: string; // JSON
+  volume_divergence: number | null;
+  spread_ratio: number | null;
+  depth_ratio: number | null;
+  liquidity_vacuum: boolean;
   computed_at: string;
+}
+
+// ─── Smart wallet with merged scoring ───
+
+interface SmartWallet {
+  address: string;
+  accuracy_score: number;
+  falcon_score: number | null;  // null if not in Falcon leaderboard
+  sample_size: number;
 }
 
 // ─── Constants ───
@@ -75,6 +91,9 @@ const ACCURACY_THRESHOLD = 0.55;
 const MIN_SAMPLE_SIZE = 3;
 const ID_BATCH = 200;
 const UPSERT_BATCH = 200;
+const DIVERGENCE_THRESHOLD = 5;
+const SPREAD_VACUUM_THRESHOLD = 2.0;
+const DEPTH_VACUUM_THRESHOLD = 0.5;
 
 // ─── Category classification ───
 
@@ -90,6 +109,72 @@ function classifyCategory(question: string, dbCategory: string | null): string {
   return dbCategory || 'other';
 }
 
+// ─── Merge local wallets with Falcon leaderboard ───
+
+async function buildSmartWalletPool(): Promise<{
+  pool: Map<string, SmartWallet>;
+  falconEnriched: boolean;
+}> {
+  // Local wallets (ground truth — always available)
+  const { data: localWallets, error: wErr } = await bq
+    .from('wallets')
+    .select('address, accuracy_score, accuracy_sample_size')
+    .gt('accuracy_score', ACCURACY_THRESHOLD)
+    .gte('accuracy_sample_size', MIN_SAMPLE_SIZE);
+
+  const pool = new Map<string, SmartWallet>();
+
+  for (const w of localWallets ?? []) {
+    pool.set(w.address, {
+      address: w.address,
+      accuracy_score: w.accuracy_score,
+      falcon_score: null,
+      sample_size: w.accuracy_sample_size,
+    });
+  }
+
+  if (wErr) {
+    console.warn(`[SmartMoney] Local wallet fetch warning: ${wErr.message}`);
+  }
+
+  // Heisenberg Falcon enrichment (optional — fails gracefully)
+  let falconEnriched = false;
+  try {
+    const falconWallets = await getFalconLeaderboard(200);
+
+    if (falconWallets && falconWallets.length > 0) {
+      falconEnriched = true;
+      console.log(`[SmartMoney] Falcon leaderboard: ${falconWallets.length} wallets loaded`);
+
+      for (const fw of falconWallets) {
+        const addr = fw.wallet_address;
+        const existing = pool.get(addr);
+
+        if (existing) {
+          // Wallet in both sources — add Falcon score
+          existing.falcon_score = fw.falcon_score;
+        } else {
+          // Wallet only in Falcon — add to pool with Falcon data
+          // Use Falcon win_rate as accuracy proxy if it's above threshold
+          const winRate = fw.win_rate ?? 0;
+          if (winRate >= ACCURACY_THRESHOLD || fw.falcon_score >= 50) {
+            pool.set(addr, {
+              address: addr,
+              accuracy_score: winRate,
+              falcon_score: fw.falcon_score,
+              sample_size: fw.total_trades ?? 0,
+            });
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.warn(`[SmartMoney] Falcon enrichment failed (falling back to local wallets): ${err instanceof Error ? err.message : err}`);
+  }
+
+  return { pool, falconEnriched };
+}
+
 // ─── Main ───
 
 export async function scanSmartMoney(): Promise<{
@@ -99,6 +184,9 @@ export async function scanSmartMoney(): Promise<{
     marketsScanned: number;
     marketsWithSignal: number;
     smartWalletsUsed: number;
+    falconEnriched: boolean;
+    vacuumsDetected: number;
+    divergencesDetected: number;
     duration_ms: number;
   };
 }> {
@@ -106,25 +194,10 @@ export async function scanSmartMoney(): Promise<{
   const errors: string[] = [];
 
   try {
-    // Step 1: Get all smart wallets (accuracy > threshold, enough samples)
-    const { data: smartWallets, error: wErr } = await bq
-      .from('wallets')
-      .select('address, accuracy_score, accuracy_sample_size')
-      .gt('accuracy_score', ACCURACY_THRESHOLD)
-      .gte('accuracy_sample_size', MIN_SAMPLE_SIZE);
-
-    if (wErr) {
-      errors.push(`Wallet fetch error: ${wErr.message}`);
-      return { cards: 0, errors, telemetry: { marketsScanned: 0, marketsWithSignal: 0, smartWalletsUsed: 0, duration_ms: Date.now() - startTime } };
-    }
-
-    const smartWalletMap = new Map<string, WalletRow>();
-    for (const w of smartWallets ?? []) {
-      smartWalletMap.set(w.address, w);
-    }
+    // Step 1: Build merged smart wallet pool (local + Falcon)
+    const { pool: smartWalletMap, falconEnriched } = await buildSmartWalletPool();
 
     if (smartWalletMap.size === 0) {
-      // No smart wallets yet — still build cards without signal
       console.log('[SmartMoney] No smart wallets found (accuracy pipeline may not have run yet). Building cards without signal.');
     }
 
@@ -132,6 +205,7 @@ export async function scanSmartMoney(): Promise<{
     const twelveHoursAgo = new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString();
     const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
     const fortyEightHoursAgo = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
 
     // Get latest snapshots (deduplicated, ordered by volume)
     const { data: latestSnaps } = await bq
@@ -152,12 +226,13 @@ export async function scanSmartMoney(): Promise<{
 
     const marketIds = [...latestByMarket.keys()];
     if (marketIds.length === 0) {
-      return { cards: 0, errors, telemetry: { marketsScanned: 0, marketsWithSignal: 0, smartWalletsUsed: smartWalletMap.size, duration_ms: Date.now() - startTime } };
+      return { cards: 0, errors, telemetry: { marketsScanned: 0, marketsWithSignal: 0, smartWalletsUsed: smartWalletMap.size, falconEnriched, vacuumsDetected: 0, divergencesDetected: 0, duration_ms: Date.now() - startTime } };
     }
 
-    // Step 3: Fetch in parallel — market metadata, 24h-ago snapshots, recent trades
+    // Step 3: Fetch in parallel — market metadata, 24h-ago snapshots, 7d-ago snapshots, recent trades
     const metaResults: MarketMeta[] = [];
     const olderSnaps: SnapshotRow[] = [];
+    const weekSnaps: SnapshotRow[] = [];
     const recentTrades: TradeRow[] = [];
 
     const promises: Promise<void>[] = [];
@@ -195,6 +270,21 @@ export async function scanSmartMoney(): Promise<{
       );
     }
 
+    // 7-day-ago snapshots for liquidity vacuum baseline
+    for (let i = 0; i < marketIds.length; i += ID_BATCH) {
+      const batch = marketIds.slice(i, i + ID_BATCH);
+      promises.push(
+        bq.from('market_snapshots')
+          .select('market_id, yes_price, volume_24h, liquidity, spread, timestamp')
+          .in('market_id', batch)
+          .gte('timestamp', sevenDaysAgo)
+          .lte('timestamp', fortyEightHoursAgo)
+          .then((r: { data: SnapshotRow[] | null }) => {
+            if (r.data) weekSnaps.push(...r.data);
+          })
+      );
+    }
+
     // Recent trades (last 12h) — only if we have smart wallets
     if (smartWalletMap.size > 0) {
       for (let i = 0; i < marketIds.length; i += ID_BATCH) {
@@ -220,16 +310,36 @@ export async function scanSmartMoney(): Promise<{
     }
 
     const price24hAgo = new Map<string, number>();
+    const volume24hAgo = new Map<string, number>();
     const seen24h = new Set<string>();
     for (const snap of olderSnaps) {
       if (!seen24h.has(snap.market_id)) {
         seen24h.add(snap.market_id);
         price24hAgo.set(snap.market_id, snap.yes_price);
+        volume24hAgo.set(snap.market_id, snap.volume_24h);
+      }
+    }
+
+    // 7-day averages for liquidity vacuum
+    const weekAvgSpread = new Map<string, { sum: number; count: number }>();
+    const weekAvgDepth = new Map<string, { sum: number; count: number }>();
+    for (const snap of weekSnaps) {
+      if (snap.spread != null) {
+        const s = weekAvgSpread.get(snap.market_id) ?? { sum: 0, count: 0 };
+        s.sum += Number(snap.spread);
+        s.count++;
+        weekAvgSpread.set(snap.market_id, s);
+      }
+      if (snap.liquidity != null) {
+        const d = weekAvgDepth.get(snap.market_id) ?? { sum: 0, count: 0 };
+        d.sum += Number(snap.liquidity);
+        d.count++;
+        weekAvgDepth.set(snap.market_id, d);
       }
     }
 
     // Group trades by market, filter to smart wallets
-    const smartTradesByMarket = new Map<string, { wallet: string; side: string; volume: number; accuracy: number }[]>();
+    const smartTradesByMarket = new Map<string, { wallet: string; side: string; volume: number; accuracy: number; falcon_score: number | null }[]>();
     for (const t of recentTrades) {
       const wallet = smartWalletMap.get(t.wallet_address);
       if (!wallet) continue;
@@ -239,6 +349,7 @@ export async function scanSmartMoney(): Promise<{
         side: t.side,
         volume: Number(t.size_usdc) || 0,
         accuracy: wallet.accuracy_score,
+        falcon_score: wallet.falcon_score,
       });
     }
 
@@ -246,6 +357,8 @@ export async function scanSmartMoney(): Promise<{
     const FOCUS = new Set(['politics', 'economics', 'geopolitics', 'crypto']);
     const cards: MarketCard[] = [];
     let marketsWithSignal = 0;
+    let vacuumsDetected = 0;
+    let divergencesDetected = 0;
 
     for (const marketId of marketIds) {
       const meta = metaByMarket.get(marketId);
@@ -261,7 +374,7 @@ export async function scanSmartMoney(): Promise<{
       const prevPrice = price24hAgo.get(marketId) ?? currentPrice;
       const priceChange = currentPrice - prevPrice;
 
-      // Smart money signal
+      // ── Smart money signal ──
       const smartTrades = smartTradesByMarket.get(marketId) ?? [];
       let smartBuyVolume = 0;
       let smartSellVolume = 0;
@@ -290,14 +403,64 @@ export async function scanSmartMoney(): Promise<{
         }
       }
 
-      // Top smart wallets (for display)
-      const walletAgg = new Map<string, { side: string; volume: number; accuracy: number }>();
+      // ── Volume-price divergence (Edge 3) ──
+      let volumeDivergence: number | null = null;
+      const prevVolume = volume24hAgo.get(marketId);
+      const currentVolume = Number(latest.volume_24h) || 0;
+
+      if (prevVolume != null && prevVolume > 0) {
+        const volumeChangePct = (currentVolume - prevVolume) / prevVolume;
+        const priceChangePct = prevPrice > 0 ? Math.abs(priceChange) / prevPrice : 0;
+        volumeDivergence = Math.round((volumeChangePct / Math.max(priceChangePct, 0.01)) * 100) / 100;
+
+        if (volumeDivergence > DIVERGENCE_THRESHOLD) {
+          divergencesDetected++;
+          // Boost confidence if smart wallets are present and volume is accumulating
+          if (smartWalletSet.size > 0 && signal !== 'NEUTRAL') {
+            signalConfidence = Math.min(1, signalConfidence * 1.2);
+          }
+        }
+      }
+
+      // ── Liquidity vacuum detection (Edge 5) ──
+      let spreadRatio: number | null = null;
+      let depthRatio: number | null = null;
+      let liquidityVacuum = false;
+
+      const currentSpread = latest.spread != null ? Number(latest.spread) : null;
+      const currentDepth = Number(latest.liquidity) || 0;
+
+      const avgSpreadEntry = weekAvgSpread.get(marketId);
+      const avgDepthEntry = weekAvgDepth.get(marketId);
+
+      if (currentSpread != null && avgSpreadEntry && avgSpreadEntry.count >= 3) {
+        const avgSpread = avgSpreadEntry.sum / avgSpreadEntry.count;
+        if (avgSpread > 0.001) {
+          spreadRatio = Math.round((currentSpread / avgSpread) * 100) / 100;
+        }
+      }
+
+      if (currentDepth > 0 && avgDepthEntry && avgDepthEntry.count >= 3) {
+        const avgDepth = avgDepthEntry.sum / avgDepthEntry.count;
+        if (avgDepth > 0) {
+          depthRatio = Math.round((currentDepth / avgDepth) * 100) / 100;
+        }
+      }
+
+      if ((spreadRatio != null && spreadRatio > SPREAD_VACUUM_THRESHOLD) ||
+          (depthRatio != null && depthRatio < DEPTH_VACUUM_THRESHOLD)) {
+        liquidityVacuum = true;
+        vacuumsDetected++;
+      }
+
+      // ── Top smart wallets (for display) ──
+      const walletAgg = new Map<string, { side: string; volume: number; accuracy: number; falcon_score: number | null }>();
       for (const t of smartTrades) {
         const existing = walletAgg.get(t.wallet);
         if (existing) {
           existing.volume += t.volume;
         } else {
-          walletAgg.set(t.wallet, { side: t.side, volume: t.volume, accuracy: t.accuracy });
+          walletAgg.set(t.wallet, { side: t.side, volume: t.volume, accuracy: t.accuracy, falcon_score: t.falcon_score });
         }
       }
 
@@ -307,6 +470,7 @@ export async function scanSmartMoney(): Promise<{
         .map(([address, data]) => ({
           address: `${address.slice(0, 6)}...${address.slice(-4)}`,
           accuracy: Math.round(data.accuracy * 100),
+          falcon_score: data.falcon_score,
           side: data.side,
           volume: Math.round(data.volume),
         }));
@@ -319,15 +483,19 @@ export async function scanSmartMoney(): Promise<{
         current_price: currentPrice,
         price_24h_ago: prevPrice,
         price_change: Math.round(priceChange * 10000) / 10000,
-        volume_24h: Number(latest.volume_24h) || 0,
-        liquidity: Number(latest.liquidity) || 0,
-        spread: latest.spread != null ? Number(latest.spread) : null,
+        volume_24h: currentVolume,
+        liquidity: currentDepth,
+        spread: currentSpread,
         signal,
         signal_confidence: signalConfidence,
         smart_buy_volume: Math.round(smartBuyVolume),
         smart_sell_volume: Math.round(smartSellVolume),
         smart_wallet_count: smartWalletSet.size,
         top_smart_wallets: JSON.stringify(topWallets),
+        volume_divergence: volumeDivergence,
+        spread_ratio: spreadRatio,
+        depth_ratio: depthRatio,
+        liquidity_vacuum: liquidityVacuum,
         computed_at: new Date().toISOString(),
       });
     }
@@ -354,6 +522,9 @@ export async function scanSmartMoney(): Promise<{
         marketsScanned: marketIds.length,
         marketsWithSignal,
         smartWalletsUsed: smartWalletMap.size,
+        falconEnriched,
+        vacuumsDetected,
+        divergencesDetected,
         duration_ms: Date.now() - startTime,
       },
     };
@@ -362,7 +533,7 @@ export async function scanSmartMoney(): Promise<{
     return {
       cards: 0,
       errors,
-      telemetry: { marketsScanned: 0, marketsWithSignal: 0, smartWalletsUsed: 0, duration_ms: Date.now() - startTime },
+      telemetry: { marketsScanned: 0, marketsWithSignal: 0, smartWalletsUsed: 0, falconEnriched: false, vacuumsDetected: 0, divergencesDetected: 0, duration_ms: Date.now() - startTime },
     };
   }
 }

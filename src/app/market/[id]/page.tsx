@@ -182,7 +182,7 @@ export default function MarketDetailPage() {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center gap-3">
         <p className="text-[#64748b]">{error || "Market not found"}</p>
-        <Link href="/" className="text-[#00d4ff] hover:underline text-sm">Return to terminal</Link>
+        <Link href="/terminal" className="text-[#00d4ff] hover:underline text-sm">Return to terminal</Link>
       </div>
     );
   }
@@ -196,7 +196,7 @@ export default function MarketDetailPage() {
       {/* Top Bar */}
       <div className="border-b border-[rgba(255,255,255,0.06)] bg-[#0a0e17]">
         <div className="max-w-[1600px] mx-auto px-4 flex items-center h-8 text-[11px] gap-4">
-          <Link href="/" className="flex items-center gap-1.5 text-[#64748b] hover:text-white transition-colors">
+          <Link href="/terminal" className="flex items-center gap-1.5 text-[#64748b] hover:text-white transition-colors">
             <ArrowLeft className="h-3 w-3" />
             <span className="tracking-wide uppercase">Terminal</span>
           </Link>

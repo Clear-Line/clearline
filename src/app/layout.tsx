@@ -5,8 +5,8 @@ import { Navbar } from "../components/Navbar";
 import { AppFooter } from "../components/AppFooter";
 
 export const metadata: Metadata = {
-  title: "Clearline Terminal",
-  description: "Prediction Market Intelligence — The Bloomberg Terminal for Polymarket",
+  title: "Clearline",
+  description: "Prediction market intelligence platform with a live terminal, smart-money alerts, and wallet tracking.",
 };
 
 export default function RootLayout({

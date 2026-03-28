@@ -28,7 +28,12 @@ interface SmartMoneyAlert {
   current_price: number;
   price_change: number;
   volume_24h: number;
-  top_wallets: { address: string; accuracy: number; side: string; volume: number }[];
+  top_wallets: { address: string; accuracy: number; falcon_score?: number | null; side: string; volume: number }[];
+  volume_divergence: number | null;
+  spread_ratio: number | null;
+  depth_ratio: number | null;
+  liquidity_vacuum: boolean;
+  badges: string[];
 }
 
 type FilterOption = "ALL" | "BUY" | "SELL";
@@ -75,6 +80,27 @@ function AlertCard({ alert }: { alert: SmartMoneyAlert }) {
           {formatTimeAgo(alert.detected_at)}
         </span>
       </div>
+
+      {/* Edge signal badges */}
+      {alert.badges && alert.badges.length > 0 && (
+        <div className="flex items-center gap-1.5 mb-2.5 flex-wrap">
+          {alert.badges.includes('HIGH_CONVICTION') && (
+            <span className="px-1.5 py-0.5 rounded text-[9px] font-bold tracking-wider uppercase bg-[#f59e0b]/15 text-[#f59e0b] border border-[#f59e0b]/20">
+              High Conviction
+            </span>
+          )}
+          {alert.badges.includes('VOLUME_ACCUMULATION') && (
+            <span className="px-1.5 py-0.5 rounded text-[9px] font-bold tracking-wider uppercase bg-[#8b5cf6]/15 text-[#8b5cf6] border border-[#8b5cf6]/20">
+              Volume Accumulation
+            </span>
+          )}
+          {alert.badges.includes('LIQUIDITY_WARNING') && (
+            <span className="px-1.5 py-0.5 rounded text-[9px] font-bold tracking-wider uppercase bg-[#ef4444]/15 text-[#ef4444] border border-[#ef4444]/20">
+              Liquidity Warning
+            </span>
+          )}
+        </div>
+      )}
 
       {/* Row 2: Market question */}
       <h3 className="text-white font-medium text-sm mb-3 leading-snug">
