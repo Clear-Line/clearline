@@ -26,32 +26,38 @@ function recategorize(question: string, dbCategory: string | null): string {
 }
 
 export async function GET(request: Request) {
-  const DEFAULT_LIMIT = 200;
-  const MAX_LIMIT = 1000;
+  const DEFAULT_LIMIT = 50;
+  const MAX_LIMIT = 200;
 
-  // Step 1: Get distinct market IDs with volume (paginate to beat Supabase 1000-row default)
-  // We query just market_id to minimize data, then fetch full snapshots per batch
+  const { searchParams } = new URL(request.url);
+  const rawLimit = Number(searchParams.get('limit') ?? DEFAULT_LIMIT);
+  const limit = Number.isFinite(rawLimit)
+    ? Math.max(1, Math.min(MAX_LIMIT, Math.floor(rawLimit)))
+    : DEFAULT_LIMIT;
+
+  // Step 1: Get top markets by volume directly (server-side sort + limit)
+  // Fetch 3x the limit to account for filtering (resolved, wrong category, etc.)
   const fortyEightHoursAgo = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
-  const allMarketIds = new Set<string>();
-  let snapOffset = 0;
-  const SNAP_PAGE = 1000;
+  const fetchCount = Math.min(limit * 3, MAX_LIMIT * 3);
 
-  // eslint-disable-next-line no-constant-condition
-  while (true) {
-    const { data: page } = await bq
-      .from('market_snapshots')
-      .select('market_id')
-      .gt('volume_24h', 0)
-      .gte('timestamp', fortyEightHoursAgo)
-      .range(snapOffset, snapOffset + SNAP_PAGE - 1);
+  const { data: topMarkets } = await bq
+    .from('market_snapshots')
+    .select('market_id, volume_24h')
+    .gt('volume_24h', 0)
+    .gte('timestamp', fortyEightHoursAgo)
+    .order('volume_24h', { ascending: false })
+    .limit(fetchCount);
 
-    if (!page || page.length === 0) break;
-    for (const row of page) allMarketIds.add(row.market_id);
-    if (page.length < SNAP_PAGE) break;
-    snapOffset += SNAP_PAGE;
+  // Deduplicate to get unique market IDs (BigQuery may return multiple snapshots per market)
+  const seenIds = new Set<string>();
+  const uniqueMarketIds: string[] = [];
+  for (const row of topMarkets ?? []) {
+    if (!seenIds.has(row.market_id)) {
+      seenIds.add(row.market_id);
+      uniqueMarketIds.push(row.market_id);
+    }
   }
 
-  const uniqueMarketIds = [...allMarketIds];
   if (uniqueMarketIds.length === 0) {
     return NextResponse.json({ markets: [], count: 0 });
   }
@@ -298,12 +304,6 @@ export async function GET(request: Request) {
     if (b.volume24h !== a.volume24h) return b.volume24h - a.volume24h;
     return Math.abs(b.change) - Math.abs(a.change);
   });
-
-  const { searchParams } = new URL(request.url);
-  const rawLimit = Number(searchParams.get('limit') ?? DEFAULT_LIMIT);
-  const limit = Number.isFinite(rawLimit)
-    ? Math.max(1, Math.min(MAX_LIMIT, Math.floor(rawLimit)))
-    : DEFAULT_LIMIT;
 
   const selected = cards.slice(0, limit);
 

@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, memo } from "react";
+import dynamic from "next/dynamic";
 import {
   Loader2,
   Activity,
@@ -15,7 +16,11 @@ import {
 } from "lucide-react";
 import { Market } from "../types/market";
 import { MarketCard } from "../components/MarketCard";
-import { InteractiveGlobe } from "../components/ui/interactive-globe";
+
+const InteractiveGlobe = dynamic(
+  () => import("../components/ui/interactive-globe").then((m) => m.InteractiveGlobe),
+  { ssr: false, loading: () => <div className="w-full aspect-square bg-[#0d1117] rounded-full animate-pulse" /> },
+);
 
 type SortOption = "highest-volume" | "biggest-movers" | "highest-odds" | "lowest-odds" | "highest-edge";
 
@@ -44,26 +49,30 @@ function formatDate(): string {
   });
 }
 
+/** Isolated clock component — re-renders every second without touching the rest of the page */
+const Clock = memo(function Clock() {
+  const [time, setTime] = useState("");
+  useEffect(() => {
+    setTime(formatTime());
+    const timer = setInterval(() => setTime(formatTime()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+  return <span className="text-[#64748b] font-mono">{time} EST</span>;
+});
+
 export default function Dashboard() {
   const [sortOption, setSortOption] = useState<SortOption>("highest-volume");
   const [markets, setMarkets] = useState<Market[]>([]);
   const [loading, setLoading] = useState(true);
   const [isLive, setIsLive] = useState(false);
   const [fetchError, setFetchError] = useState(false);
-  const [currentTime, setCurrentTime] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [showAll, setShowAll] = useState(false);
 
   useEffect(() => {
-    setCurrentTime(formatTime());
-    const timer = setInterval(() => setCurrentTime(formatTime()), 1000);
-    return () => clearInterval(timer);
-  }, []);
-
-  useEffect(() => {
     async function fetchMarkets() {
       try {
-        const res = await fetch("/api/markets?limit=1000");
+        const res = await fetch("/api/markets?limit=50");
         if (!res.ok) throw new Error("API error");
         const json = await res.json();
         if (json.markets && json.markets.length > 0) {
@@ -160,7 +169,7 @@ export default function Dashboard() {
                 {isLive ? "Live" : fetchError ? "Offline" : "Connecting..."}
               </span>
             </div>
-            <span className="text-[#64748b] font-mono">{currentTime} EST</span>
+            <Clock />
             <span className="text-[#475569]">{formatDate()}</span>
           </div>
           <div className="hidden sm:flex items-center gap-5 text-[#64748b]">
