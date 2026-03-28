@@ -5,6 +5,10 @@ import { bq } from '@/lib/bigquery';
 export const runtime = 'nodejs';
 const ID_BATCH = 200;
 
+// ── In-memory cache (refreshes every 2 minutes) ──
+let cachedResponse: { data: unknown; timestamp: number } | null = null;
+const CACHE_TTL_MS = 2 * 60 * 1000; // 2 minutes
+
 function classifyPoliticalSubcategory(question: string): 'presidential' | 'senate' | 'gubernatorial' | 'policy' {
   const q = question.toLowerCase();
   if (/president|presidential|white house|oval office/.test(q)) return 'presidential';
@@ -13,7 +17,6 @@ function classifyPoliticalSubcategory(question: string): 'presidential' | 'senat
   return 'policy';
 }
 
-/** Re-categorize at API level to catch markets the poller may have missed */
 function recategorize(question: string, dbCategory: string | null): string {
   if (dbCategory === 'politics' || dbCategory === 'economics' || dbCategory === 'geopolitics') {
     return dbCategory;
@@ -35,80 +38,144 @@ export async function GET(request: Request) {
     ? Math.max(1, Math.min(MAX_LIMIT, Math.floor(rawLimit)))
     : DEFAULT_LIMIT;
 
-  // Step 1: Get top markets by volume directly (server-side sort + limit)
-  // Fetch 3x the limit to account for filtering (resolved, wrong category, etc.)
-  const fortyEightHoursAgo = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
-  const fetchCount = Math.min(limit * 3, MAX_LIMIT * 3);
+  // Return cached response if fresh
+  if (cachedResponse && (Date.now() - cachedResponse.timestamp) < CACHE_TTL_MS) {
+    const cached = cachedResponse.data as { markets: unknown[]; total_available: number };
+    const selected = cached.markets.slice(0, limit);
+    return NextResponse.json({ markets: selected, count: selected.length, total_available: cached.total_available });
+  }
 
-  const { data: topMarkets } = await bq
+  const FOCUS = new Set(['politics', 'economics', 'geopolitics', 'crypto']);
+  const fortyEightHoursAgo = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
+
+  // ── Step 1: Get top volume market IDs from BigQuery (single fast query) ──
+  const { data: topSnaps } = await bq
     .from('market_snapshots')
     .select('market_id, volume_24h')
     .gt('volume_24h', 0)
     .gte('timestamp', fortyEightHoursAgo)
     .order('volume_24h', { ascending: false })
-    .limit(fetchCount);
+    .limit(10000);
 
-  // Deduplicate to get unique market IDs (BigQuery may return multiple snapshots per market)
   const seenIds = new Set<string>();
-  const uniqueMarketIds: string[] = [];
-  for (const row of topMarkets ?? []) {
+  const candidateIds: string[] = [];
+  for (const row of topSnaps ?? []) {
     if (!seenIds.has(row.market_id)) {
       seenIds.add(row.market_id);
-      uniqueMarketIds.push(row.market_id);
+      candidateIds.push(row.market_id);
     }
   }
 
-  if (uniqueMarketIds.length === 0) {
+  if (candidateIds.length === 0) {
     return NextResponse.json({ markets: [], count: 0 });
   }
 
-  // Step 2: Fetch latest + 24h-ago snapshots in parallel batches
-  type SnapRow = { market_id: string; yes_price: number; volume_24h: number; liquidity: number; unique_traders_24h: number | null; timestamp: string };
-  const allSnapshots: SnapRow[] = [];
-  const SNAP_BATCH = 150; // keep under 1000 rows per query (~5 snaps/market in 6h)
-  const dayAgoCutoff = new Date(Date.now() - 36 * 60 * 60 * 1000).toISOString();
-  const dayAgoEarliest = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
+  // ── Step 2: Get metadata + filter to focus categories (Supabase, parallel batches) ──
+  type MarketMeta = { condition_id: string; question: string; category: string | null; updated_at: string | null };
+  const metaPromises: Promise<MarketMeta[]>[] = [];
 
-  // Run all batches in parallel (each batch fires 2 queries concurrently)
-  const batchPromises = [];
-  for (let i = 0; i < uniqueMarketIds.length; i += SNAP_BATCH) {
-    const batch = uniqueMarketIds.slice(i, i + SNAP_BATCH);
-    batchPromises.push(
-      Promise.all([
-        bq
-          .from('market_snapshots')
-          .select('market_id, yes_price, volume_24h, liquidity, unique_traders_24h, timestamp')
-          .in('market_id', batch)
-          .not('volume_24h', 'is', null)
-          .gte('timestamp', fortyEightHoursAgo)
-          .order('timestamp', { ascending: false }),
-        bq
-          .from('market_snapshots')
-          .select('market_id, yes_price, volume_24h, liquidity, unique_traders_24h, timestamp')
-          .in('market_id', batch)
-          .not('volume_24h', 'is', null)
-          .lte('timestamp', dayAgoCutoff)
-          .gte('timestamp', dayAgoEarliest)
-          .order('timestamp', { ascending: false })
-          .limit(batch.length),
-      ]),
+  for (let i = 0; i < candidateIds.length; i += ID_BATCH) {
+    const batch = candidateIds.slice(i, i + ID_BATCH);
+    metaPromises.push(
+      Promise.resolve(
+        supabaseAdmin
+          .from('markets')
+          .select('condition_id, question, category, updated_at')
+          .in('condition_id', batch)
+          .eq('is_active', true)
+      ).then((res) => (res.data ?? []) as MarketMeta[])
     );
   }
 
-  const batchResults = await Promise.all(batchPromises);
-  for (const [recentRes, olderRes] of batchResults) {
-    if (recentRes.data) allSnapshots.push(...recentRes.data);
-    if (olderRes.data) allSnapshots.push(...olderRes.data);
+  const metaBatches = await Promise.all(metaPromises);
+  const metaByMarket = new Map<string, MarketMeta>();
+
+  for (const batch of metaBatches) {
+    for (const m of batch) {
+      const cat = recategorize(m.question, m.category);
+      if (FOCUS.has(cat)) {
+        metaByMarket.set(m.condition_id, { ...m, category: cat });
+      }
+    }
   }
+
+  // Take top N by volume order (candidateIds preserves volume ordering)
+  const focusIds = candidateIds.filter(id => metaByMarket.has(id)).slice(0, Math.min(limit * 3, MAX_LIMIT));
+
+  if (focusIds.length === 0) {
+    return NextResponse.json({ markets: [], count: 0 });
+  }
+
+  // ── Step 3: Fetch snapshots + analytics + edge ALL IN PARALLEL ──
+  const dayAgoCutoff = new Date(Date.now() - 36 * 60 * 60 * 1000).toISOString();
+  const dayAgoEarliest = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
+
+  // Build all queries upfront, run them all at once
+  type SnapRow = { market_id: string; yes_price: number; volume_24h: number; liquidity: number; unique_traders_24h: number | null; timestamp: string };
+
+  const allPromises: Promise<unknown>[] = [];
+  const recentSnapResults: SnapRow[][] = [];
+  const olderSnapResults: SnapRow[][] = [];
+  const analyticsResults: { market_id: string; is_publishable: boolean; coverage_score: number }[][] = [];
+  const edgeResults: { market_id: string; edge_score: number; edge_direction: string; market_regime: string }[][] = [];
+
+  for (let i = 0; i < focusIds.length; i += ID_BATCH) {
+    const batch = focusIds.slice(i, i + ID_BATCH);
+    const batchIdx = Math.floor(i / ID_BATCH);
+
+    // Recent snapshots
+    allPromises.push(
+      bq.from('market_snapshots')
+        .select('market_id, yes_price, volume_24h, liquidity, unique_traders_24h, timestamp')
+        .in('market_id', batch)
+        .gte('timestamp', fortyEightHoursAgo)
+        .order('timestamp', { ascending: false })
+        .then((r: { data: SnapRow[] | null }) => { recentSnapResults[batchIdx] = r.data ?? []; })
+    );
+
+    // 24h-ago snapshots
+    allPromises.push(
+      bq.from('market_snapshots')
+        .select('market_id, yes_price, volume_24h, liquidity, unique_traders_24h, timestamp')
+        .in('market_id', batch)
+        .lte('timestamp', dayAgoCutoff)
+        .gte('timestamp', dayAgoEarliest)
+        .order('timestamp', { ascending: false })
+        .limit(batch.length)
+        .then((r: { data: SnapRow[] | null }) => { olderSnapResults[batchIdx] = r.data ?? []; })
+    );
+
+    // Analytics
+    allPromises.push(
+      bq.from('market_analytics')
+        .select('market_id, is_publishable, coverage_score')
+        .in('market_id', batch)
+        .then((r: { data: any[] | null }) => { analyticsResults[batchIdx] = r.data ?? []; })
+    );
+
+    // Edge scores
+    allPromises.push(
+      bq.from('market_edge')
+        .select('market_id, edge_score, edge_direction, market_regime')
+        .in('market_id', batch)
+        .then((r: { data: any[] | null }) => { edgeResults[batchIdx] = r.data ?? []; })
+    );
+  }
+
+  await Promise.all(allPromises);
+
+  // ── Step 4: Process snapshots ──
+  const allSnapshots: SnapRow[] = [];
+  for (const batch of recentSnapResults) if (batch) allSnapshots.push(...batch);
+  for (const batch of olderSnapResults) if (batch) allSnapshots.push(...batch);
 
   if (allSnapshots.length === 0) {
     return NextResponse.json({ markets: [], count: 0 });
   }
 
-  // Group by market — for each market, pick the snapshot with the highest volume
   const latestByMarket = new Map<string, { yes_price: number; volume_24h: number; liquidity: number; unique_traders_24h: number | null; timestamp: string }>();
   const price24hAgoByMarket = new Map<string, { yes_price: number }>();
-  const snapsByMarket = new Map<string, typeof allSnapshots>();
+  const snapsByMarket = new Map<string, SnapRow[]>();
 
   for (const snap of allSnapshots) {
     if (!snapsByMarket.has(snap.market_id)) snapsByMarket.set(snap.market_id, []);
@@ -119,10 +186,8 @@ export async function GET(request: Request) {
   const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 
   for (const [marketId, marketSnaps] of snapsByMarket.entries()) {
-    // Sort by timestamp desc to get latest first
     marketSnaps.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
 
-    // Use the latest snapshot but pick volume from the snapshot with the highest volume
     const latest = marketSnaps[0];
     const bestVolSnap = marketSnaps.reduce((best, s) =>
       (s.volume_24h ?? 0) > (best.volume_24h ?? 0) ? s : best, marketSnaps[0]);
@@ -135,19 +200,16 @@ export async function GET(request: Request) {
       timestamp: latest.timestamp,
     });
 
-    // Find the snapshot closest to 24h ago for real 24h change
-    let best24hSnap: (typeof marketSnaps)[0] | null = null;
+    let best24hSnap: SnapRow | null = null;
     let bestTimeDiff = Infinity;
     for (const s of marketSnaps) {
       const age = now - new Date(s.timestamp).getTime();
       const diff = Math.abs(age - ONE_DAY_MS);
-      // Accept snapshots between 12h and 36h ago, prefer closest to 24h
       if (age >= ONE_DAY_MS * 0.5 && age <= ONE_DAY_MS * 1.5 && diff < bestTimeDiff) {
         bestTimeDiff = diff;
         best24hSnap = s;
       }
     }
-    // Fallback: if no snapshot near 24h, use the oldest snapshot we have
     if (!best24hSnap && marketSnaps.length > 1) {
       best24hSnap = marketSnaps[marketSnaps.length - 1];
     }
@@ -156,109 +218,52 @@ export async function GET(request: Request) {
     }
   }
 
-  // Fetch market metadata
-  const trackedMarketIds = [...latestByMarket.keys()];
-  const markets: Array<{ condition_id: string; question: string; category: string | null; updated_at: string | null }> = [];
-
-  for (let i = 0; i < trackedMarketIds.length; i += ID_BATCH) {
-    const batch = trackedMarketIds.slice(i, i + ID_BATCH);
-    const { data, error: mErr } = await supabaseAdmin
-      .from('markets')
-      .select('condition_id, question, category, updated_at')
-      .in('condition_id', batch)
-      .eq('is_active', true);
-
-    if (mErr) {
-      return NextResponse.json(
-        { error: `Markets query failed at batch ${i}: ${mErr.message}` },
-        { status: 500 },
-      );
-    }
-
-    if (data?.length) markets.push(...data);
-  }
-
-  // Count unique wallets per market from trades table
-  const traderCountByMarket = new Map<string, number>();
-  const marketIds = markets.map((m) => m.condition_id);
-  for (let i = 0; i < marketIds.length; i += ID_BATCH) {
-    const batch = marketIds.slice(i, i + ID_BATCH);
-    const { data: tradeCounts } = await bq
-      .from('trades')
-      .select('market_id, wallet_address')
-      .in('market_id', batch);
-
-    if (tradeCounts) {
-      const byMarket = new Map<string, Set<string>>();
-      for (const t of tradeCounts) {
-        if (!byMarket.has(t.market_id)) byMarket.set(t.market_id, new Set());
-        byMarket.get(t.market_id)!.add(t.wallet_address);
-      }
-      for (const [mid, wallets] of byMarket) {
-        traderCountByMarket.set(mid, wallets.size);
-      }
-    }
-  }
-
-  // Fetch analytics publishability for all tracked markets
+  // Index analytics + edge
   const analyticsPublishable = new Map<string, { is_publishable: boolean; coverage_score: number }>();
   const edgeByMarket = new Map<string, { edge_score: number; edge_direction: string; market_regime: string }>();
-  const analyticsMarketIds = [...latestByMarket.keys()];
-  for (let i = 0; i < analyticsMarketIds.length; i += ID_BATCH) {
-    const batch = analyticsMarketIds.slice(i, i + ID_BATCH);
-    const [analyticsRes, edgeRes] = await Promise.all([
-      bq.from('market_analytics').select('market_id, is_publishable, coverage_score').in('market_id', batch),
-      bq.from('market_edge').select('market_id, edge_score, edge_direction, market_regime').in('market_id', batch),
-    ]);
-    if (analyticsRes.data) {
-      for (const a of analyticsRes.data) {
-        analyticsPublishable.set(a.market_id, { is_publishable: a.is_publishable ?? false, coverage_score: a.coverage_score ?? 0 });
-      }
+
+  for (const batch of analyticsResults) {
+    if (!batch) continue;
+    for (const a of batch) {
+      analyticsPublishable.set(a.market_id, { is_publishable: a.is_publishable ?? false, coverage_score: a.coverage_score ?? 0 });
     }
-    if (edgeRes.data) {
-      for (const e of edgeRes.data) {
-        edgeByMarket.set(e.market_id, { edge_score: e.edge_score ?? 0, edge_direction: e.edge_direction ?? 'neutral', market_regime: e.market_regime ?? 'unknown' });
-      }
+  }
+  for (const batch of edgeResults) {
+    if (!batch) continue;
+    for (const e of batch) {
+      edgeByMarket.set(e.market_id, { edge_score: e.edge_score ?? 0, edge_direction: e.edge_direction ?? 'neutral', market_regime: e.market_regime ?? 'unknown' });
     }
   }
 
-  // Build market card DTOs — only politics, economics, geopolitics
-  const FOCUS = new Set(['politics', 'economics', 'geopolitics', 'crypto']);
+  // ── Step 5: Build market cards ──
   const cards = [];
 
-  for (const m of markets) {
-    const category = recategorize(m.question, m.category);
-    if (!FOCUS.has(category)) continue;
+  for (const id of focusIds) {
+    const m = metaByMarket.get(id);
+    const latest = latestByMarket.get(id);
+    if (!m || !latest) continue;
 
-    const latest = latestByMarket.get(m.condition_id)!;
-    const prev24h = price24hAgoByMarket.get(m.condition_id);
-
+    const category = m.category || 'other';
     const currentOdds = Number(latest.yes_price) || 0;
-
-    // Skip resolved/settled markets (at 0% or 100%)
     if (currentOdds <= 0.01 || currentOdds >= 0.99) continue;
 
+    const prev24h = price24hAgoByMarket.get(id);
     const previousOdds = prev24h ? Number(prev24h.yes_price) : currentOdds;
     const change = currentOdds - previousOdds;
     const absDelta = Math.abs(change);
     const volume = Number(latest.volume_24h) || 0;
     const liquidity = Number(latest.liquidity) || 0;
-    const traders = traderCountByMarket.get(m.condition_id) ?? null;
+    const traders = latest.unique_traders_24h ?? null;
 
-    // Compute numeric confidence score (0-100) based on real signals
-    // Factors: volume strength, price movement, liquidity depth
-    const volScore = Math.min(volume / 500_000, 1) * 35;       // up to 35 pts for volume
-    const moveScore = Math.min(absDelta / 0.10, 1) * 30;       // up to 30 pts for price movement
-    const liqScore = Math.min(liquidity / 1_000_000, 1) * 20;  // up to 20 pts for liquidity
-    const traderScore = traders ? Math.min(traders / 500, 1) * 15 : 5; // up to 15 pts for unique traders
+    const volScore = Math.min(volume / 500_000, 1) * 35;
+    const moveScore = Math.min(absDelta / 0.10, 1) * 30;
+    const liqScore = Math.min(liquidity / 1_000_000, 1) * 20;
+    const traderScore = traders ? Math.min(traders / 500, 1) * 15 : 5;
     const confidenceScore = Math.round(volScore + moveScore + liqScore + traderScore);
 
     let confidence: 'high' | 'medium' | 'low' = 'low';
-    if (confidenceScore >= 60) {
-      confidence = 'high';
-    } else if (confidenceScore >= 30) {
-      confidence = 'medium';
-    }
+    if (confidenceScore >= 60) confidence = 'high';
+    else if (confidenceScore >= 30) confidence = 'medium';
 
     const section = category === 'politics' ? 'political'
       : category === 'geopolitics' ? 'geopolitics'
@@ -270,11 +275,11 @@ export async function GET(request: Request) {
       : category === 'crypto' ? 'crypto'
       : 'economic';
 
-    const ap = analyticsPublishable.get(m.condition_id);
-    const ed = edgeByMarket.get(m.condition_id);
+    const ap = analyticsPublishable.get(id);
+    const ed = edgeByMarket.get(id);
 
     cards.push({
-      id: m.condition_id,
+      id,
       title: m.question,
       category: uiCategory,
       section,
@@ -299,11 +304,8 @@ export async function GET(request: Request) {
     });
   }
 
-  // Sort by volume (hottest markets first)
-  cards.sort((a, b) => {
-    if (b.volume24h !== a.volume24h) return b.volume24h - a.volume24h;
-    return Math.abs(b.change) - Math.abs(a.change);
-  });
+  // Cache the full result set (sliced per-request by limit)
+  cachedResponse = { data: { markets: cards, total_available: cards.length }, timestamp: Date.now() };
 
   const selected = cards.slice(0, limit);
 
