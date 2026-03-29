@@ -201,10 +201,10 @@ export async function scanSmartMoney(): Promise<{
     }
 
     // Step 2: Get active markets with recent volume
-    const twelveHoursAgo = new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString();
+    const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+    const fourHoursAgo = new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString();
+    const eightHoursAgo = new Date(Date.now() - 8 * 60 * 60 * 1000).toISOString();
     const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-    const fortyEightHoursAgo = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
-    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
 
     // Get latest snapshot per market — deduplicated at the SQL level
     // This returns one row per market (the most recent snapshot), ordered by volume
@@ -257,15 +257,15 @@ export async function scanSmartMoney(): Promise<{
       );
     }
 
-    // 24h-ago snapshots for price change
+    // Older snapshots for price change (4-8h ago window)
     for (let i = 0; i < marketIds.length; i += ID_BATCH) {
       const batch = marketIds.slice(i, i + ID_BATCH);
       promises.push(
         bq.from('market_snapshots')
           .select('market_id, yes_price, volume_24h, liquidity, spread, timestamp')
           .in('market_id', batch)
-          .lte('timestamp', twentyFourHoursAgo)
-          .gte('timestamp', fortyEightHoursAgo)
+          .lte('timestamp', fourHoursAgo)
+          .gte('timestamp', eightHoursAgo)
           .order('timestamp', { ascending: false })
           .limit(batch.length)
           .then((r: { data: SnapshotRow[] | null }) => {
@@ -274,7 +274,7 @@ export async function scanSmartMoney(): Promise<{
       );
     }
 
-    // 7-day avg spread/depth for liquidity vacuum — aggregate at SQL level
+    // Recent avg spread/depth for liquidity vacuum — aggregate at SQL level (4-24h window)
     {
       const dataset = `${process.env.GCP_PROJECT_ID}.${process.env.BQ_DATASET || 'polymarket'}`;
       promises.push(
@@ -284,10 +284,10 @@ export async function scanSmartMoney(): Promise<{
                   AVG(liquidity) as avg_liquidity,
                   COUNT(*) as snap_count
            FROM \`${dataset}.market_snapshots\`
-           WHERE timestamp >= @weekAgo AND timestamp < @cutoff48h
+           WHERE timestamp >= @windowStart AND timestamp < @windowEnd
            GROUP BY market_id
            HAVING COUNT(*) >= 3`,
-          { weekAgo: sevenDaysAgo, cutoff48h: fortyEightHoursAgo }
+          { windowStart: twentyFourHoursAgo, windowEnd: fourHoursAgo }
         ).then((r) => {
           if (r.data) {
             for (const row of r.data) {
@@ -311,7 +311,7 @@ export async function scanSmartMoney(): Promise<{
            FROM \`${dataset}.trades\`
            WHERE timestamp >= @cutoff
              AND wallet_address IN UNNEST(@wallets)`,
-          { cutoff: twelveHoursAgo, wallets: walletAddresses }
+          { cutoff: twoHoursAgo, wallets: walletAddresses }
         ).then((r) => {
           if (r.data) recentTrades.push(...r.data);
           if (r.error) errors.push(`Trade fetch: ${r.error.message}`);

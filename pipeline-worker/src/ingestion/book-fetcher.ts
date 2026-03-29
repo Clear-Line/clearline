@@ -91,13 +91,14 @@ export async function snapshotBooks(): Promise<{ updated: number; errors: string
   const errors: string[] = [];
   let updated = 0;
 
-  // Get top markets by volume from recent snapshots (no cap)
+  // Get top markets by volume from recent snapshots
   const { data: topSnaps } = await bq
     .from('market_snapshots')
     .select('market_id, volume_24h')
     .gt('volume_24h', 0)
     .gte('timestamp', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString())
-    .order('volume_24h', { ascending: false });
+    .order('volume_24h', { ascending: false })
+    .limit(2000);
 
   const topMarketIds = [...new Set((topSnaps ?? []).map((s: { market_id: string }) => s.market_id))];
 

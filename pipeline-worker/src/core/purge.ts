@@ -1,11 +1,11 @@
 /**
  * Purge old data from BigQuery to stay within free tier limits.
- * Deletes snapshots and trades older than 14 days.
+ * Deletes snapshots and trades older than 3 days.
  */
 
 import { bq } from './bigquery.js';
 
-const RETENTION_DAYS = 14;
+const RETENTION_DAYS = 3;
 
 export async function purgeOldData(): Promise<{
   snapshotsDeleted: number;

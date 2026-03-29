@@ -43,18 +43,18 @@ console.log('');
 
 // ─── Register Jobs ───
 
-// Ingestion: every 5 minutes
-registerJob('market-discovery', '*/5 * * * *', async () => {
+// Ingestion: every 15 minutes (reduced from 5m to cut BigQuery costs)
+registerJob('market-discovery', '*/15 * * * *', async () => {
   const result = await pollMarkets();
   console.log(`  -> Markets upserted: ${result.upserted}, errors: ${result.errors.length}`);
 });
 
-registerJob('book-fetcher', '*/5 * * * *', async () => {
+registerJob('book-fetcher', '*/15 * * * *', async () => {
   const result = await snapshotBooks();
   console.log(`  -> Books updated: ${result.updated}, errors: ${result.errors.length}`);
 });
 
-registerJob('trade-fetcher', '*/5 * * * *', async () => {
+registerJob('trade-fetcher', '*/15 * * * *', async () => {
   const result = await pollTrades();
   console.log(`  -> Trades inserted: ${result.inserted}, markets: ${result.telemetry.marketsSelected}`);
 });
@@ -70,8 +70,8 @@ registerJob('wallet-profiler', '*/30 * * * *', async () => {
   console.log(`  -> Wallets profiled: ${result.updated}, errors: ${result.errors.length}`);
 });
 
-// Intelligence: every 10 minutes — builds market_cards table
-registerJob('smart-money-scanner', '*/10 * * * *', async () => {
+// Intelligence: every 30 minutes — builds market_cards table
+registerJob('smart-money-scanner', '*/30 * * * *', async () => {
   const result = await scanSmartMoney();
   const t = result.telemetry;
   console.log(`  -> Cards: ${result.cards}, signals: ${t.marketsWithSignal}, wallets: ${t.smartWalletsUsed}${t.falconEnriched ? ' (Falcon enriched)' : ''}`);
@@ -80,8 +80,8 @@ registerJob('smart-money-scanner', '*/10 * * * *', async () => {
   if (result.errors.length > 0) console.log(`  -> Errors: ${result.errors.slice(0, 3).join('; ')}`);
 });
 
-// Maintenance: daily purge of old data (run at 3am UTC)
-registerJob('data-purge', '0 3 * * *', async () => {
+// Maintenance: purge old data every 6 hours to keep table sizes small
+registerJob('data-purge', '0 */6 * * *', async () => {
   const result = await purgeOldData();
   console.log(`  -> Purged: ${result.snapshotsDeleted} snapshots, ${result.tradesDeleted} trades`);
   if (result.errors.length > 0) console.log(`  -> Purge errors: ${result.errors.join('; ')}`);
