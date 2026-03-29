@@ -1,5 +1,4 @@
 import { NextResponse } from 'next/server';
-import { supabaseAdmin } from '@/lib/supabase';
 import { bq } from '@/lib/bigquery';
 
 export const runtime = 'nodejs';
@@ -17,7 +16,7 @@ export async function GET(
 
   // Fetch market metadata + market card + snapshots + trades in parallel
   const [marketRes, cardRes, snapshotsRes, tradesRes] = await Promise.all([
-    supabaseAdmin
+    bq
       .from('markets')
       .select('condition_id, question, category, outcomes, start_date, end_date, is_active, updated_at')
       .eq('condition_id', id)
@@ -145,7 +144,7 @@ export async function GET(
     lastUpdated: latest?.timestamp ?? market.updated_at,
     startDate: market.start_date,
     endDate: market.end_date,
-    outcomes: market.outcomes,
+    outcomes: typeof market.outcomes === 'string' ? JSON.parse(market.outcomes) : market.outcomes,
     chartData,
     volumeProfile: {
       totalVolume,

@@ -5,7 +5,6 @@
  * Adapted for Railway worker — no time budget or market caps.
  */
 
-import { supabaseAdmin } from '../core/supabase.js';
 import { bq } from '../core/bigquery.js';
 import { fetchOrderBook } from '../core/polymarket-client.js';
 import { dirtyTracker } from '../core/dirty-tracker.js';
@@ -106,12 +105,12 @@ export async function snapshotBooks(): Promise<{ updated: number; errors: string
     return { updated: 0, errors: ['No recent snapshots with volume found'] };
   }
 
-  // Fetch CLOB token IDs from Supabase for these markets only
+  // Fetch CLOB token IDs from BigQuery for these markets
   const ID_BATCH_SIZE = 200;
   const markets: { condition_id: string; clob_token_ids: string[]; outcomes: string[] }[] = [];
   for (let i = 0; i < topMarketIds.length; i += ID_BATCH_SIZE) {
     const batch = topMarketIds.slice(i, i + ID_BATCH_SIZE);
-    const { data, error: mktError } = await supabaseAdmin
+    const { data, error: mktError } = await bq
       .from('markets')
       .select('condition_id, clob_token_ids, outcomes')
       .in('condition_id', batch)
@@ -121,7 +120,16 @@ export async function snapshotBooks(): Promise<{ updated: number; errors: string
       errors.push(`Failed to fetch markets batch ${i}: ${mktError.message}`);
       continue;
     }
-    if (data) markets.push(...data);
+    // Parse JSON string fields from BigQuery
+    if (data) {
+      for (const m of data) {
+        markets.push({
+          condition_id: m.condition_id,
+          clob_token_ids: typeof m.clob_token_ids === 'string' ? JSON.parse(m.clob_token_ids) : m.clob_token_ids ?? [],
+          outcomes: typeof m.outcomes === 'string' ? JSON.parse(m.outcomes) : m.outcomes ?? [],
+        });
+      }
+    }
   }
 
   if (markets.length === 0) {

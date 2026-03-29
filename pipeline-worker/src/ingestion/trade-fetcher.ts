@@ -11,7 +11,6 @@
  *   - Richer telemetry for observability
  */
 
-import { supabaseAdmin } from '../core/supabase.js';
 import { bq } from '../core/bigquery.js';
 import { fetchMarketTradesPaginated } from '../core/polymarket-client.js';
 import { dirtyTracker } from '../core/dirty-tracker.js';
@@ -69,12 +68,12 @@ export async function pollTrades(): Promise<{
     }
   }
 
-  // Fetch market metadata, only active ones (no category filter)
+  // Fetch market metadata from BigQuery, only active ones
   const ID_BATCH = 200;
   const markets: { condition_id: string }[] = [];
   for (let i = 0; i < volMarketIds.length; i += ID_BATCH) {
     const batch = volMarketIds.slice(i, i + ID_BATCH);
-    const { data, error: batchErr } = await supabaseAdmin
+    const { data, error: batchErr } = await bq
       .from('markets')
       .select('condition_id')
       .in('condition_id', batch)

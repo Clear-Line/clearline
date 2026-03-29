@@ -6,7 +6,6 @@
  * Adapted for Railway worker — no time budget or market caps.
  */
 
-import { supabaseAdmin } from '../core/supabase.js';
 import { bq } from '../core/bigquery.js';
 import { fetchActiveMarkets, GammaMarket } from '../core/polymarket-client.js';
 import { dirtyTracker } from '../core/dirty-tracker.js';
@@ -84,8 +83,8 @@ export async function pollMarkets(): Promise<{ upserted: number; errors: string[
       slug: m.slug || null,
       event_id: m.eventId || null,
       category: categorizeMarket(m.question, m.tags),
-      outcomes,
-      clob_token_ids: clobTokenIds,
+      outcomes: JSON.stringify(outcomes),
+      clob_token_ids: JSON.stringify(clobTokenIds),
       start_date: m.startDate || null,
       end_date: m.endDate || null,
       is_active: m.active && !m.closed,
@@ -121,7 +120,7 @@ export async function pollMarkets(): Promise<{ upserted: number; errors: string[
 
   for (let i = 0; i < marketRows.length; i += BATCH_SIZE) {
     const batch = marketRows.slice(i, i + BATCH_SIZE);
-    const { error } = await supabaseAdmin
+    const { error } = await bq
       .from('markets')
       .upsert(batch, { onConflict: 'condition_id' });
 

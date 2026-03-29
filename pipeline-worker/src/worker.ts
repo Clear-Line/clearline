@@ -22,6 +22,10 @@ import { profileWallets } from './enrichment/wallet-profiler.js';
 // ─── Intelligence Layer ───
 import { scanSmartMoney } from './intelligence/smart-money-scanner.js';
 
+// ─── Maintenance ───
+import { ensureTables } from './core/ensure-tables.js';
+import { purgeOldData } from './core/purge.js';
+
 // ─── Health endpoint for Railway ───
 const PORT = parseInt(process.env.PORT || '3000', 10);
 http.createServer((_req, res) => {
@@ -76,6 +80,13 @@ registerJob('smart-money-scanner', '*/10 * * * *', async () => {
   if (result.errors.length > 0) console.log(`  -> Errors: ${result.errors.slice(0, 3).join('; ')}`);
 });
 
+// Maintenance: daily purge of old data (run at 3am UTC)
+registerJob('data-purge', '0 3 * * *', async () => {
+  const result = await purgeOldData();
+  console.log(`  -> Purged: ${result.snapshotsDeleted} snapshots, ${result.tradesDeleted} trades`);
+  if (result.errors.length > 0) console.log(`  -> Purge errors: ${result.errors.join('; ')}`);
+});
+
 // ─── Start Scheduler ───
 
 startScheduler();
@@ -86,6 +97,9 @@ async function runInitialPipeline(): Promise<void> {
   console.log('\n[Worker] Running initial pipeline cycle...\n');
 
   try {
+    // Ensure BigQuery tables exist before any pipeline work
+    await ensureTables();
+
     console.log('[1/4] Market discovery...');
     const markets = await pollMarkets();
     console.log(`  -> ${markets.upserted} markets upserted`);

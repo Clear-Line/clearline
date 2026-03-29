@@ -496,4 +496,21 @@ export const bq = {
     return new QueryBuilder<T>(table);
   },
   rpc,
+  /** Run a raw SQL query and return rows with Date→ISO and BigQueryInt→number coercion. */
+  async rawQuery<T = any>(sql: string, params: Record<string, unknown> = {}): Promise<{ data: T[] | null; error: { message: string } | null }> {
+    try {
+      const client = getClient();
+      const [rows] = await client.query({ query: sql, params, types: {} });
+      const data = (rows as any[]).map((row) => {
+        const out: any = {};
+        for (const [k, v] of Object.entries(row)) {
+          out[k] = v instanceof Date ? v.toISOString() : (v as { value?: unknown })?.value !== undefined ? (v as { value: unknown }).value : v;
+        }
+        return out;
+      }) as T[];
+      return { data, error: null };
+    } catch (err: unknown) {
+      return { data: null, error: { message: err instanceof Error ? err.message : String(err) } };
+    }
+  },
 };

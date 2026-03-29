@@ -17,7 +17,6 @@
  */
 
 import { bq } from '../core/bigquery.js';
-import { supabaseAdmin } from '../core/supabase.js';
 import { getFalconLeaderboard, type FalconWallet } from '../core/heisenberg-client.js';
 
 // ─── Types ───
@@ -207,21 +206,27 @@ export async function scanSmartMoney(): Promise<{
     const fortyEightHoursAgo = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
     const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
 
-    // Get latest snapshots (deduplicated, ordered by volume)
-    const { data: latestSnaps } = await bq
-      .from('market_snapshots')
-      .select('market_id, yes_price, volume_24h, liquidity, spread, timestamp')
-      .gte('timestamp', twentyFourHoursAgo)
-      .gt('volume_24h', 0)
-      .order('volume_24h', { ascending: false })
-      .limit(5000);
+    // Get latest snapshot per market — deduplicated at the SQL level
+    // This returns one row per market (the most recent snapshot), ordered by volume
+    const { data: dedupedSnaps, error: snapErr } = await bq.rawQuery<SnapshotRow>(`
+      SELECT market_id, yes_price, volume_24h, liquidity, spread, timestamp
+      FROM (
+        SELECT *, ROW_NUMBER() OVER (PARTITION BY market_id ORDER BY timestamp DESC) AS rn
+        FROM \`${process.env.GCP_PROJECT_ID}.${process.env.BQ_DATASET || 'polymarket'}.market_snapshots\`
+        WHERE timestamp >= @cutoff AND volume_24h > 0
+      )
+      WHERE rn = 1
+      ORDER BY volume_24h DESC
+      LIMIT 2000
+    `, { cutoff: twentyFourHoursAgo });
 
-    // Deduplicate: keep latest per market
+    if (snapErr) {
+      errors.push(`Snapshot fetch error: ${snapErr.message}`);
+    }
+
     const latestByMarket = new Map<string, SnapshotRow>();
-    for (const snap of latestSnaps ?? []) {
-      if (!latestByMarket.has(snap.market_id)) {
-        latestByMarket.set(snap.market_id, snap);
-      }
+    for (const snap of dedupedSnaps ?? []) {
+      latestByMarket.set(snap.market_id, snap);
     }
 
     const marketIds = [...latestByMarket.keys()];
@@ -229,27 +234,26 @@ export async function scanSmartMoney(): Promise<{
       return { cards: 0, errors, telemetry: { marketsScanned: 0, marketsWithSignal: 0, smartWalletsUsed: smartWalletMap.size, falconEnriched, vacuumsDetected: 0, divergencesDetected: 0, duration_ms: Date.now() - startTime } };
     }
 
-    // Step 3: Fetch in parallel — market metadata, 24h-ago snapshots, 7d-ago snapshots, recent trades
+    // Step 3: Fetch in parallel — market metadata, 24h-ago snapshots, 7d avg, recent trades
     const metaResults: MarketMeta[] = [];
     const olderSnaps: SnapshotRow[] = [];
-    const weekSnaps: SnapshotRow[] = [];
     const recentTrades: TradeRow[] = [];
+    const weekAvgSpread = new Map<string, { sum: number; count: number }>();
+    const weekAvgDepth = new Map<string, { sum: number; count: number }>();
 
     const promises: Promise<void>[] = [];
 
-    // Market metadata from Supabase (batched)
+    // Market metadata from BigQuery (batched — no is_active filter to maximize cards)
     for (let i = 0; i < marketIds.length; i += ID_BATCH) {
       const batch = marketIds.slice(i, i + ID_BATCH);
       promises.push(
-        Promise.resolve(
-          supabaseAdmin
-            .from('markets')
-            .select('condition_id, question, category, end_date')
-            .in('condition_id', batch)
-            .eq('is_active', true)
-        ).then((res: { data: MarketMeta[] | null }) => {
-          if (res.data) metaResults.push(...res.data);
-        })
+        bq
+          .from('markets')
+          .select('condition_id, question, category, end_date')
+          .in('condition_id', batch)
+          .then((res: { data: MarketMeta[] | null }) => {
+            if (res.data) metaResults.push(...res.data);
+          })
       );
     }
 
@@ -270,35 +274,49 @@ export async function scanSmartMoney(): Promise<{
       );
     }
 
-    // 7-day-ago snapshots for liquidity vacuum baseline
-    for (let i = 0; i < marketIds.length; i += ID_BATCH) {
-      const batch = marketIds.slice(i, i + ID_BATCH);
+    // 7-day avg spread/depth for liquidity vacuum — aggregate at SQL level
+    {
+      const dataset = `${process.env.GCP_PROJECT_ID}.${process.env.BQ_DATASET || 'polymarket'}`;
       promises.push(
-        bq.from('market_snapshots')
-          .select('market_id, yes_price, volume_24h, liquidity, spread, timestamp')
-          .in('market_id', batch)
-          .gte('timestamp', sevenDaysAgo)
-          .lte('timestamp', fortyEightHoursAgo)
-          .then((r: { data: SnapshotRow[] | null }) => {
-            if (r.data) weekSnaps.push(...r.data);
-          })
+        bq.rawQuery<{ market_id: string; avg_spread: number; avg_liquidity: number; snap_count: number }>(
+          `SELECT market_id,
+                  AVG(spread) as avg_spread,
+                  AVG(liquidity) as avg_liquidity,
+                  COUNT(*) as snap_count
+           FROM \`${dataset}.market_snapshots\`
+           WHERE timestamp >= @weekAgo AND timestamp < @cutoff48h
+           GROUP BY market_id
+           HAVING COUNT(*) >= 3`,
+          { weekAgo: sevenDaysAgo, cutoff48h: fortyEightHoursAgo }
+        ).then((r) => {
+          if (r.data) {
+            for (const row of r.data) {
+              weekAvgSpread.set(row.market_id, { sum: Number(row.avg_spread) * Number(row.snap_count), count: Number(row.snap_count) });
+              weekAvgDepth.set(row.market_id, { sum: Number(row.avg_liquidity) * Number(row.snap_count), count: Number(row.snap_count) });
+            }
+          }
+          if (r.error) errors.push(`Week avg fetch: ${r.error.message}`);
+        })
       );
     }
 
-    // Recent trades (last 12h) — only if we have smart wallets
+    // Recent trades (last 12h) — filter to smart wallets at SQL level to avoid pulling 100K+ rows
     if (smartWalletMap.size > 0) {
-      for (let i = 0; i < marketIds.length; i += ID_BATCH) {
-        const batch = marketIds.slice(i, i + ID_BATCH);
-        promises.push(
-          bq.from('trades')
-            .select('market_id, wallet_address, side, size_usdc, timestamp')
-            .in('market_id', batch)
-            .gte('timestamp', twelveHoursAgo)
-            .then((r: { data: TradeRow[] | null }) => {
-              if (r.data) recentTrades.push(...r.data);
-            })
-        );
-      }
+      const walletAddresses = [...smartWalletMap.keys()];
+      // Use raw SQL with wallet filter for efficiency
+      const dataset = `${process.env.GCP_PROJECT_ID}.${process.env.BQ_DATASET || 'polymarket'}`;
+      promises.push(
+        bq.rawQuery<TradeRow>(
+          `SELECT market_id, wallet_address, side, size_usdc, timestamp
+           FROM \`${dataset}.trades\`
+           WHERE timestamp >= @cutoff
+             AND wallet_address IN UNNEST(@wallets)`,
+          { cutoff: twelveHoursAgo, wallets: walletAddresses }
+        ).then((r) => {
+          if (r.data) recentTrades.push(...r.data);
+          if (r.error) errors.push(`Trade fetch: ${r.error.message}`);
+        })
+      );
     }
 
     await Promise.all(promises);
@@ -320,25 +338,9 @@ export async function scanSmartMoney(): Promise<{
       }
     }
 
-    // 7-day averages for liquidity vacuum
-    const weekAvgSpread = new Map<string, { sum: number; count: number }>();
-    const weekAvgDepth = new Map<string, { sum: number; count: number }>();
-    for (const snap of weekSnaps) {
-      if (snap.spread != null) {
-        const s = weekAvgSpread.get(snap.market_id) ?? { sum: 0, count: 0 };
-        s.sum += Number(snap.spread);
-        s.count++;
-        weekAvgSpread.set(snap.market_id, s);
-      }
-      if (snap.liquidity != null) {
-        const d = weekAvgDepth.get(snap.market_id) ?? { sum: 0, count: 0 };
-        d.sum += Number(snap.liquidity);
-        d.count++;
-        weekAvgDepth.set(snap.market_id, d);
-      }
-    }
+    // weekAvgSpread and weekAvgDepth are populated by the raw SQL query above
 
-    // Group trades by market, filter to smart wallets
+    // Group trades by market — trades already filtered to smart wallets at SQL level
     const smartTradesByMarket = new Map<string, { wallet: string; side: string; volume: number; accuracy: number; falcon_score: number | null }[]>();
     for (const t of recentTrades) {
       const wallet = smartWalletMap.get(t.wallet_address);
@@ -354,7 +356,6 @@ export async function scanSmartMoney(): Promise<{
     }
 
     // Step 4: Build market cards
-    const FOCUS = new Set(['politics', 'economics', 'geopolitics', 'crypto']);
     const cards: MarketCard[] = [];
     let marketsWithSignal = 0;
     let vacuumsDetected = 0;
@@ -366,7 +367,6 @@ export async function scanSmartMoney(): Promise<{
       if (!meta || !latest) continue;
 
       const category = classifyCategory(meta.question, meta.category);
-      if (!FOCUS.has(category)) continue;
 
       const currentPrice = Number(latest.yes_price) || 0;
       if (currentPrice <= 0.01 || currentPrice >= 0.99) continue;

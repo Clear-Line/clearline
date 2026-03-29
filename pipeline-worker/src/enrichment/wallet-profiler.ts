@@ -4,7 +4,6 @@
  * first_seen_polymarket, and accuracy_score.
  */
 
-import { supabaseAdmin } from '../core/supabase.js';
 import { bq } from '../core/bigquery.js';
 
 export async function profileWallets(): Promise<{ updated: number; errors: string[] }> {
@@ -47,7 +46,7 @@ async function computeCredibilityAndPnl(): Promise<{ updated: number; errors: st
   const walletAddresses = wallets.map((w) => w.address);
 
   // Get resolved markets and their outcomes
-  const { data: resolvedMarkets } = await supabaseAdmin
+  const { data: resolvedMarkets } = await bq
     .from('markets')
     .select('condition_id, resolution_outcome')
     .eq('is_resolved', true)

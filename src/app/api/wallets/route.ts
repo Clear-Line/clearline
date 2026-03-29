@@ -1,5 +1,4 @@
 import { NextResponse } from 'next/server';
-import { supabaseAdmin } from '@/lib/supabase';
 import { bq } from '@/lib/bigquery';
 
 export const runtime = 'nodejs';
@@ -58,7 +57,7 @@ export async function GET() {
   const marketIds = [...allMarketIds];
   for (let i = 0; i < marketIds.length; i += ID_BATCH) {
     const batch = marketIds.slice(i, i + ID_BATCH);
-    const { data } = await supabaseAdmin
+    const { data } = await bq
       .from('markets')
       .select('condition_id, question')
       .in('condition_id', batch);

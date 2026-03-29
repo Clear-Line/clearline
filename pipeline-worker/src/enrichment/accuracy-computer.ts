@@ -8,7 +8,6 @@
  * Run every 30 minutes.
  */
 
-import { supabaseAdmin } from '../core/supabase.js';
 import { bq } from '../core/bigquery.js';
 import { GammaMarket } from '../core/polymarket-client.js';
 
@@ -67,13 +66,12 @@ export async function computeAccuracy(): Promise<{
   let walletsUpdated = 0;
 
   // ─── Step 1: Find markets in our DB that are not yet marked resolved ───
-  // Paginate to avoid pulling all 29K at once
   const unresolvedIds = new Set<string>();
   let unresolvedOffset = 0;
   const UNRESOLVED_PAGE = 1000;
 
   while (true) {
-    const { data: page, error: dbErr } = await supabaseAdmin
+    const { data: page, error: dbErr } = await bq
       .from('markets')
       .select('condition_id')
       .eq('is_resolved', false)
@@ -126,7 +124,7 @@ export async function computeAccuracy(): Promise<{
   for (let i = 0; i < newlyResolved.length; i += BATCH) {
     const chunk = newlyResolved.slice(i, i + BATCH);
     for (const m of chunk) {
-      const { error } = await supabaseAdmin
+      const { error } = await bq
         .from('markets')
         .update({
           is_resolved: true,
@@ -151,7 +149,7 @@ export async function computeAccuracy(): Promise<{
   const RES_PAGE = 1000;
 
   while (true) {
-    const { data: page, error: resErr } = await supabaseAdmin
+    const { data: page, error: resErr } = await bq
       .from('markets')
       .select('condition_id, resolution_outcome')
       .eq('is_resolved', true)
