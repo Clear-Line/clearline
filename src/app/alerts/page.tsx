@@ -169,6 +169,7 @@ export default function AlertsPage() {
   const [alerts, setAlerts] = useState<SmartMoneyAlert[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
+  const [errorMessage, setErrorMessage] = useState("");
   const [scanTime, setScanTime] = useState("");
   const [activeFilter, setActiveFilter] = useState<FilterOption>("ALL");
 
@@ -176,12 +177,19 @@ export default function AlertsPage() {
     async function fetchAlerts() {
       try {
         const res = await fetch("/api/alerts/feed");
-        if (!res.ok) throw new Error("API error");
         const json = await res.json();
+        if (!res.ok) {
+          throw new Error(
+            typeof json?.error === "string" && json.error.length > 0
+              ? json.error
+              : "Signal feed request failed.",
+          );
+        }
         setAlerts(json.alerts ?? []);
         setScanTime(json.scan_time ?? "");
-      } catch {
+      } catch (err) {
         setError(true);
+        setErrorMessage(err instanceof Error ? err.message : "Signal feed request failed.");
       } finally {
         setLoading(false);
       }
@@ -259,6 +267,9 @@ export default function AlertsPage() {
           <div className="text-center py-20">
             <p className="text-sm text-[#94a3b8] mb-2">Unable to connect to the signal scanner.</p>
             <p className="text-xs text-[#64748b]">The pipeline may still be initializing. Try refreshing in a few minutes.</p>
+            {process.env.NODE_ENV !== "production" && errorMessage ? (
+              <p className="mt-3 text-xs text-[#475569] font-mono">{errorMessage}</p>
+            ) : null}
           </div>
         ) : filtered.length === 0 ? (
           <div className="text-center py-20">

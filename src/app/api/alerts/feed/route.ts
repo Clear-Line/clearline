@@ -1,14 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { bq } from '../../../../lib/bigquery';
+import { requireSubscription } from '@/lib/api-auth';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
 /**
  * GET /api/alerts/feed — smart money entry/exit alerts.
- * Reads from market_cards where signal != NEUTRAL.
+ * Requires authentication + active subscription.
  */
 export async function GET(req: NextRequest) {
+  const authError = await requireSubscription();
+  if (authError) return authError;
+
   const start = Date.now();
 
   const { data, error } = await bq
@@ -18,11 +22,12 @@ export async function GET(req: NextRequest) {
     .limit(50);
 
   if (error) {
+    console.error('[/api/alerts/feed] BigQuery error:', error.message);
     return NextResponse.json({ alerts: [], count: 0, error: error.message }, { status: 500 });
   }
 
   const alerts = (data ?? [])
-    .filter((row: Record<string, unknown>) => row.signal && row.signal !== 'NEUTRAL')
+    .filter((row: Record<string, unknown>) => row.signal && row.signal !== 'NEUTRAL' && row.category !== 'sports')
     .map((row: Record<string, unknown>) => {
       let topWallets: unknown[] = [];
       try {

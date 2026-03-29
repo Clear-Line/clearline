@@ -367,6 +367,7 @@ export async function scanSmartMoney(): Promise<{
       if (!meta || !latest) continue;
 
       const category = classifyCategory(meta.question, meta.category);
+      if (category === 'sports') continue;
 
       const currentPrice = Number(latest.yes_price) || 0;
       if (currentPrice <= 0.01 || currentPrice >= 0.99) continue;

@@ -2,11 +2,14 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import { useUser } from "@clerk/nextjs";
 import {
   Activity,
   ArrowRight,
   Bell,
+  Check,
   CirclePlay,
+  Crown,
   Database,
   LineChart,
   MessagesSquare,
@@ -163,6 +166,28 @@ function LivePreview() {
   );
 }
 
+function HeroCTA() {
+  const { isSignedIn } = useUser();
+  return (
+    <div className="mt-8 flex flex-col gap-3 sm:flex-row">
+      <Link
+        href={isSignedIn ? "/terminal" : "/sign-up"}
+        className="inline-flex items-center justify-center gap-2 rounded-full bg-[#00d4ff] px-6 py-3 text-sm font-semibold text-[#080b12] transition hover:bg-[#22ddff]"
+      >
+        {isSignedIn ? "Open Terminal" : "Get Started Free"}
+        <ArrowRight className="h-4 w-4" />
+      </Link>
+      <a
+        href="#pricing"
+        className="inline-flex items-center justify-center gap-2 rounded-full border border-[rgba(255,255,255,0.12)] bg-white/[0.03] px-6 py-3 text-sm font-medium text-white transition hover:border-[rgba(255,255,255,0.2)] hover:bg-white/[0.05]"
+      >
+        View Pricing
+        <CirclePlay className="h-4 w-4 text-[#10b981]" />
+      </a>
+    </div>
+  );
+}
+
 export default function HomePage() {
   return (
     <div className="min-h-screen bg-[#080b12] text-white">
@@ -183,22 +208,7 @@ export default function HomePage() {
               Clearline ingests live market activity, scores wallets, detects smart-money behavior, and turns raw Polymarket data into a terminal traders can act on.
             </p>
 
-            <div className="mt-8 flex flex-col gap-3 sm:flex-row">
-              <Link
-                href="/terminal"
-                className="inline-flex items-center justify-center gap-2 rounded-full bg-[#00d4ff] px-6 py-3 text-sm font-semibold text-[#080b12] transition hover:bg-[#22ddff]"
-              >
-                Enter Clearline
-                <ArrowRight className="h-4 w-4" />
-              </Link>
-              <a
-                href="#how-it-works"
-                className="inline-flex items-center justify-center gap-2 rounded-full border border-[rgba(255,255,255,0.12)] bg-white/[0.03] px-6 py-3 text-sm font-medium text-white transition hover:border-[rgba(255,255,255,0.2)] hover:bg-white/[0.05]"
-              >
-                How It Works
-                <CirclePlay className="h-4 w-4 text-[#10b981]" />
-              </a>
-            </div>
+            <HeroCTA />
 
             <div className="mt-10 grid gap-3 sm:grid-cols-3">
               {[
@@ -416,26 +426,83 @@ export default function HomePage() {
         </div>
       </section>
 
+      <section id="pricing" className="border-t border-[rgba(255,255,255,0.06)]">
+        <div className="mx-auto max-w-[1400px] px-4 py-20 sm:px-6 lg:px-8">
+          <div className="mx-auto max-w-3xl text-center">
+            <p className="text-[11px] font-bold uppercase tracking-[0.24em] text-[#10b981]">Pricing</p>
+            <h2 className="mt-4 text-4xl font-semibold tracking-[-0.03em] text-white">One plan. Full access.</h2>
+            <p className="mt-4 text-lg leading-8 text-[#94a3b8]">
+              Get the terminal, smart money alerts, and wallet intelligence — everything Clearline offers.
+            </p>
+          </div>
+
+          <div className="mx-auto mt-14 max-w-lg">
+            <div className="rounded-[2rem] border border-[rgba(255,255,255,0.08)] bg-[#0d1117] p-8">
+              <div className="flex items-center justify-between">
+                <h3 className="text-2xl font-semibold text-white">Clearline Pro</h3>
+                <div className="rounded-full border border-[#10b981]/30 bg-[#10b981]/10 px-3 py-1 text-xs font-medium text-[#10b981]">
+                  Full Access
+                </div>
+              </div>
+              <div className="mt-6 flex items-baseline gap-2">
+                <span className="text-5xl font-bold text-white">$49</span>
+                <span className="text-lg text-[#94a3b8]">/month</span>
+              </div>
+              <div className="mt-8 space-y-4">
+                {[
+                  "Live market terminal with 1000+ markets",
+                  "Real-time smart money BUY/SELL alerts",
+                  "Wallet intelligence and accuracy rankings",
+                  "Market detail pages with order book data",
+                ].map((feature) => (
+                  <div key={feature} className="flex items-center gap-3">
+                    <Check className="h-5 w-5 shrink-0 text-[#10b981]" />
+                    <span className="text-sm text-white">{feature}</span>
+                  </div>
+                ))}
+              </div>
+              <Link
+                href="/pricing"
+                className="mt-8 flex w-full items-center justify-center gap-2 rounded-full bg-[#00d4ff] px-6 py-3 text-sm font-semibold text-[#080b12] transition hover:bg-[#22ddff]"
+              >
+                Get Started
+                <ArrowRight className="h-4 w-4" />
+              </Link>
+            </div>
+
+            <div className="mt-6 rounded-[1.5rem] border border-[#10b981]/20 bg-[#10b981]/5 p-5 text-center">
+              <div className="flex items-center justify-center gap-2">
+                <Crown className="h-5 w-5 text-[#10b981]" />
+                <span className="text-sm font-semibold text-[#10b981]">Founding Members</span>
+              </div>
+              <p className="mt-2 text-sm text-[#94a3b8]">
+                The first 100 users get <span className="font-semibold text-white">lifetime free access</span>. Sign up now to claim your spot.
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <section className="mx-auto max-w-[1400px] px-4 py-20 sm:px-6 lg:px-8">
         <div className="rounded-[2.25rem] border border-[rgba(255,255,255,0.08)] bg-[radial-gradient(circle_at_top,rgba(0,212,255,0.12),transparent_36%),#0d1117] px-8 py-12 text-center">
           <p className="text-[11px] font-bold uppercase tracking-[0.24em] text-[#10b981]">Launch Clearline</p>
-          <h2 className="mt-4 text-4xl font-semibold tracking-[-0.03em] text-white">Open the app and follow the signal.</h2>
+          <h2 className="mt-4 text-4xl font-semibold tracking-[-0.03em] text-white">Start making better calls today.</h2>
           <p className="mx-auto mt-4 max-w-2xl text-lg leading-8 text-[#94a3b8]">
-            The homepage now sells the system. The app pages now feel like the same product. From here, the next layer is tightening individual product pages with the same standard.
+            Join the traders using smart-money intelligence to find edge in prediction markets. First 100 founding members get lifetime free access.
           </p>
           <div className="mt-8 flex flex-col justify-center gap-3 sm:flex-row">
             <Link
-              href="/terminal"
+              href="/sign-up"
               className="inline-flex items-center justify-center gap-2 rounded-full bg-[#00d4ff] px-6 py-3 text-sm font-semibold text-[#080b12] transition hover:bg-[#22ddff]"
             >
-              Open Terminal
+              Get Started Free
               <ArrowRight className="h-4 w-4" />
             </Link>
             <Link
-              href="/alerts"
+              href="/pricing"
               className="inline-flex items-center justify-center gap-2 rounded-full border border-[rgba(255,255,255,0.12)] bg-white/[0.03] px-6 py-3 text-sm font-medium text-white transition hover:border-[rgba(255,255,255,0.2)] hover:bg-white/[0.05]"
             >
-              View Alerts
+              View Pricing
               <Bell className="h-4 w-4 text-[#10b981]" />
             </Link>
           </div>

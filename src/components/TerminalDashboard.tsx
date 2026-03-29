@@ -26,6 +26,7 @@ const InteractiveGlobe = dynamic(
 );
 
 type SortOption = "highest-volume" | "biggest-movers" | "smart-money" | "highest-odds" | "lowest-odds";
+const TERMINAL_MARKET_LIMIT = 1000;
 
 function formatVolume(v: number): string {
   if (v >= 1_000_000) return `$${(v / 1_000_000).toFixed(1)}M`;
@@ -76,7 +77,7 @@ export function TerminalDashboard() {
   useEffect(() => {
     async function fetchMarkets() {
       try {
-        const res = await fetch("/api/markets?limit=50");
+        const res = await fetch(`/api/markets?limit=${TERMINAL_MARKET_LIMIT}`);
         if (!res.ok) throw new Error("API error");
         const json = await res.json();
         if (json.markets && json.markets.length > 0) {

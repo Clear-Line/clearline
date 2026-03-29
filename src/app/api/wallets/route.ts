@@ -1,9 +1,13 @@
 import { NextResponse } from 'next/server';
 import { bq } from '@/lib/bigquery';
+import { requireSubscription } from '@/lib/api-auth';
 
 export const runtime = 'nodejs';
 
 export async function GET() {
+  const authError = await requireSubscription();
+  if (authError) return authError;
+
   // Fetch top wallets by accuracy (with minimum sample size)
   const { data: wallets, error: wErr } = await bq
     .from('wallets')

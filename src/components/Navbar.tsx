@@ -24,7 +24,7 @@ export function Navbar() {
     { name: 'How It Works', href: '#how-it-works' },
     { name: 'Products', href: '#products' },
     { name: 'Pipeline', href: '#pipeline' },
-    { name: 'Why Clearline', href: '#support' },
+    { name: 'Pricing', href: '#pricing' },
   ];
 
   return (
@@ -90,10 +90,10 @@ export function Navbar() {
             </SignedIn>
             {isMarketingPage ? (
               <Link
-                href="/terminal"
+                href="/sign-up"
                 className="hidden md:inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold tracking-wide uppercase text-[#080b12] bg-[#00d4ff] hover:bg-[#00bde0] rounded-md transition-colors"
               >
-                Open Terminal
+                Get Started
                 <ArrowRight className="h-3.5 w-3.5" />
               </Link>
             ) : (
@@ -156,11 +156,11 @@ export function Navbar() {
                 </SignInButton>
               </SignedOut>
               <Link
-                href={isMarketingPage ? '/terminal' : '/'}
+                href={isMarketingPage ? '/sign-up' : '/'}
                 onClick={() => setMobileMenuOpen(false)}
                 className="w-full px-4 py-2 text-center text-xs font-bold tracking-wide uppercase text-[#080b12] bg-[#00d4ff] rounded-md"
               >
-                {isMarketingPage ? 'Open Terminal' : 'View Home'}
+                {isMarketingPage ? 'Get Started' : 'View Home'}
               </Link>
             </div>
           </nav>

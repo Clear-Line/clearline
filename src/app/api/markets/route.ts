@@ -1,15 +1,19 @@
 import { NextResponse } from 'next/server';
 import { bq } from '@/lib/bigquery';
+import { requireSubscription } from '@/lib/api-auth';
 
 export const runtime = 'nodejs';
 
 /**
  * GET /api/markets — reads pre-computed market_cards from BigQuery.
- * Single fast query. No caching needed.
+ * Requires authentication + active subscription.
  */
 export async function GET(request: Request) {
-  const DEFAULT_LIMIT = 50;
-  const MAX_LIMIT = 200;
+  const authError = await requireSubscription();
+  if (authError) return authError;
+
+  const DEFAULT_LIMIT = 200;
+  const MAX_LIMIT = 1000;
 
   const { searchParams } = new URL(request.url);
   const rawLimit = Number(searchParams.get('limit') ?? DEFAULT_LIMIT);
@@ -77,7 +81,7 @@ export async function GET(request: Request) {
       smartWalletCount: Number(row.smart_wallet_count) || 0,
       topSmartWallets,
     };
-  });
+  }).filter((m: { category: string }) => m.category !== 'sports');
 
   return NextResponse.json({ markets, count: markets.length });
 }

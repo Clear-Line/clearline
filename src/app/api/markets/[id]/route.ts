@@ -1,17 +1,20 @@
 import { NextResponse } from 'next/server';
 import { bq } from '@/lib/bigquery';
+import { requireSubscription } from '@/lib/api-auth';
 
 export const runtime = 'nodejs';
 
 /**
  * GET /api/markets/[id] — market detail.
- * Simplified: price chart + smart money activity + trades.
- * No more analytics, edge scores, flagged moves.
+ * Requires authentication + active subscription.
  */
 export async function GET(
   _request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  const authError = await requireSubscription();
+  if (authError) return authError;
+
   const { id } = await params;
 
   // Fetch market metadata + market card + snapshots + trades in parallel
