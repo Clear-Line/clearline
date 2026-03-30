@@ -87,7 +87,8 @@ interface SmartWallet {
 // ─── Constants ───
 
 const ACCURACY_THRESHOLD = 0.55;
-const MIN_SAMPLE_SIZE = 3;
+const MIN_SAMPLE_SIZE = 5;
+const MIN_VOLUME = 100;
 const ID_BATCH = 200;
 const UPSERT_BATCH = 200;
 const DIVERGENCE_THRESHOLD = 5;
@@ -117,9 +118,10 @@ async function buildSmartWalletPool(): Promise<{
   // Local wallets (ground truth — always available) — cap at 500 to limit scan cost
   const { data: localWallets, error: wErr } = await bq
     .from('wallets')
-    .select('address, accuracy_score, accuracy_sample_size')
+    .select('address, accuracy_score, accuracy_sample_size, total_volume_usdc')
     .gt('accuracy_score', ACCURACY_THRESHOLD)
     .gte('accuracy_sample_size', MIN_SAMPLE_SIZE)
+    .gte('total_volume_usdc', MIN_VOLUME)
     .order('accuracy_score', { ascending: false })
     .limit(500);
 

@@ -207,6 +207,128 @@ Examples:
 - allow lower volume thresholds
 - keep separate “focus” and “broad” terminal modes
 
+---
+
+## Data Storage & Retention — Current State (2026-03-30)
+
+### BigQuery Tables Overview
+
+| Table | Partitioned | Clustered By | Retention | Purge Freq | Approx Rows/Day |
+|-------|-------------|-------------|-----------|------------|-----------------|
+| `market_snapshots` | `DATE(timestamp)` | `market_id` | **3 days** | Every 6h | ~15k–30k |
+| `trades` | `DATE(timestamp)` | `market_id, wallet_address` | **3 days** | Every 6h | ~10k–50k |
+| `market_cards` | None | None | **7 days** | Every 6h | ~500–2k |
+| `wallets` | None | `address` | **Forever** | Never | Grows slowly (~50/day) |
+| `wallet_signals` | `DATE(computed_at)` | `wallet_address, market_id` | **Forever** | Never | ~1k–5k |
+| `markets` | None | None | **Forever** | Never | Grows slowly |
+
+### Job Frequencies (Cost-Optimized v2.1)
+
+| Job | Frequency | BigQuery Impact |
+|-----|-----------|-----------------|
+| `market-discovery` | Every 30 min | Low — mostly API calls + upserts |
+| `book-fetcher` | Every 30 min | Medium — reads 500 snapshots, fetches books, upserts |
+| `trade-fetcher` | Every 30 min | Medium — reads 1000 snapshots, fetches trades for 200 markets |
+| `accuracy` | Every 6 hours | Low-Medium — reads trades (3-day filter), resolves markets |
+| `wallet-profiler` | Every 6 hours | Medium — reads trades (3-day filter) for up to 1000 wallets |
+| `smart-money-scanner` | Every 2 hours | Medium — reads snapshots, trades, wallets, writes cards |
+| `data-purge` | Every 6 hours | Low — DELETE operations |
+
+### Query Volume Caps Per Job Run
+
+| Job | Key Limits |
+|-----|-----------|
+| `book-fetcher` | 500 markets max |
+| `trade-fetcher` | 1000 snapshots → 200 unique markets, 2 pages × 100 trades each |
+| `accuracy` | 1000 unresolved markets/page, trades filtered to 3 days |
+| `wallet-profiler` | 1000 wallets max, trades filtered to 3 days, batch of 200 |
+| `smart-money-scanner` | 500 smart wallets, 500 market candidates |
+
+### API Route Query Costs
+
+| Route | What It Reads | Limits | Partition Filter |
+|-------|--------------|--------|-----------------|
+| `GET /api/markets` | `market_cards` | 1000 max | None (small table) |
+| `GET /api/markets/[id]` | `market_cards` + `market_snapshots` + `trades` | 50 snapshots, 500 trades | **None on trades** ⚠️ |
+| `GET /api/alerts/feed` | `market_cards` | 50 | None (small table) |
+| `GET /api/wallets` | `wallets` + `trades` + `markets` | 200 wallets, trades 3-day filter | Yes (trades) |
+| `GET /api/wallets/[address]` | `wallets` + `trades` + `markets` + `market_cards` | 500 trades, 3-day filter | Yes (trades) |
+
+### Cost Drivers (Ranked)
+
+1. **`wallet-profiler` enrichment** — Even with 3-day filter, scanning trades for 1000 wallets in batches of 200 is the heaviest recurring job
+2. **`smart-money-scanner`** — Reads snapshots (24h window), trades, wallets, then writes cards. Runs every 2h.
+3. **`trade-fetcher`** — 200 markets × 2 pages × frequent runs = lots of small reads + writes
+4. **`/api/markets/[id]` route** — No timestamp filter on trades query, scans all trades for a market
+5. **Non-partitioned tables** (`wallets`, `markets`, `market_cards`) — Always full table scan regardless of filters
+
+### What's Stored Forever (Growing)
+
+- **`wallets`** — Every wallet ever profiled. Currently not purged. Will grow indefinitely.
+- **`wallet_signals`** — Partitioned by `computed_at` but never purged. Will accumulate.
+- **`markets`** — Every market discovered. Never purged. Growth is slow but permanent.
+
+---
+
+## Budget-Constrained MVP Plan
+
+### Current Reality
+- **$10/day was the peak** before cost-optimization pass
+- **Target: <$1/day** for MVP phase (no paying users yet)
+- BigQuery free tier: 1 TB queries/month, 10 GB storage free
+- At $5/TB scanned, need to stay under ~6 GB/day of scans
+
+### Recommended MVP Retention Settings
+
+| Table | Current | Recommended MVP | Rationale |
+|-------|---------|----------------|-----------|
+| `market_snapshots` | 3 days | **3 days** ✅ | Already tight. Partition pruning works. |
+| `trades` | 3 days | **3 days** ✅ | Already tight. Partition pruning works. |
+| `market_cards` | 7 days | **3 days** | Only latest matters for terminal. 7 days is waste. |
+| `wallets` | Forever | **Keep but cap at 5k rows** | Purge wallets with <2 trades and no activity in 30 days |
+| `wallet_signals` | Forever | **3 days** | Historical signals have no current use. Add purge. |
+| `markets` | Forever | **Keep** | Small table, metadata is cheap, needed for joins |
+
+### Recommended MVP Job Frequencies
+
+| Job | Current | Recommended MVP | Savings |
+|-----|---------|----------------|---------|
+| `market-discovery` | Every 30 min | **Every 1 hour** | 50% fewer runs |
+| `book-fetcher` | Every 30 min | **Every 1 hour** | 50% fewer runs |
+| `trade-fetcher` | Every 30 min | **Every 1 hour** | 50% fewer runs |
+| `accuracy` | Every 6 hours | **Every 12 hours** | 50% fewer runs |
+| `wallet-profiler` | Every 6 hours | **Every 12 hours** | 50% fewer runs |
+| `smart-money-scanner` | Every 2 hours | **Every 4 hours** | 50% fewer runs |
+| `data-purge` | Every 6 hours | **Every 6 hours** ✅ | Keep — purging saves storage cost |
+
+### Recommended MVP Query Caps
+
+| Setting | Current | Recommended MVP |
+|---------|---------|----------------|
+| `book-fetcher` markets | 500 | **200** |
+| `trade-fetcher` snapshots | 1000 | **500** |
+| `trade-fetcher` unique markets | 200 | **100** |
+| `smart-money-scanner` wallet pool | 500 | **200** |
+| `smart-money-scanner` market candidates | 500 | **200** |
+| `wallet-profiler` max wallets | 1000 | **500** |
+| `/api/markets/[id]` trades | 500 (no timestamp filter) | **200 + add 3-day filter** |
+
+### Critical Fix Still Needed
+**`/api/markets/[id]/route.ts`** — The trades query has NO timestamp filter. Every page view of a market detail page scans the entire `trades` table for that market. Add `.gte('timestamp', threeDaysAgo)` to match all other routes.
+
+### Scaling Plan (Post-MVP)
+When revenue justifies it, increase in this order:
+1. **Job frequencies first** — more frequent = fresher data, biggest UX improvement
+2. **Query caps second** — more markets/wallets covered
+3. **Retention last** — longer history enables historical features (PnL charts, trend analysis)
+
+Target tiers:
+- **Free tier (<$1/day):** Current MVP settings above
+- **Growth ($5/day):** 15-min ingestion, 1-hour enrichment, 7-day retention, 1000 wallet pool
+- **Scale ($20/day):** 5-min ingestion, 30-min enrichment, 14-day retention, full wallet coverage
+
+---
+
 ## Bottom Line
 The current pipeline is simpler, more coherent, and closer to production than the earlier architecture.
 

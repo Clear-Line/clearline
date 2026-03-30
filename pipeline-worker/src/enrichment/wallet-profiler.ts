@@ -1,7 +1,11 @@
 /**
- * Wallet Profiler — aggregates trade data to compute wallet statistics.
- * Updates wallets table with total_trades, total_volume_usdc, total_markets_traded,
- * first_seen_polymarket, and accuracy_score.
+ * Wallet Profiler — incrementally aggregates trade data for wallet statistics.
+ *
+ * Key change from v1: stats are INCREMENTED with new data since last run,
+ * not recomputed from scratch. This means total_trades, total_volume, etc.
+ * accumulate over time even though the trades table only retains 3 days.
+ *
+ * Also computes credibility_score using a fixed normalization scale.
  */
 
 import { bq } from '../core/bigquery.js';
@@ -10,13 +14,11 @@ export async function profileWallets(): Promise<{ updated: number; errors: strin
   const errors: string[] = [];
   let updated = 0;
 
-  // No RPC in BigQuery — use JS fallback aggregation directly
-  const fallbackResult = await fallbackProfileWallets();
-  errors.push(...fallbackResult.errors);
-  updated += fallbackResult.updated;
+  const profileResult = await incrementalProfileWallets();
+  errors.push(...profileResult.errors);
+  updated += profileResult.updated;
 
-  // After basic profiling, compute credibility scores and PnL
-  const credResult = await computeCredibilityAndPnl();
+  const credResult = await computeCredibility();
   errors.push(...credResult.errors);
   updated += credResult.updated;
 
@@ -24,89 +26,152 @@ export async function profileWallets(): Promise<{ updated: number; errors: strin
 }
 
 /**
- * Compute credibility_score and total_pnl_usdc for wallets.
- *
- * credibility_score = 40% accuracy + 30% normalized PnL + 30% entry_timing
- * total_pnl_usdc = realized PnL from trades in resolved markets
+ * Incrementally update wallet stats from recent trades only (last 12h).
+ * Adds to existing totals rather than replacing them.
  */
-async function computeCredibilityAndPnl(): Promise<{ updated: number; errors: string[] }> {
+async function incrementalProfileWallets(): Promise<{ updated: number; errors: string[] }> {
   const errors: string[] = [];
   let updated = 0;
 
-  // Get wallets that have accuracy scores
-  const { data: wallets, error: wErr } = await bq
-    .from('wallets')
-    .select('address, accuracy_score, accuracy_sample_size')
-    .not('accuracy_score', 'is', null);
+  // Only look at trades from last 12 hours (matches job interval)
+  const twelveHoursAgo = new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString();
 
-  if (wErr || !wallets || wallets.length === 0) {
-    return { updated: 0, errors: wErr ? [`Credibility wallet query: ${wErr.message}`] : [] };
+  // Fetch recent trades — partition-pruned by timestamp
+  const { data: recentTrades, error: tError } = await bq
+    .from('trades')
+    .select('wallet_address, market_id, size_usdc, timestamp')
+    .gte('timestamp', twelveHoursAgo);
+
+  if (tError) {
+    return { updated: 0, errors: [`Failed to fetch recent trades: ${tError.message}`] };
   }
 
-  const walletAddresses = wallets.map((w) => w.address);
-
-  // Get resolved markets and their outcomes
-  const { data: resolvedMarkets } = await bq
-    .from('markets')
-    .select('condition_id, resolution_outcome')
-    .eq('is_resolved', true)
-    .not('resolution_outcome', 'is', null);
-
-  const resolutionMap = new Map<string, string>();
-  for (const m of resolvedMarkets ?? []) {
-    resolutionMap.set(m.condition_id, m.resolution_outcome);
+  if (!recentTrades || recentTrades.length === 0) {
+    return { updated: 0, errors: [] };
   }
 
-  // Fetch trades for these wallets in resolved markets — add timestamp filter for partition pruning
-  const resolvedIds = [...resolutionMap.keys()];
-  const credThreeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
-  const ID_BATCH = 200;
-  const allTrades: {
-    wallet_address: string;
-    market_id: string;
-    side: string;
-    outcome: string;
-    price: number;
-    size_usdc: number;
-  }[] = [];
+  // Group by wallet
+  const walletNewData = new Map<string, {
+    newTrades: number;
+    newVolume: number;
+    newMarkets: Set<string>;
+    earliestTimestamp: string;
+    username: string | null;
+    pseudonym: string | null;
+  }>();
 
-  for (let i = 0; i < resolvedIds.length; i += ID_BATCH) {
-    const batch = resolvedIds.slice(i, i + ID_BATCH);
-    const { data } = await bq
-      .from('trades')
-      .select('wallet_address, market_id, side, outcome, price, size_usdc')
-      .gte('timestamp', credThreeDaysAgo)
-      .in('market_id', batch)
-      .in('wallet_address', walletAddresses);
+  for (const t of recentTrades) {
+    const existing = walletNewData.get(t.wallet_address) ?? {
+      newTrades: 0, newVolume: 0, newMarkets: new Set<string>(),
+      earliestTimestamp: t.timestamp, username: null, pseudonym: null,
+    };
 
-    if (data) allTrades.push(...data);
-  }
-
-  // Compute PnL per wallet
-  const pnlByWallet = new Map<string, number>();
-
-  for (const t of allTrades) {
-    const resolution = resolutionMap.get(t.market_id);
-    if (!resolution) continue;
-
-    const isWinningOutcome = t.outcome === resolution;
-    const price = Number(t.price) || 0;
-    const usdc = Number(t.size_usdc) || 0;
-    if (price <= 0 || usdc <= 0) continue;
-
-    let pnl = 0;
-    if (t.side === 'BUY') {
-      // Bought at price P. If winning: profit = (1/P - 1) * usdc. If losing: loss = -usdc
-      pnl = isWinningOutcome ? usdc * (1 / price - 1) : -usdc;
-    } else {
-      // Sold at price P. If winning: loss. If losing: profit = usdc
-      pnl = isWinningOutcome ? -usdc * (1 / price - 1) : usdc;
+    existing.newTrades++;
+    existing.newVolume += Number(t.size_usdc) || 0;
+    existing.newMarkets.add(t.market_id);
+    if (t.timestamp < existing.earliestTimestamp) {
+      existing.earliestTimestamp = t.timestamp;
     }
 
-    pnlByWallet.set(t.wallet_address, (pnlByWallet.get(t.wallet_address) ?? 0) + pnl);
+    walletNewData.set(t.wallet_address, existing);
   }
 
-  // Get entry timing scores for credibility weighting
+  // Fetch existing wallet rows to read current totals
+  const addresses = [...walletNewData.keys()];
+  const existingMap = new Map<string, {
+    total_trades: number;
+    total_volume_usdc: number;
+    total_markets_traded: number;
+    first_seen_polymarket: string | null;
+  }>();
+
+  const ADDR_BATCH = 200;
+  for (let i = 0; i < addresses.length; i += ADDR_BATCH) {
+    const batch = addresses.slice(i, i + ADDR_BATCH);
+    const { data } = await bq
+      .from('wallets')
+      .select('address, total_trades, total_volume_usdc, total_markets_traded, first_seen_polymarket')
+      .in('address', batch);
+
+    if (data) {
+      for (const row of data) {
+        existingMap.set(row.address, {
+          total_trades: row.total_trades ?? 0,
+          total_volume_usdc: row.total_volume_usdc ?? 0,
+          total_markets_traded: row.total_markets_traded ?? 0,
+          first_seen_polymarket: row.first_seen_polymarket ?? null,
+        });
+      }
+    }
+  }
+
+  // Build incremental upsert rows
+  const upsertRows = [];
+  const now = new Date().toISOString();
+
+  for (const [address, newData] of walletNewData) {
+    const existing = existingMap.get(address) ?? {
+      total_trades: 0, total_volume_usdc: 0,
+      total_markets_traded: 0, first_seen_polymarket: null,
+    };
+
+    const row: Record<string, unknown> = {
+      address,
+      total_trades: existing.total_trades + newData.newTrades,
+      total_volume_usdc: Math.round((existing.total_volume_usdc + newData.newVolume) * 100) / 100,
+      total_markets_traded: existing.total_markets_traded + newData.newMarkets.size,
+      last_updated: now,
+    };
+
+    // Only set first_seen if not already set
+    if (!existing.first_seen_polymarket) {
+      row.first_seen_polymarket = newData.earliestTimestamp;
+    }
+
+    upsertRows.push(row);
+  }
+
+  // Batch upsert
+  const BATCH = 500;
+  for (let i = 0; i < upsertRows.length; i += BATCH) {
+    const chunk = upsertRows.slice(i, i + BATCH);
+    const { error } = await bq
+      .from('wallets')
+      .upsert(chunk, { onConflict: 'address' });
+
+    if (error) {
+      errors.push(`Profile batch ${i}: ${error.message}`);
+    } else {
+      updated += chunk.length;
+    }
+  }
+
+  console.log(`[WalletProfiler] Incremented stats for ${updated} wallets from ${recentTrades.length} trades`);
+  return { updated, errors };
+}
+
+/**
+ * Compute credibility_score for wallets that have accuracy data.
+ * Uses fixed normalization (not relative to current batch).
+ *
+ * credibility = 40% accuracy + 30% normalized_pnl + 30% entry_timing
+ */
+async function computeCredibility(): Promise<{ updated: number; errors: string[] }> {
+  const errors: string[] = [];
+  let updated = 0;
+
+  const { data: wallets, error: wErr } = await bq
+    .from('wallets')
+    .select('address, accuracy_score, accuracy_sample_size, total_pnl_usdc')
+    .not('accuracy_score', 'is', null)
+    .gte('accuracy_sample_size', 3);
+
+  if (wErr || !wallets || wallets.length === 0) {
+    return { updated: 0, errors: wErr ? [`Credibility query: ${wErr.message}`] : [] };
+  }
+
+  // Get entry timing scores
+  const walletAddresses = wallets.map((w: { address: string }) => w.address);
   const { data: signalRows } = await bq
     .from('wallet_signals')
     .select('wallet_address, entry_timing_score')
@@ -120,15 +185,17 @@ async function computeCredibilityAndPnl(): Promise<{ updated: number; errors: st
     timingByWallet.set(s.wallet_address, existing);
   }
 
-  // Normalize PnL
-  const pnlValues = [...pnlByWallet.values()].map(Math.abs);
-  const maxPnl = pnlValues.length > 0 ? Math.max(...pnlValues) : 1;
+  // Fixed-scale normalization for PnL (not relative to batch max)
+  const PNL_SCALE = 10000; // $10k = max normalized PnL
 
   const updateRows = [];
   for (const w of wallets) {
     const accuracy = Number(w.accuracy_score) || 0;
-    const pnl = pnlByWallet.get(w.address) ?? 0;
-    const normalizedPnl = maxPnl > 0 ? Math.max(0, Math.min(1, (pnl / maxPnl + 1) / 2)) : 0.5;
+    const pnl = Number(w.total_pnl_usdc) || 0;
+
+    // Normalize PnL to [0, 1] using fixed scale
+    const normalizedPnl = Math.max(0, Math.min(1, (pnl / PNL_SCALE + 1) / 2));
+
     const timing = timingByWallet.get(w.address);
     const avgTiming = timing && timing.count > 0 ? timing.sum / timing.count : 0.5;
 
@@ -136,7 +203,6 @@ async function computeCredibilityAndPnl(): Promise<{ updated: number; errors: st
 
     updateRows.push({
       address: w.address,
-      total_pnl_usdc: Math.round(pnl * 100) / 100,
       credibility_score: Math.round(credibility * 1000) / 1000,
     });
   }
@@ -150,93 +216,6 @@ async function computeCredibilityAndPnl(): Promise<{ updated: number; errors: st
 
     if (error) {
       errors.push(`Credibility batch ${i}: ${error.message}`);
-    } else {
-      updated += chunk.length;
-    }
-  }
-
-  return { updated, errors };
-}
-
-/**
- * Fallback: compute wallet stats in JS with pagination.
- */
-async function fallbackProfileWallets(): Promise<{ updated: number; errors: string[] }> {
-  const errors: string[] = [];
-  let updated = 0;
-  const MAX_WALLETS = 1000; // cap wallets per run
-
-  // Get wallets (capped)
-  const { data: wallets, error: wError } = await bq
-    .from('wallets')
-    .select('address')
-    .limit(MAX_WALLETS);
-
-  if (wError || !wallets) {
-    return { updated: 0, errors: [`Failed to fetch wallets: ${wError?.message}`] };
-  }
-
-  // Fetch trades from last 3 days only (matches retention) — filter by timestamp for partition pruning
-  // and by wallet address to avoid scanning the entire table
-  const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
-  const walletAddrs = wallets.map((w) => w.address);
-  const tradesByWallet = new Map<string, { market_id: string; size_usdc: number; timestamp: string }[]>();
-
-  const WALLET_BATCH = 200;
-  for (let i = 0; i < walletAddrs.length; i += WALLET_BATCH) {
-    const batch = walletAddrs.slice(i, i + WALLET_BATCH);
-    const { data: tradePage, error: tError } = await bq
-      .from('trades')
-      .select('wallet_address, market_id, size_usdc, timestamp')
-      .gte('timestamp', threeDaysAgo)
-      .in('wallet_address', batch);
-
-    if (tError) {
-      errors.push(`Failed to fetch trades batch ${i}: ${tError.message}`);
-      continue;
-    }
-    for (const t of tradePage ?? []) {
-      if (!tradesByWallet.has(t.wallet_address)) tradesByWallet.set(t.wallet_address, []);
-      tradesByWallet.get(t.wallet_address)!.push(t);
-    }
-  }
-
-  // Build update rows
-  const now = new Date().toISOString();
-  const walletRows = [];
-
-  for (const wallet of wallets) {
-    const trades = tradesByWallet.get(wallet.address);
-    if (!trades || trades.length === 0) continue;
-
-    const totalTrades = trades.length;
-    const totalVolume = trades.reduce((sum, t) => sum + Number(t.size_usdc || 0), 0);
-    const uniqueMarkets = new Set(trades.map(t => t.market_id)).size;
-    const firstSeen = trades
-      .map(t => new Date(t.timestamp))
-      .sort((a, b) => a.getTime() - b.getTime())[0]
-      .toISOString();
-
-    walletRows.push({
-      address: wallet.address,
-      total_trades: totalTrades,
-      total_volume_usdc: totalVolume,
-      total_markets_traded: uniqueMarkets,
-      first_seen_polymarket: firstSeen,
-      last_updated: now,
-    });
-  }
-
-  // Batch upsert in chunks of 500
-  const BATCH = 500;
-  for (let i = 0; i < walletRows.length; i += BATCH) {
-    const chunk = walletRows.slice(i, i + BATCH);
-    const { error: updateError } = await bq
-      .from('wallets')
-      .upsert(chunk, { onConflict: 'address' });
-
-    if (updateError) {
-      errors.push(`Wallet batch offset=${i}: ${updateError.message}`);
     } else {
       updated += chunk.length;
     }

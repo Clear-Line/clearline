@@ -1,4 +1,4 @@
-import { supabaseAdmin } from './supabase';
+import { ensureUserRecord } from './users';
 
 export interface UserSubscription {
   isActive: boolean;
@@ -8,22 +8,15 @@ export interface UserSubscription {
 }
 
 export async function getUserSubscription(clerkId: string): Promise<UserSubscription | null> {
-  const { data, error } = await supabaseAdmin
-    .from('users')
-    .select('id, subscription_status')
-    .eq('clerk_id', clerkId)
-    .single();
-
-  if (error || !data) return null;
-
-  const status = data.subscription_status as string;
-  const isFounding = data.id <= 100;
+  const user = await ensureUserRecord(clerkId);
+  const status = user.subscription_status;
+  const isFounding = user.id <= 100 || status === 'founding';
   const isActive = status === 'active' || status === 'founding';
 
   return {
     isActive,
     isFounding,
     status,
-    userId: data.id,
+    userId: user.id,
   };
 }

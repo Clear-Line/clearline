@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useUser } from "@clerk/nextjs";
+import { SignUpButton, useUser } from "@clerk/nextjs";
 import { useState } from "react";
 import {
   Activity,
@@ -91,13 +91,12 @@ export default function PricingPage() {
                     {!loading && <ArrowRight className="h-4 w-4" />}
                   </button>
                 ) : (
-                  <Link
-                    href="/sign-up"
-                    className="flex w-full items-center justify-center gap-2 rounded-full bg-[#00d4ff] px-6 py-3 text-sm font-semibold text-[#080b12] transition hover:bg-[#22ddff]"
-                  >
-                    Get Started
-                    <ArrowRight className="h-4 w-4" />
-                  </Link>
+                  <SignUpButton mode="redirect">
+                    <button className="flex w-full items-center justify-center gap-2 rounded-full bg-[#00d4ff] px-6 py-3 text-sm font-semibold text-[#080b12] transition hover:bg-[#22ddff]">
+                      Get Started
+                      <ArrowRight className="h-4 w-4" />
+                    </button>
+                  </SignUpButton>
                 )}
               </div>
             </div>

@@ -1,7 +1,11 @@
 import { auth } from '@clerk/nextjs/server';
 import { NextResponse } from 'next/server';
+import { getAppUrl } from '@/lib/app-url';
 import { getStripe } from '@/lib/stripe';
 import { supabaseAdmin } from '@/lib/supabase';
+import { ensureUserRecord } from '@/lib/users';
+
+export const runtime = 'nodejs';
 
 export async function POST() {
   const { userId } = await auth();
@@ -9,16 +13,7 @@ export async function POST() {
     return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
   }
 
-  // Look up user in Supabase
-  const { data: user, error } = await supabaseAdmin
-    .from('users')
-    .select('id, subscription_status, stripe_customer_id')
-    .eq('clerk_id', userId)
-    .single();
-
-  if (error || !user) {
-    return NextResponse.json({ error: 'User not found' }, { status: 404 });
-  }
+  const user = await ensureUserRecord(userId);
 
   // Founding members already have access
   if (user.subscription_status === 'founding' || user.subscription_status === 'active') {
@@ -41,12 +36,13 @@ export async function POST() {
   }
 
   // Create checkout session
+  const appUrl = await getAppUrl();
   const session = await stripe.checkout.sessions.create({
     customer: customerId,
     mode: 'subscription',
     line_items: [{ price: process.env.STRIPE_PRICE_ID!, quantity: 1 }],
-    success_url: `${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/terminal?checkout=success`,
-    cancel_url: `${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/pricing?checkout=canceled`,
+    success_url: `${appUrl}/terminal?checkout=success`,
+    cancel_url: `${appUrl}/pricing?checkout=canceled`,
   });
 
   return NextResponse.json({ url: session.url });

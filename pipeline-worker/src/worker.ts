@@ -18,6 +18,7 @@ import { pollTrades } from './ingestion/trade-fetcher.js';
 // ─── Enrichment Layer ───
 import { computeAccuracy } from './enrichment/accuracy-computer.js';
 import { profileWallets } from './enrichment/wallet-profiler.js';
+import { bootstrapFromFalcon } from './enrichment/falcon-bootstrap.js';
 
 // ─── Intelligence Layer ───
 import { scanSmartMoney } from './intelligence/smart-money-scanner.js';
@@ -36,8 +37,8 @@ http.createServer((_req, res) => {
 // ─── Startup ───
 
 console.log('');
-console.log('  CLEARLINE PIPELINE WORKER v2.1 (cost-optimized)');
-console.log('  Ingestion: 30min | Scanner: 2h | Enrichment: 6h');
+console.log('  CLEARLINE PIPELINE WORKER v3.0 (wallet intelligence rebuild)');
+console.log('  Ingestion: 30min | Scanner: 2h | Enrichment: 6h | Falcon: weekly');
 console.log('  Signal: Smart money buy/sell');
 console.log('');
 
@@ -80,6 +81,13 @@ registerJob('smart-money-scanner', '0 */2 * * *', async () => {
   if (result.errors.length > 0) console.log(`  -> Errors: ${result.errors.slice(0, 3).join('; ')}`);
 });
 
+// Falcon bootstrap: weekly refresh of wallet data from Heisenberg leaderboard
+registerJob('falcon-bootstrap', '0 3 * * 0', async () => {
+  const result = await bootstrapFromFalcon();
+  console.log(`  -> Falcon: seeded ${result.seeded}, skipped ${result.skipped}`);
+  if (result.errors.length > 0) console.log(`  -> Errors: ${result.errors.slice(0, 3).join('; ')}`);
+});
+
 // Maintenance: purge old data every 6 hours to keep table sizes small
 registerJob('data-purge', '0 */6 * * *', async () => {
   const result = await purgeOldData();
@@ -100,25 +108,29 @@ async function runInitialPipeline(): Promise<void> {
     // Ensure BigQuery tables exist before any pipeline work
     await ensureTables();
 
-    console.log('[1/4] Market discovery...');
+    console.log('[0/5] Falcon bootstrap (seeding wallet data)...');
+    const falcon = await bootstrapFromFalcon();
+    console.log(`  -> Falcon: seeded ${falcon.seeded}, skipped ${falcon.skipped}`);
+
+    console.log('[1/5] Market discovery...');
     const markets = await pollMarkets();
     console.log(`  -> ${markets.upserted} markets upserted`);
 
-    console.log('[2/4] Book snapshots + Trade fetching...');
+    console.log('[2/5] Book snapshots + Trade fetching...');
     const [books, trades] = await Promise.all([
       snapshotBooks(),
       pollTrades(),
     ]);
     console.log(`  -> ${books.updated} books, ${trades.inserted} trades`);
 
-    console.log('[3/4] Accuracy + Wallet profiling...');
+    console.log('[3/5] Accuracy + Wallet profiling...');
     const [accuracy, wallets] = await Promise.all([
       computeAccuracy(),
       profileWallets(),
     ]);
     console.log(`  -> Resolved: ${accuracy.resolved}, wallets: ${wallets.updated}`);
 
-    console.log('[4/4] Smart money scanner (building market_cards)...');
+    console.log('[4/5] Smart money scanner (building market_cards)...');
     const smartMoney = await scanSmartMoney();
     const smt = smartMoney.telemetry;
     console.log(`  -> Cards: ${smartMoney.cards}, signals: ${smt.marketsWithSignal}, wallets: ${smt.smartWalletsUsed}${smt.falconEnriched ? ' (Falcon enriched)' : ''}`);
