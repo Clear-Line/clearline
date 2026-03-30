@@ -1,7 +1,10 @@
 import { auth } from '@clerk/nextjs/server';
 import { NextResponse } from 'next/server';
+import { getAppUrl } from '@/lib/app-url';
 import { getStripe } from '@/lib/stripe';
-import { supabaseAdmin } from '@/lib/supabase';
+import { ensureUserRecord } from '@/lib/users';
+
+export const runtime = 'nodejs';
 
 export async function POST() {
   const { userId } = await auth();
@@ -9,20 +12,16 @@ export async function POST() {
     return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
   }
 
-  const { data: user } = await supabaseAdmin
-    .from('users')
-    .select('stripe_customer_id')
-    .eq('clerk_id', userId)
-    .single();
-
+  const user = await ensureUserRecord(userId);
   if (!user?.stripe_customer_id) {
     return NextResponse.json({ error: 'No billing account found' }, { status: 404 });
   }
 
   const stripe = getStripe();
+  const appUrl = await getAppUrl();
   const session = await stripe.billingPortal.sessions.create({
     customer: user.stripe_customer_id,
-    return_url: `${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/terminal`,
+    return_url: `${appUrl}/terminal`,
   });
 
   return NextResponse.json({ url: session.url });

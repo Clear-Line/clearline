@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { Activity, Wallet, Bell, Menu, X, ArrowRight } from 'lucide-react';
 import { useState } from 'react';
-import { SignedIn, SignedOut, SignInButton, UserButton } from '@clerk/nextjs';
+import { SignedIn, SignedOut, SignInButton, SignUpButton, UserButton } from '@clerk/nextjs';
 
 export function Navbar() {
   const pathname = usePathname();
@@ -89,13 +89,12 @@ export function Navbar() {
               <UserButton afterSignOutUrl="/sign-in" />
             </SignedIn>
             {isMarketingPage ? (
-              <Link
-                href="/sign-up"
-                className="hidden md:inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold tracking-wide uppercase text-[#080b12] bg-[#00d4ff] hover:bg-[#00bde0] rounded-md transition-colors"
-              >
-                Get Started
-                <ArrowRight className="h-3.5 w-3.5" />
-              </Link>
+              <SignUpButton mode="redirect">
+                <button className="hidden md:inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold tracking-wide uppercase text-[#080b12] bg-[#00d4ff] hover:bg-[#00bde0] rounded-md transition-colors">
+                  Get Started
+                  <ArrowRight className="h-3.5 w-3.5" />
+                </button>
+              </SignUpButton>
             ) : (
               <Link
                 href="/"
@@ -155,13 +154,24 @@ export function Navbar() {
                   </button>
                 </SignInButton>
               </SignedOut>
-              <Link
-                href={isMarketingPage ? '/sign-up' : '/'}
-                onClick={() => setMobileMenuOpen(false)}
-                className="w-full px-4 py-2 text-center text-xs font-bold tracking-wide uppercase text-[#080b12] bg-[#00d4ff] rounded-md"
-              >
-                {isMarketingPage ? 'Get Started' : 'View Home'}
-              </Link>
+              {isMarketingPage ? (
+                <SignUpButton mode="redirect">
+                  <button
+                    onClick={() => setMobileMenuOpen(false)}
+                    className="w-full px-4 py-2 text-center text-xs font-bold tracking-wide uppercase text-[#080b12] bg-[#00d4ff] rounded-md"
+                  >
+                    Get Started
+                  </button>
+                </SignUpButton>
+              ) : (
+                <Link
+                  href="/"
+                  onClick={() => setMobileMenuOpen(false)}
+                  className="w-full px-4 py-2 text-center text-xs font-bold tracking-wide uppercase text-[#080b12] bg-[#00d4ff] rounded-md"
+                >
+                  View Home
+                </Link>
+              )}
             </div>
           </nav>
         </div>

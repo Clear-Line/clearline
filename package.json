@@ -3,7 +3,9 @@
   "version": "1.0.0",
   "scripts": {
     "preinstall": "npx only-allow pnpm",
-    "dev": "next dev"
+    "dev": "next dev",
+    "build": "next build --webpack",
+    "start": "next start"
   },
   "dependencies": {
     "@clerk/nextjs": "^6.38.2",

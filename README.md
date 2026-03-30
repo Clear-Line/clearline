@@ -77,9 +77,50 @@ App-only:
 - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
 - `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`
 - `CLERK_SECRET_KEY`
+- `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`
+- `STRIPE_SECRET_KEY`
+- `STRIPE_PRICE_ID`
+- `STRIPE_WEBHOOK_SECRET`
+- `CLERK_WEBHOOK_SECRET`
+- `NEXT_PUBLIC_APP_URL` (optional locally, recommended in production)
 
 Worker-only:
 - `PORT`
+
+## Billing And Auth Setup
+
+The app now has these integration paths:
+- Clerk handles sign-in/sign-up and route protection.
+- Stripe Checkout creates subscriptions at `/api/stripe/checkout`.
+- Stripe Billing Portal is available at `/api/stripe/portal`.
+- Clerk webhooks write users into Supabase at `/api/webhooks/clerk`.
+- Stripe webhooks update subscription status in Supabase at `/api/webhooks/stripe`.
+
+Important implementation detail:
+- The app no longer hard-depends on the Clerk webhook to create a user row. If the webhook is delayed or missing, authenticated requests can create the Supabase `users` record lazily.
+
+## Vercel Deploy Notes
+
+Use these settings in Vercel:
+- Install command: `pnpm install`
+- Build command: `pnpm build`
+
+Make sure the Vercel project has the same env vars as `.env.local`, especially:
+- `NEXT_PUBLIC_SUPABASE_URL`
+- `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+- `SUPABASE_SERVICE_ROLE_KEY`
+- `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`
+- `CLERK_SECRET_KEY`
+- `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`
+- `STRIPE_SECRET_KEY`
+- `STRIPE_PRICE_ID`
+- `STRIPE_WEBHOOK_SECRET`
+- `CLERK_WEBHOOK_SECRET`
+
+After deploy, update external dashboards to point at your production domain:
+- In Clerk, set the app domain and webhook target to `https://<your-domain>/api/webhooks/clerk`.
+- In Stripe, set the webhook target to `https://<your-domain>/api/webhooks/stripe`.
+- In Stripe, make sure `STRIPE_PRICE_ID` is the recurring price you want Checkout to sell.
 
 ## Current State
 The project has already moved away from the older large analytics stack.

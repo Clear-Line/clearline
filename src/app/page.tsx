@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { useUser } from "@clerk/nextjs";
+import { SignUpButton, useUser } from "@clerk/nextjs";
 import {
   Activity,
   ArrowRight,
@@ -170,13 +170,22 @@ function HeroCTA() {
   const { isSignedIn } = useUser();
   return (
     <div className="mt-8 flex flex-col gap-3 sm:flex-row">
-      <Link
-        href={isSignedIn ? "/terminal" : "/sign-up"}
-        className="inline-flex items-center justify-center gap-2 rounded-full bg-[#00d4ff] px-6 py-3 text-sm font-semibold text-[#080b12] transition hover:bg-[#22ddff]"
-      >
-        {isSignedIn ? "Open Terminal" : "Get Started Free"}
-        <ArrowRight className="h-4 w-4" />
-      </Link>
+      {isSignedIn ? (
+        <Link
+          href="/terminal"
+          className="inline-flex items-center justify-center gap-2 rounded-full bg-[#00d4ff] px-6 py-3 text-sm font-semibold text-[#080b12] transition hover:bg-[#22ddff]"
+        >
+          Open Terminal
+          <ArrowRight className="h-4 w-4" />
+        </Link>
+      ) : (
+        <SignUpButton mode="redirect">
+          <button className="inline-flex items-center justify-center gap-2 rounded-full bg-[#00d4ff] px-6 py-3 text-sm font-semibold text-[#080b12] transition hover:bg-[#22ddff]">
+            Get Started Free
+            <ArrowRight className="h-4 w-4" />
+          </button>
+        </SignUpButton>
+      )}
       <a
         href="#pricing"
         className="inline-flex items-center justify-center gap-2 rounded-full border border-[rgba(255,255,255,0.12)] bg-white/[0.03] px-6 py-3 text-sm font-medium text-white transition hover:border-[rgba(255,255,255,0.2)] hover:bg-white/[0.05]"
@@ -491,13 +500,12 @@ export default function HomePage() {
             Join the traders using smart-money intelligence to find edge in prediction markets. First 100 founding members get lifetime free access.
           </p>
           <div className="mt-8 flex flex-col justify-center gap-3 sm:flex-row">
-            <Link
-              href="/sign-up"
-              className="inline-flex items-center justify-center gap-2 rounded-full bg-[#00d4ff] px-6 py-3 text-sm font-semibold text-[#080b12] transition hover:bg-[#22ddff]"
-            >
-              Get Started Free
-              <ArrowRight className="h-4 w-4" />
-            </Link>
+            <SignUpButton mode="redirect">
+              <button className="inline-flex items-center justify-center gap-2 rounded-full bg-[#00d4ff] px-6 py-3 text-sm font-semibold text-[#080b12] transition hover:bg-[#22ddff]">
+                Get Started Free
+                <ArrowRight className="h-4 w-4" />
+              </button>
+            </SignUpButton>
             <Link
               href="/pricing"
               className="inline-flex items-center justify-center gap-2 rounded-full border border-[rgba(255,255,255,0.12)] bg-white/[0.03] px-6 py-3 text-sm font-medium text-white transition hover:border-[rgba(255,255,255,0.2)] hover:bg-white/[0.05]"
