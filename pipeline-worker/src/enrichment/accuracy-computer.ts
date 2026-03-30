@@ -171,8 +171,9 @@ export async function computeAccuracy(): Promise<{
     resolutionMap.set(m.condition_id, m.resolution_outcome);
   }
 
-  // Fetch all trades for resolved markets
+  // Fetch trades for resolved markets — add timestamp filter for partition pruning
   const resolvedIds = [...resolutionMap.keys()];
+  const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
   const ID_BATCH = 100;
   const allTrades: {
     wallet_address: string;
@@ -187,6 +188,7 @@ export async function computeAccuracy(): Promise<{
     const { data, error } = await bq
       .from('trades')
       .select('wallet_address, market_id, side, outcome, size_usdc')
+      .gte('timestamp', threeDaysAgo)
       .in('market_id', batch);
 
     if (error) {

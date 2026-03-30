@@ -114,12 +114,14 @@ async function buildSmartWalletPool(): Promise<{
   pool: Map<string, SmartWallet>;
   falconEnriched: boolean;
 }> {
-  // Local wallets (ground truth — always available)
+  // Local wallets (ground truth — always available) — cap at 500 to limit scan cost
   const { data: localWallets, error: wErr } = await bq
     .from('wallets')
     .select('address, accuracy_score, accuracy_sample_size')
     .gt('accuracy_score', ACCURACY_THRESHOLD)
-    .gte('accuracy_sample_size', MIN_SAMPLE_SIZE);
+    .gte('accuracy_sample_size', MIN_SAMPLE_SIZE)
+    .order('accuracy_score', { ascending: false })
+    .limit(500);
 
   const pool = new Map<string, SmartWallet>();
 
@@ -217,7 +219,7 @@ export async function scanSmartMoney(): Promise<{
       )
       WHERE rn = 1
       ORDER BY volume_24h DESC
-      LIMIT 2000
+      LIMIT 500
     `, { cutoff: twentyFourHoursAgo });
 
     if (snapErr) {

@@ -57,8 +57,9 @@ async function computeCredibilityAndPnl(): Promise<{ updated: number; errors: st
     resolutionMap.set(m.condition_id, m.resolution_outcome);
   }
 
-  // Fetch trades for these wallets in resolved markets
+  // Fetch trades for these wallets in resolved markets — add timestamp filter for partition pruning
   const resolvedIds = [...resolutionMap.keys()];
+  const credThreeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
   const ID_BATCH = 200;
   const allTrades: {
     wallet_address: string;
@@ -74,6 +75,7 @@ async function computeCredibilityAndPnl(): Promise<{ updated: number; errors: st
     const { data } = await bq
       .from('trades')
       .select('wallet_address, market_id, side, outcome, price, size_usdc')
+      .gte('timestamp', credThreeDaysAgo)
       .in('market_id', batch)
       .in('wallet_address', walletAddresses);
 
@@ -174,30 +176,29 @@ async function fallbackProfileWallets(): Promise<{ updated: number; errors: stri
     return { updated: 0, errors: [`Failed to fetch wallets: ${wError?.message}`] };
   }
 
-  // Fetch trades in pages of 2000 to avoid loading everything at once
-  const TRADE_PAGE = 2000;
+  // Fetch trades from last 3 days only (matches retention) — filter by timestamp for partition pruning
+  // and by wallet address to avoid scanning the entire table
+  const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
+  const walletAddrs = wallets.map((w) => w.address);
   const tradesByWallet = new Map<string, { market_id: string; size_usdc: number; timestamp: string }[]>();
-  let tradeOffset = 0;
 
-  while (true) {
+  const WALLET_BATCH = 200;
+  for (let i = 0; i < walletAddrs.length; i += WALLET_BATCH) {
+    const batch = walletAddrs.slice(i, i + WALLET_BATCH);
     const { data: tradePage, error: tError } = await bq
       .from('trades')
       .select('wallet_address, market_id, size_usdc, timestamp')
-      .range(tradeOffset, tradeOffset + TRADE_PAGE - 1);
+      .gte('timestamp', threeDaysAgo)
+      .in('wallet_address', batch);
 
     if (tError) {
-      errors.push(`Failed to fetch trades at offset=${tradeOffset}: ${tError.message}`);
-      break;
+      errors.push(`Failed to fetch trades batch ${i}: ${tError.message}`);
+      continue;
     }
-    if (!tradePage || tradePage.length === 0) break;
-
-    for (const t of tradePage) {
+    for (const t of tradePage ?? []) {
       if (!tradesByWallet.has(t.wallet_address)) tradesByWallet.set(t.wallet_address, []);
       tradesByWallet.get(t.wallet_address)!.push(t);
     }
-
-    if (tradePage.length < TRADE_PAGE) break;
-    tradeOffset += TRADE_PAGE;
   }
 
   // Build update rows

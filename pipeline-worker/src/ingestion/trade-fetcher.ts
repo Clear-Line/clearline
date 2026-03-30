@@ -55,16 +55,16 @@ export async function pollTrades(): Promise<{
     .gte('timestamp', sixHoursAgo)
     .gt('volume_24h', 0)
     .order('volume_24h', { ascending: false })
-    .limit(5000);
+    .limit(1000);
 
-  // Deduplicate and take top 500 unique markets
+  // Deduplicate and take top 200 unique markets
   const seen = new Set<string>();
   const volMarketIds: string[] = [];
   for (const s of volSnaps ?? []) {
     if (!seen.has(s.market_id)) {
       seen.add(s.market_id);
       volMarketIds.push(s.market_id);
-      if (volMarketIds.length >= 500) break; // more market candidates for better coverage
+      if (volMarketIds.length >= 200) break;
     }
   }
 

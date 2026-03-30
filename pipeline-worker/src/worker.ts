@@ -36,42 +36,42 @@ http.createServer((_req, res) => {
 // ─── Startup ───
 
 console.log('');
-console.log('  CLEARLINE PIPELINE WORKER v2.0');
-console.log('  Simplified: 6 jobs, 1 signal');
+console.log('  CLEARLINE PIPELINE WORKER v2.1 (cost-optimized)');
+console.log('  Ingestion: 30min | Scanner: 2h | Enrichment: 6h');
 console.log('  Signal: Smart money buy/sell');
 console.log('');
 
 // ─── Register Jobs ───
 
-// Ingestion: every 15 minutes (reduced from 5m to cut BigQuery costs)
-registerJob('market-discovery', '*/15 * * * *', async () => {
+// Ingestion: every 30 minutes (reduced to cut BigQuery costs)
+registerJob('market-discovery', '*/30 * * * *', async () => {
   const result = await pollMarkets();
   console.log(`  -> Markets upserted: ${result.upserted}, errors: ${result.errors.length}`);
 });
 
-registerJob('book-fetcher', '*/15 * * * *', async () => {
+registerJob('book-fetcher', '*/30 * * * *', async () => {
   const result = await snapshotBooks();
   console.log(`  -> Books updated: ${result.updated}, errors: ${result.errors.length}`);
 });
 
-registerJob('trade-fetcher', '*/15 * * * *', async () => {
+registerJob('trade-fetcher', '*/30 * * * *', async () => {
   const result = await pollTrades();
   console.log(`  -> Trades inserted: ${result.inserted}, markets: ${result.telemetry.marketsSelected}`);
 });
 
-// Enrichment: every 30 minutes
-registerJob('accuracy', '*/30 * * * *', async () => {
+// Enrichment: every 6 hours (heavy queries — run infrequently to save costs)
+registerJob('accuracy', '0 */6 * * *', async () => {
   const result = await computeAccuracy();
   console.log(`  -> Resolved: ${result.resolved}, wallets updated: ${result.walletsUpdated}`);
 });
 
-registerJob('wallet-profiler', '*/30 * * * *', async () => {
+registerJob('wallet-profiler', '30 */6 * * *', async () => {
   const result = await profileWallets();
   console.log(`  -> Wallets profiled: ${result.updated}, errors: ${result.errors.length}`);
 });
 
-// Intelligence: every 30 minutes — builds market_cards table
-registerJob('smart-money-scanner', '*/30 * * * *', async () => {
+// Intelligence: every 2 hours — builds market_cards table
+registerJob('smart-money-scanner', '0 */2 * * *', async () => {
   const result = await scanSmartMoney();
   const t = result.telemetry;
   console.log(`  -> Cards: ${result.cards}, signals: ${t.marketsWithSignal}, wallets: ${t.smartWalletsUsed}${t.falconEnriched ? ' (Falcon enriched)' : ''}`);

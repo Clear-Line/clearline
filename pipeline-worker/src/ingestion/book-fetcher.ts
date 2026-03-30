@@ -98,7 +98,7 @@ export async function snapshotBooks(): Promise<{ updated: number; errors: string
     .gt('volume_24h', 0)
     .gte('timestamp', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString())
     .order('volume_24h', { ascending: false })
-    .limit(2000);
+    .limit(500);
 
   const topMarketIds = [...new Set((topSnaps ?? []).map((s: { market_id: string }) => s.market_id))];
 
