@@ -2,6 +2,15 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { Loader2 } from "lucide-react";
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+} from "recharts";
 
 // ─── Types ───
 
@@ -60,6 +69,29 @@ interface SentimentResponse {
   };
 }
 
+interface AccuracyPoint {
+  windowEnd: string;
+  timeframe: string;
+  clearlineCorrect: boolean;
+  polymarketCorrect: boolean;
+  clearlineRollingAccuracy: number;
+  polymarketRollingAccuracy: number;
+  initialSds: number;
+  initialConfidence: string;
+  resolutionOutcome: string;
+}
+
+interface AccuracyResponse {
+  history: AccuracyPoint[];
+  summary: {
+    total: number;
+    clearlineWins: number;
+    clearlineAccuracy: number | null;
+    polymarketWins: number;
+    polymarketAccuracy: number | null;
+  };
+}
+
 // ─── Helpers ───
 
 function formatVol(v: number): string {
@@ -111,22 +143,28 @@ const SIGNAL_EXPLANATIONS: Record<string, string> = {
 
 export default function CryptoPage() {
   const [data, setData] = useState<SentimentResponse | null>(null);
+  const [accuracy, setAccuracy] = useState<AccuracyResponse | null>(null);
+  const [accuracyFilter, setAccuracyFilter] = useState<string>("all");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [now, setNow] = useState(Date.now());
 
   const fetchData = useCallback(async () => {
     try {
-      const res = await fetch("/api/crypto/sentiment");
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      setData(await res.json());
+      const [sentRes, accRes] = await Promise.all([
+        fetch("/api/crypto/sentiment"),
+        fetch(`/api/crypto/accuracy${accuracyFilter !== "all" ? `?timeframe=${accuracyFilter}` : ""}`),
+      ]);
+      if (!sentRes.ok) throw new Error(`HTTP ${sentRes.status}`);
+      setData(await sentRes.json());
+      if (accRes.ok) setAccuracy(await accRes.json());
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load");
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [accuracyFilter]);
 
   useEffect(() => {
     fetchData();
@@ -360,6 +398,126 @@ export default function CryptoPage() {
             <p className="text-[#64748b] text-xs mt-1">
               Signals appear when Polymarket has active Bitcoin up/down markets
             </p>
+          </div>
+        )}
+
+        {/* Accuracy tracking chart */}
+        {accuracy && accuracy.history.length > 0 && (
+          <div className="mt-8">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h2 className="text-white font-medium text-sm">Signal Accuracy</h2>
+                <p className="text-[#64748b] text-xs mt-0.5">
+                  Rolling accuracy: Clearline derivatives vs Polymarket consensus
+                </p>
+              </div>
+              <div className="flex gap-1">
+                {(["all", "1h", "4h"] as const).map((tf) => (
+                  <button
+                    key={tf}
+                    onClick={() => setAccuracyFilter(tf)}
+                    className={`px-3 py-1 text-xs rounded transition-colors ${
+                      accuracyFilter === tf
+                        ? "bg-[rgba(255,255,255,0.1)] text-white"
+                        : "text-[#64748b] hover:text-[#94a3b8]"
+                    }`}
+                  >
+                    {tf === "all" ? "All" : tf.toUpperCase()}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Summary stats */}
+            <div className="grid grid-cols-2 gap-4 mb-4">
+              <div className="bg-[#0d1117] rounded-lg border border-[rgba(255,255,255,0.06)] px-4 py-3">
+                <div className="text-[#64748b] text-xs mb-1">Clearline Accuracy</div>
+                <div className="text-[#00d4ff] font-mono text-lg">
+                  {accuracy.summary.clearlineAccuracy != null
+                    ? `${accuracy.summary.clearlineAccuracy}%`
+                    : "-"}
+                </div>
+                <div className="text-[#475569] text-xs mt-0.5">
+                  {accuracy.summary.clearlineWins}W / {accuracy.summary.total - accuracy.summary.clearlineWins}L
+                  {" "}({accuracy.summary.total} markets)
+                </div>
+              </div>
+              <div className="bg-[#0d1117] rounded-lg border border-[rgba(255,255,255,0.06)] px-4 py-3">
+                <div className="text-[#64748b] text-xs mb-1">Polymarket Accuracy</div>
+                <div className="text-[#64748b] font-mono text-lg">
+                  {accuracy.summary.polymarketAccuracy != null
+                    ? `${accuracy.summary.polymarketAccuracy}%`
+                    : "-"}
+                </div>
+                <div className="text-[#475569] text-xs mt-0.5">
+                  {accuracy.summary.polymarketWins}W / {accuracy.summary.total - accuracy.summary.polymarketWins}L
+                  {" "}({accuracy.summary.total} markets)
+                </div>
+              </div>
+            </div>
+
+            {/* Chart */}
+            <div className="bg-[#0d1117] rounded-lg border border-[rgba(255,255,255,0.06)] p-4">
+              <ResponsiveContainer width="100%" height={280}>
+                <LineChart data={accuracy.history.map((p, i) => ({
+                  ...p,
+                  label: `#${i + 1}`,
+                  time: new Date(p.windowEnd).toLocaleDateString("en-US", { month: "short", day: "numeric" }),
+                }))}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
+                  <XAxis
+                    dataKey="label"
+                    tick={{ fill: "#64748b", fontSize: 10 }}
+                    axisLine={{ stroke: "rgba(255,255,255,0.06)" }}
+                  />
+                  <YAxis
+                    domain={[0, 100]}
+                    tick={{ fill: "#64748b", fontSize: 10 }}
+                    axisLine={{ stroke: "rgba(255,255,255,0.06)" }}
+                    tickFormatter={(v: number) => `${v}%`}
+                  />
+                  <Tooltip
+                    contentStyle={{
+                      backgroundColor: "#0d1117",
+                      border: "1px solid rgba(255,255,255,0.1)",
+                      borderRadius: "8px",
+                      fontSize: "12px",
+                    }}
+                    labelStyle={{ color: "#94a3b8" }}
+                    formatter={(value: number, name: string) => [
+                      `${value.toFixed(1)}%`,
+                      name === "clearlineRollingAccuracy" ? "Clearline" : "Polymarket",
+                    ]}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="clearlineRollingAccuracy"
+                    stroke="#00d4ff"
+                    strokeWidth={2}
+                    dot={false}
+                    name="Clearline"
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="polymarketRollingAccuracy"
+                    stroke="#64748b"
+                    strokeWidth={2}
+                    dot={false}
+                    name="Polymarket"
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+              <div className="flex justify-center gap-6 mt-2 text-xs">
+                <span className="flex items-center gap-1.5">
+                  <span className="w-3 h-0.5 bg-[#00d4ff] inline-block" />
+                  <span className="text-[#94a3b8]">Clearline</span>
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <span className="w-3 h-0.5 bg-[#64748b] inline-block" />
+                  <span className="text-[#94a3b8]">Polymarket</span>
+                </span>
+              </div>
+            </div>
           </div>
         )}
       </div>

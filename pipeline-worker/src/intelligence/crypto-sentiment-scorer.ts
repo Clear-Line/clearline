@@ -9,7 +9,7 @@
  */
 
 import { bq } from '../core/bigquery.js';
-import { fetchActiveMarkets, type GammaMarket } from '../core/polymarket-client.js';
+import { fetchCryptoMarkets, type GammaMarket } from '../core/polymarket-client.js';
 
 // ─── Signal weights (full 5-signal model) ───
 const WEIGHTS: Record<string, number> = {
@@ -55,6 +55,7 @@ interface DerivativesRow {
 interface BtcMarket {
   conditionId: string;
   question: string;
+  startDate: string;
   endDate: string;
   yesPrice: number;
   timeframe: string;
@@ -65,8 +66,8 @@ interface BtcMarket {
  * Find active BTC up/down markets from the Gamma API with live prices.
  */
 async function findBtcMarkets(): Promise<BtcMarket[]> {
-  // Fetch crypto markets directly from Polymarket with live prices
-  const allMarkets = await fetchActiveMarkets(100, 0);
+  // Fetch crypto-tagged markets from Polymarket (BTC up/down are low volume)
+  const allMarkets = await fetchCryptoMarkets(200);
 
   // Filter for Bitcoin up/down markets
   const btcMarkets = allMarkets.filter((m: GammaMarket) => {
@@ -120,6 +121,7 @@ async function findBtcMarkets(): Promise<BtcMarket[]> {
     results.push({
       conditionId: m.conditionId,
       question: m.question,
+      startDate: m.startDate,
       endDate: m.endDate,
       yesPrice,
       timeframe,
@@ -269,6 +271,48 @@ export async function scoreCryptoSentiment(): Promise<{ signals: number; errors:
   if (signalsWritten > 0) {
     const first = upsertRows[0];
     console.log(`[CryptoSentiment] BTC ${first.timeframe}: Polymarket=${(first.polymarket_prob * 100).toFixed(1)}% Derivatives=${(first.derivatives_prob * 100).toFixed(1)}% SDS=${first.sds > 0 ? '+' : ''}${first.sds.toFixed(1)} (${first.confidence}) [${first.signals_active} signals]`);
+  }
+
+  // Record new market cycles in btc_market_cycles (one row per cycle, first-seen only)
+  for (let i = 0; i < upsertRows.length; i++) {
+    const row = upsertRows[i];
+    const market = btcMarkets[i];
+    try {
+      const { data: existing } = await bq
+        .from('btc_market_cycles')
+        .select('id')
+        .eq('condition_id', row.polymarket_market_id)
+        .limit(1);
+
+      if (!existing || existing.length === 0) {
+        const clearlinePredictedUp = row.derivatives_prob > 0.5;
+        const polymarketPredictedUp = row.polymarket_prob > 0.5;
+
+        await bq.from('btc_market_cycles').insert([{
+          id: `BTC_${row.timeframe}_${row.window_end}`,
+          condition_id: row.polymarket_market_id,
+          timeframe: row.timeframe,
+          question: row.polymarket_question,
+          window_start: market.startDate,
+          window_end: row.window_end,
+          initial_polymarket_prob: row.polymarket_prob,
+          initial_derivatives_prob: row.derivatives_prob,
+          initial_sds: row.sds,
+          initial_sds_direction: row.sds_direction,
+          initial_confidence: row.confidence,
+          initial_spot_price: row.spot_price,
+          signal_captured_at: row.computed_at,
+          is_resolved: false,
+          clearline_predicted_up: clearlinePredictedUp,
+          polymarket_predicted_up: polymarketPredictedUp,
+          created_at: row.computed_at,
+          updated_at: row.computed_at,
+        }]);
+        console.log(`[CryptoSentiment] New cycle recorded: ${row.timeframe} ${row.window_end}`);
+      }
+    } catch (err) {
+      errors.push(`Cycle record: ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
 
   return { signals: signalsWritten, errors };
