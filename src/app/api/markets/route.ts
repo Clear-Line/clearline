@@ -13,7 +13,7 @@ export async function GET(request: Request) {
   if (authError) return authError;
 
   const DEFAULT_LIMIT = 200;
-  const MAX_LIMIT = 1000;
+  const MAX_LIMIT = 500;
 
   const { searchParams } = new URL(request.url);
   const rawLimit = Number(searchParams.get('limit') ?? DEFAULT_LIMIT);
