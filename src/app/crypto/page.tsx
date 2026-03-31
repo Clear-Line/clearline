@@ -158,8 +158,7 @@ export default function CryptoPage() {
 
   const deriv = data?.derivatives;
   const signals = data?.signals?.sort((a, b) => {
-    const order: Record<string, number> = { "1h": 0, "4h": 1 };
-    return (order[a.timeframe] ?? 2) - (order[b.timeframe] ?? 2);
+    return new Date(a.windowEnd).getTime() - new Date(b.windowEnd).getTime();
   }) ?? [];
 
   return (

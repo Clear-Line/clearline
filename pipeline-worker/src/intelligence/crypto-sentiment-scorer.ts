@@ -3,12 +3,13 @@
  * against Polymarket crypto up/down market odds.
  *
  * Phase 2: 4 signals (funding rate, CVD, options skew, open interest)
- * Phase 3: 5 signals (+ liquidations via Coinalyze)
  *
+ * Fetches LIVE prices from Polymarket Gamma API (not stale snapshots).
  * Produces a Sentiment Divergence Score (SDS) for each active BTC market.
  */
 
 import { bq } from '../core/bigquery.js';
+import { fetchActiveMarkets, type GammaMarket } from '../core/polymarket-client.js';
 
 // ─── Signal weights (full 5-signal model) ───
 const WEIGHTS: Record<string, number> = {
@@ -36,6 +37,11 @@ function clamp(val: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, val));
 }
 
+function parseJsonField(s: string | unknown): unknown[] {
+  if (typeof s !== 'string') return [];
+  try { return JSON.parse(s); } catch { return []; }
+}
+
 interface DerivativesRow {
   funding_rate: number;
   spot_price: number;
@@ -46,15 +52,77 @@ interface DerivativesRow {
   fetched_at: string;
 }
 
-interface MarketRow {
-  condition_id: string;
+interface BtcMarket {
+  conditionId: string;
   question: string;
-  end_date: string;
+  endDate: string;
+  yesPrice: number;
+  timeframe: string;
+  cvdThreshold: number;
 }
 
-interface SnapshotRow {
-  market_id: string;
-  yes_price: number;
+/**
+ * Find active BTC up/down markets from the Gamma API with live prices.
+ */
+async function findBtcMarkets(): Promise<BtcMarket[]> {
+  // Fetch crypto markets directly from Polymarket with live prices
+  const allMarkets = await fetchActiveMarkets(100, 0);
+
+  // Filter for Bitcoin up/down markets
+  const btcMarkets = allMarkets.filter((m: GammaMarket) => {
+    const q = m.question.toLowerCase();
+    return m.active
+      && !m.closed
+      && (q.includes('bitcoin') || q.includes('btc'))
+      && (q.includes('up or down') || q.includes('above') || q.includes('higher'));
+  });
+
+  if (btcMarkets.length === 0) return [];
+
+  const now = Date.now();
+  const results: BtcMarket[] = [];
+
+  for (const m of btcMarkets) {
+    const prices = parseJsonField(m.outcomePrices) as string[];
+    const yesPrice = prices.length > 0 ? parseFloat(prices[0]) : NaN;
+    if (isNaN(yesPrice) || yesPrice <= 0 || yesPrice >= 1) continue;
+
+    const endMs = new Date(m.endDate).getTime();
+    const hoursToEnd = (endMs - now) / (3_600_000);
+
+    // Skip expired or very far-out markets
+    if (hoursToEnd <= 0 || hoursToEnd > 48) continue;
+
+    // Assign timeframe label based on actual end date
+    let timeframe: string;
+    let cvdThreshold: number;
+    if (hoursToEnd <= 2) {
+      timeframe = '1h';
+      cvdThreshold = CVD_THRESHOLD_1H;
+    } else if (hoursToEnd <= 6) {
+      timeframe = '4h';
+      cvdThreshold = CVD_THRESHOLD_4H;
+    } else if (hoursToEnd <= 12) {
+      timeframe = '12h';
+      cvdThreshold = CVD_THRESHOLD_4H;
+    } else {
+      timeframe = '24h';
+      cvdThreshold = CVD_THRESHOLD_4H;
+    }
+
+    results.push({
+      conditionId: m.conditionId,
+      question: m.question,
+      endDate: m.endDate,
+      yesPrice,
+      timeframe,
+      cvdThreshold,
+    });
+  }
+
+  // Sort by end date (nearest first), keep at most 3
+  results.sort((a, b) => new Date(a.endDate).getTime() - new Date(b.endDate).getTime());
+  return results.slice(0, 3);
 }
 
 export async function scoreCryptoSentiment(): Promise<{ signals: number; errors: string[] }> {
@@ -75,102 +143,24 @@ export async function scoreCryptoSentiment(): Promise<{ signals: number; errors:
 
   const deriv: DerivativesRow = derivRows[0];
 
-  // Step 2: Find active BTC Polymarket markets
-  const { data: btcMarkets, error: mErr } = await bq.rawQuery<MarketRow>(`
-    SELECT condition_id, question, end_date
-    FROM \`${process.env.GCP_PROJECT_ID}.${process.env.BQ_DATASET || 'polymarket'}.markets\`
-    WHERE category = 'crypto'
-      AND is_active = true
-      AND is_resolved = false
-      AND LOWER(question) LIKE '%bitcoin%'
-      AND (LOWER(question) LIKE '%above%' OR LOWER(question) LIKE '%higher%' OR LOWER(question) LIKE '%up%')
-    ORDER BY end_date ASC
-  `);
-
-  if (mErr) {
-    errors.push(`Market query: ${mErr.message}`);
+  // Step 2: Find active BTC markets with LIVE prices from Polymarket
+  let btcMarkets: BtcMarket[];
+  try {
+    btcMarkets = await findBtcMarkets();
+  } catch (err) {
+    return { signals: 0, errors: [`Gamma API: ${err instanceof Error ? err.message : String(err)}`] };
   }
 
-  if (!btcMarkets || btcMarkets.length === 0) {
-    return { signals: 0, errors: [...errors, 'No active BTC Polymarket markets found'] };
+  if (btcMarkets.length === 0) {
+    return { signals: 0, errors: ['No active BTC Polymarket markets found'] };
   }
 
-  // Match markets to timeframes based on end_date proximity
-  const now = Date.now();
-  const timeframeTargets = [
-    { label: '1h', targetMs: 1 * 60 * 60 * 1000, maxMs: 2 * 60 * 60 * 1000, cvdThreshold: CVD_THRESHOLD_1H },
-    { label: '4h', targetMs: 4 * 60 * 60 * 1000, maxMs: 6 * 60 * 60 * 1000, cvdThreshold: CVD_THRESHOLD_4H },
-  ];
-
-  const matchedMarkets: { market: MarketRow; timeframe: string; cvdThreshold: number }[] = [];
-
-  for (const tf of timeframeTargets) {
-    let bestMatch: MarketRow | null = null;
-    let bestDelta = Infinity;
-
-    for (const m of btcMarkets) {
-      const endMs = new Date(m.end_date).getTime();
-      const timeToEnd = endMs - now;
-
-      if (timeToEnd > 0 && timeToEnd <= tf.maxMs) {
-        const delta = Math.abs(timeToEnd - tf.targetMs);
-        if (delta < bestDelta) {
-          bestDelta = delta;
-          bestMatch = m;
-        }
-      }
-    }
-
-    if (bestMatch) {
-      matchedMarkets.push({ market: bestMatch, timeframe: tf.label, cvdThreshold: tf.cvdThreshold });
-    }
-  }
-
-  if (matchedMarkets.length === 0) {
-    const fallback = btcMarkets[0];
-    const endMs = new Date(fallback.end_date).getTime();
-    const hoursToEnd = (endMs - now) / (60 * 60 * 1000);
-    const tf = hoursToEnd <= 2 ? '1h' : '4h';
-    const threshold = tf === '1h' ? CVD_THRESHOLD_1H : CVD_THRESHOLD_4H;
-    matchedMarkets.push({ market: fallback, timeframe: tf, cvdThreshold: threshold });
-  }
-
-  // Step 3: Get Polymarket odds from latest snapshots
-  const marketIds = matchedMarkets.map(m => m.market.condition_id);
-
-  const { data: snapshots, error: sErr } = await bq.rawQuery<SnapshotRow>(`
-    SELECT market_id, yes_price
-    FROM (
-      SELECT market_id, yes_price, ROW_NUMBER() OVER (PARTITION BY market_id ORDER BY timestamp DESC) AS rn
-      FROM \`${process.env.GCP_PROJECT_ID}.${process.env.BQ_DATASET || 'polymarket'}.market_snapshots\`
-      WHERE market_id IN UNNEST(@ids)
-        AND timestamp >= @cutoff
-    )
-    WHERE rn = 1
-  `, {
-    ids: marketIds,
-    cutoff: new Date(now - 24 * 60 * 60 * 1000).toISOString(),
-  });
-
-  if (sErr) {
-    errors.push(`Snapshot query: ${sErr.message}`);
-  }
-
-  const priceByMarket = new Map<string, number>();
-  for (const s of snapshots ?? []) {
-    priceByMarket.set(s.market_id, Number(s.yes_price));
-  }
-
-  // Step 4: Compute signals and write rows
+  // Step 3: Compute signals and write rows
   const upsertRows = [];
   const computedAt = new Date().toISOString();
 
-  for (const { market, timeframe, cvdThreshold } of matchedMarkets) {
-    const polymarketProb = priceByMarket.get(market.condition_id);
-    if (polymarketProb === undefined) {
-      errors.push(`No snapshot for market ${market.condition_id}`);
-      continue;
-    }
+  for (const market of btcMarkets) {
+    const polymarketProb = market.yesPrice;
 
     // Normalize each signal to [-1, +1], track which are available
     const signals: { key: string; value: number }[] = [];
@@ -180,8 +170,8 @@ export async function scoreCryptoSentiment(): Promise<{ signals: number; errors:
     signals.push({ key: 'funding', value: fundingSignal });
 
     // CVD: positive = net buying pressure = bullish
-    const cvdRaw = timeframe === '1h' ? deriv.cvd_1h : deriv.cvd_4h;
-    const cvdSignal = clamp(cvdRaw / cvdThreshold, -1, 1);
+    const cvdRaw = market.timeframe === '1h' ? deriv.cvd_1h : deriv.cvd_4h;
+    const cvdSignal = clamp(cvdRaw / market.cvdThreshold, -1, 1);
     signals.push({ key: 'cvd', value: cvdSignal });
 
     // Options skew: positive skew = more puts = bearish, so negate
@@ -230,14 +220,14 @@ export async function scoreCryptoSentiment(): Promise<{ signals: number; errors:
     if (Math.abs(sds) > 15 && agreementScore >= 0.75) confidence = 'high';
     else if (Math.abs(sds) > 8 || agreementScore >= 0.75) confidence = 'medium';
 
-    const id = `BTC_${timeframe}_${Date.now()}`;
+    const id = `BTC_${market.timeframe}_${Date.now()}`;
 
     upsertRows.push({
       id,
       asset: 'BTC',
-      timeframe,
+      timeframe: market.timeframe,
       polymarket_prob: Math.round(polymarketProb * 10000) / 10000,
-      polymarket_market_id: market.condition_id,
+      polymarket_market_id: market.conditionId,
       polymarket_question: market.question,
       derivatives_prob: Math.round(derivativesProb * 10000) / 10000,
       sds: Math.round(sds * 100) / 100,
@@ -252,7 +242,7 @@ export async function scoreCryptoSentiment(): Promise<{ signals: number; errors:
       agreement_score: Math.round(agreementScore * 10000) / 10000,
       confidence,
       spot_price: deriv.spot_price,
-      window_end: market.end_date,
+      window_end: market.endDate,
       computed_at: computedAt,
     });
   }
