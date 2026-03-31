@@ -54,4 +54,54 @@ export async function ensureTables(): Promise<void> {
   }
 
   console.log('[EnsureTables] Wallet accumulative columns ready');
+
+  // ─── Crypto derivatives table ───
+  await bq.rawQuery(`
+    CREATE TABLE IF NOT EXISTS \`${dataset}.crypto_derivatives\` (
+      id STRING NOT NULL,
+      asset STRING NOT NULL,
+      funding_rate FLOAT64,
+      funding_rate_timestamp TIMESTAMP,
+      spot_price FLOAT64,
+      cvd_1h FLOAT64,
+      cvd_4h FLOAT64,
+      cvd_raw_buy_vol FLOAT64,
+      cvd_raw_sell_vol FLOAT64,
+      options_skew FLOAT64,
+      oi_change_pct FLOAT64,
+      liquidation_ratio FLOAT64,
+      fetched_at TIMESTAMP
+    )
+    CLUSTER BY asset
+  `);
+
+  // ─── Crypto signals table ───
+  await bq.rawQuery(`
+    CREATE TABLE IF NOT EXISTS \`${dataset}.crypto_signals\` (
+      id STRING NOT NULL,
+      asset STRING NOT NULL,
+      timeframe STRING NOT NULL,
+      polymarket_prob FLOAT64,
+      polymarket_market_id STRING,
+      polymarket_question STRING,
+      derivatives_prob FLOAT64,
+      sds FLOAT64,
+      sds_direction STRING,
+      signal_funding_rate FLOAT64,
+      signal_cvd FLOAT64,
+      signal_options_skew FLOAT64,
+      signal_oi FLOAT64,
+      signal_liquidation FLOAT64,
+      signals_active INT64,
+      signals_agreeing INT64,
+      agreement_score FLOAT64,
+      confidence STRING,
+      spot_price FLOAT64,
+      window_end TIMESTAMP,
+      computed_at TIMESTAMP
+    )
+    CLUSTER BY asset
+  `);
+
+  console.log('[EnsureTables] Crypto tables ready');
 }
