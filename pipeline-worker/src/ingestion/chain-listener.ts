@@ -21,7 +21,7 @@ import { dirtyTracker } from '../core/dirty-tracker.js';
 
 const ALLOWED_CATEGORIES = new Set(['politics', 'geopolitics', 'economics', 'crypto']);
 const POLL_INTERVAL_MS = 300_000; // 5 minutes
-const BACKFILL_BATCH_SIZE = 500n; // blocks per getLogs call
+const BACKFILL_BATCH_SIZE = 9n; // blocks per getLogs call (Alchemy free tier: max 10 blocks)
 const USDC_DECIMALS = 1e6;
 
 // ─── State ───
@@ -111,26 +111,34 @@ async function pollNewEvents(): Promise<void> {
   let eventsSkippedCategory = 0;
   let eventsAccepted = 0;
 
-  for (const address of [CTF_EXCHANGE, NEGRISK_CTF_EXCHANGE]) {
-    try {
-      const logs = await client.getContractEvents({
-        address,
-        abi: orderFilledAbi,
-        eventName: 'OrderFilled',
-        fromBlock,
-        toBlock: currentBlock,
-      });
+  // Chunk into BACKFILL_BATCH_SIZE blocks per call (Alchemy free tier: max 10)
+  let current = fromBlock;
+  while (current <= currentBlock) {
+    const end = current + BACKFILL_BATCH_SIZE > currentBlock ? currentBlock : current + BACKFILL_BATCH_SIZE;
 
-      for (const log of logs) {
-        eventsReceived++;
-        const result = handleOrderFilled(log);
-        if (result === 'accepted') eventsAccepted++;
-        else if (result === 'unknown') eventsSkippedUnknown++;
-        else if (result === 'category') eventsSkippedCategory++;
+    for (const address of [CTF_EXCHANGE, NEGRISK_CTF_EXCHANGE]) {
+      try {
+        const logs = await client.getContractEvents({
+          address,
+          abi: orderFilledAbi,
+          eventName: 'OrderFilled',
+          fromBlock: current,
+          toBlock: end,
+        });
+
+        for (const log of logs) {
+          eventsReceived++;
+          const result = handleOrderFilled(log);
+          if (result === 'accepted') eventsAccepted++;
+          else if (result === 'unknown') eventsSkippedUnknown++;
+          else if (result === 'category') eventsSkippedCategory++;
+        }
+      } catch (err) {
+        console.warn(`[ChainListener] getLogs error (${address === CTF_EXCHANGE ? 'CTF' : 'NegRisk'}) blocks ${current}-${end}: ${err instanceof Error ? err.message : err}`);
       }
-    } catch (err) {
-      console.warn(`[ChainListener] getLogs error (${address === CTF_EXCHANGE ? 'CTF' : 'NegRisk'}) blocks ${fromBlock}-${currentBlock}: ${err instanceof Error ? err.message : err}`);
     }
+
+    current = end + 1n;
   }
 
   lastProcessedBlock = currentBlock;
