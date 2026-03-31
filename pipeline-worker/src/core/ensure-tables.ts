@@ -104,4 +104,16 @@ export async function ensureTables(): Promise<void> {
   `);
 
   console.log('[EnsureTables] Crypto tables ready');
+
+  // Add open_interest_raw column (idempotent)
+  try {
+    await bq.rawQuery(
+      `ALTER TABLE \`${dataset}.crypto_derivatives\` ADD COLUMN IF NOT EXISTS open_interest_raw FLOAT64`
+    );
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (!msg.includes('already exists')) {
+      console.warn(`[EnsureTables] Failed to add crypto_derivatives.open_interest_raw: ${msg}`);
+    }
+  }
 }

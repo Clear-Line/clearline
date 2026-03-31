@@ -2,8 +2,8 @@
  * Crypto Sentiment Scorer — compares derivatives market consensus
  * against Polymarket crypto up/down market odds.
  *
- * Phase 1: 2 signals (funding rate + spot CVD)
- * Phase 2: 5 signals (+ options skew, OI, liquidations)
+ * Phase 2: 4 signals (funding rate, CVD, options skew, open interest)
+ * Phase 3: 5 signals (+ liquidations via Coinalyze)
  *
  * Produces a Sentiment Divergence Score (SDS) for each active BTC market.
  */
@@ -11,7 +11,7 @@
 import { bq } from '../core/bigquery.js';
 
 // ─── Signal weights (full 5-signal model) ───
-const WEIGHTS = {
+const WEIGHTS: Record<string, number> = {
   funding: 0.25,
   cvd: 0.20,
   optionsSkew: 0.20,
@@ -19,19 +19,18 @@ const WEIGHTS = {
   liquidation: 0.15,
 };
 
-// Phase 1: only funding + CVD are active
-const ACTIVE_WEIGHTS = {
-  funding: WEIGHTS.funding,
-  cvd: WEIGHTS.cvd,
-};
-const TOTAL_ACTIVE_WEIGHT = Object.values(ACTIVE_WEIGHTS).reduce((a, b) => a + b, 0);
-
 // CVD normalization thresholds (USD)
 const CVD_THRESHOLD_1H = 50_000_000;   // $50M
 const CVD_THRESHOLD_4H = 200_000_000;  // $200M
 
 // Funding rate normalization (0.001 = 0.1% is extreme)
 const FUNDING_SCALE = 0.001;
+
+// Options skew normalization (put/call ratio - 1.0; 0.5 means 50% more puts than calls)
+const SKEW_SCALE = 0.5;
+
+// OI change normalization (10% change in 10 min is extreme)
+const OI_SCALE = 10;
 
 function clamp(val: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, val));
@@ -42,6 +41,8 @@ interface DerivativesRow {
   spot_price: number;
   cvd_1h: number;
   cvd_4h: number;
+  options_skew: number | null;
+  oi_change_pct: number | null;
   fetched_at: string;
 }
 
@@ -63,7 +64,7 @@ export async function scoreCryptoSentiment(): Promise<{ signals: number; errors:
   // Step 1: Get latest derivatives data
   const { data: derivRows, error: dErr } = await bq
     .from('crypto_derivatives')
-    .select('funding_rate, spot_price, cvd_1h, cvd_4h, fetched_at')
+    .select('funding_rate, spot_price, cvd_1h, cvd_4h, options_skew, oi_change_pct, fetched_at')
     .eq('asset', 'BTC')
     .order('fetched_at', { ascending: false })
     .limit(1);
@@ -111,7 +112,6 @@ export async function scoreCryptoSentiment(): Promise<{ signals: number; errors:
       const endMs = new Date(m.end_date).getTime();
       const timeToEnd = endMs - now;
 
-      // Market must end in the future and within reasonable range
       if (timeToEnd > 0 && timeToEnd <= tf.maxMs) {
         const delta = Math.abs(timeToEnd - tf.targetMs);
         if (delta < bestDelta) {
@@ -127,7 +127,6 @@ export async function scoreCryptoSentiment(): Promise<{ signals: number; errors:
   }
 
   if (matchedMarkets.length === 0) {
-    // No markets with suitable end times — try any active BTC market
     const fallback = btcMarkets[0];
     const endMs = new Date(fallback.end_date).getTime();
     const hoursToEnd = (endMs - now) / (60 * 60 * 1000);
@@ -173,29 +172,52 @@ export async function scoreCryptoSentiment(): Promise<{ signals: number; errors:
       continue;
     }
 
-    // Normalize signals to [-1, +1]
+    // Normalize each signal to [-1, +1], track which are available
+    const signals: { key: string; value: number }[] = [];
+
+    // Funding rate: positive = longs paying shorts = bullish sentiment
     const fundingSignal = clamp(deriv.funding_rate / FUNDING_SCALE, -1, 1);
+    signals.push({ key: 'funding', value: fundingSignal });
+
+    // CVD: positive = net buying pressure = bullish
     const cvdRaw = timeframe === '1h' ? deriv.cvd_1h : deriv.cvd_4h;
     const cvdSignal = clamp(cvdRaw / cvdThreshold, -1, 1);
+    signals.push({ key: 'cvd', value: cvdSignal });
 
-    // Rescale weights for active signals only
-    const wFunding = ACTIVE_WEIGHTS.funding / TOTAL_ACTIVE_WEIGHT;
-    const wCvd = ACTIVE_WEIGHTS.cvd / TOTAL_ACTIVE_WEIGHT;
+    // Options skew: positive skew = more puts = bearish, so negate
+    let skewSignal: number | null = null;
+    if (deriv.options_skew != null) {
+      skewSignal = clamp(-deriv.options_skew / SKEW_SCALE, -1, 1);
+      signals.push({ key: 'optionsSkew', value: skewSignal });
+    }
 
-    // Composite signal: [-1, +1]
-    const composite = fundingSignal * wFunding + cvdSignal * wCvd;
+    // OI change: rising OI = new money entering = mildly bullish
+    let oiSignal: number | null = null;
+    if (deriv.oi_change_pct != null) {
+      oiSignal = clamp(deriv.oi_change_pct / OI_SCALE, -1, 1);
+      signals.push({ key: 'oi', value: oiSignal });
+    }
 
-    // Map to probability: 0.2–0.8 range (conservative, avoids extreme predictions)
+    // Dynamic weight rescaling based on available signals
+    const activeWeight = signals.reduce((sum, s) => sum + (WEIGHTS[s.key] ?? 0), 0);
+    if (activeWeight === 0) continue;
+
+    const composite = signals.reduce(
+      (sum, s) => sum + s.value * ((WEIGHTS[s.key] ?? 0) / activeWeight),
+      0,
+    );
+
+    // Map to probability: 0.2–0.8 range
     const derivativesProb = 0.5 + composite * 0.3;
 
     // Sentiment Divergence Score
     const sds = (derivativesProb - polymarketProb) * 100;
 
     // Agreement: how many signals point same direction
-    const signalsActive = 2;
-    const fundingBullish = fundingSignal > 0;
-    const cvdBullish = cvdSignal > 0;
-    const signalsAgreeing = fundingBullish === cvdBullish ? 2 : 1;
+    const signalsActive = signals.length;
+    const bullishCount = signals.filter(s => s.value > 0).length;
+    const bearishCount = signalsActive - bullishCount;
+    const signalsAgreeing = Math.max(bullishCount, bearishCount);
     const agreementScore = signalsAgreeing / signalsActive;
 
     // Direction
@@ -205,8 +227,8 @@ export async function scoreCryptoSentiment(): Promise<{ signals: number; errors:
 
     // Confidence
     let confidence = 'low';
-    if (Math.abs(sds) > 15 && agreementScore >= 1.0) confidence = 'high';
-    else if (Math.abs(sds) > 8 || agreementScore >= 1.0) confidence = 'medium';
+    if (Math.abs(sds) > 15 && agreementScore >= 0.75) confidence = 'high';
+    else if (Math.abs(sds) > 8 || agreementScore >= 0.75) confidence = 'medium';
 
     const id = `BTC_${timeframe}_${Date.now()}`;
 
@@ -222,12 +244,12 @@ export async function scoreCryptoSentiment(): Promise<{ signals: number; errors:
       sds_direction: sdsDirection,
       signal_funding_rate: Math.round(fundingSignal * 10000) / 10000,
       signal_cvd: Math.round(cvdSignal * 10000) / 10000,
-      signal_options_skew: null,
-      signal_oi: null,
+      signal_options_skew: skewSignal != null ? Math.round(skewSignal * 10000) / 10000 : null,
+      signal_oi: oiSignal != null ? Math.round(oiSignal * 10000) / 10000 : null,
       signal_liquidation: null,
       signals_active: signalsActive,
       signals_agreeing: signalsAgreeing,
-      agreement_score: agreementScore,
+      agreement_score: Math.round(agreementScore * 10000) / 10000,
       confidence,
       spot_price: deriv.spot_price,
       window_end: market.end_date,
@@ -249,7 +271,7 @@ export async function scoreCryptoSentiment(): Promise<{ signals: number; errors:
 
   if (signalsWritten > 0) {
     const first = upsertRows[0];
-    console.log(`[CryptoSentiment] BTC ${first.timeframe}: Polymarket=${(first.polymarket_prob * 100).toFixed(1)}% Derivatives=${(first.derivatives_prob * 100).toFixed(1)}% SDS=${first.sds > 0 ? '+' : ''}${first.sds.toFixed(1)} (${first.confidence})`);
+    console.log(`[CryptoSentiment] BTC ${first.timeframe}: Polymarket=${(first.polymarket_prob * 100).toFixed(1)}% Derivatives=${(first.derivatives_prob * 100).toFixed(1)}% SDS=${first.sds > 0 ? '+' : ''}${first.sds.toFixed(1)} (${first.confidence}) [${first.signals_active} signals]`);
   }
 
   return { signals: signalsWritten, errors };

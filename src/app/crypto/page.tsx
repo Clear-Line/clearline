@@ -45,6 +45,8 @@ interface DerivativesData {
   cvd4h: number;
   buyVol: number;
   sellVol: number;
+  optionsSkew: number | null;
+  oiChangePct: number | null;
   fetchedAt: string;
 }
 
@@ -94,6 +96,14 @@ function timeAgo(iso: string): string {
   if (mins < 60) return `${mins}m ago`;
   return `${Math.floor(mins / 60)}h ago`;
 }
+
+const SIGNAL_EXPLANATIONS: Record<string, string> = {
+  "Funding Rate": "Fees longs pay shorts every 8h. Positive means traders are paying to bet up.",
+  "Spot CVD": "Net buying vs selling pressure in USD. Positive means more buying.",
+  "Options Skew": "Put vs call demand on Deribit. More puts means hedging against drops.",
+  "Open Interest": "Change in open futures contracts. Rising means new money entering.",
+  "Liquidations": "Long vs short liquidation ratio. More long liquidations means longs getting wiped.",
+};
 
 // ─── Main Page ───
 
@@ -162,6 +172,9 @@ export default function CryptoPage() {
           <p className="text-[#64748b] text-sm mt-1">
             Derivatives consensus vs Polymarket probability
           </p>
+          <p className="text-[#475569] text-xs mt-2 max-w-[640px]">
+            Compares what futures and options traders are doing against what Polymarket bettors think will happen. When they disagree, it may signal a mispricing.
+          </p>
         </div>
 
         {/* Live data bar */}
@@ -171,9 +184,11 @@ export default function CryptoPage() {
               <thead>
                 <tr className="border-b border-[rgba(255,255,255,0.06)]">
                   <th className="text-left text-[#64748b] text-xs font-medium px-4 py-2">BTC Price</th>
-                  <th className="text-left text-[#64748b] text-xs font-medium px-4 py-2">Funding Rate</th>
-                  <th className="text-left text-[#64748b] text-xs font-medium px-4 py-2">CVD 1h</th>
-                  <th className="text-left text-[#64748b] text-xs font-medium px-4 py-2">CVD 4h</th>
+                  <th className="text-left text-[#64748b] text-xs font-medium px-4 py-2">Funding (8h)</th>
+                  <th className="text-left text-[#64748b] text-xs font-medium px-4 py-2">Buy/Sell Delta 1h</th>
+                  <th className="text-left text-[#64748b] text-xs font-medium px-4 py-2">Buy/Sell Delta 4h</th>
+                  <th className="text-left text-[#64748b] text-xs font-medium px-4 py-2">Options Skew</th>
+                  <th className="text-left text-[#64748b] text-xs font-medium px-4 py-2">OI Change</th>
                   <th className="text-right text-[#64748b] text-xs font-medium px-4 py-2">Updated</th>
                 </tr>
               </thead>
@@ -188,6 +203,12 @@ export default function CryptoPage() {
                   </td>
                   <td className={`px-4 py-3 font-mono ${deriv.cvd4h >= 0 ? "text-[#10b981]" : "text-[#ef4444]"}`}>
                     {formatVol(deriv.cvd4h)}
+                  </td>
+                  <td className={`px-4 py-3 font-mono ${deriv.optionsSkew != null ? (deriv.optionsSkew <= 0 ? "text-[#10b981]" : "text-[#ef4444]") : "text-[#64748b]"}`}>
+                    {deriv.optionsSkew != null ? `${deriv.optionsSkew > 0 ? "+" : ""}${(deriv.optionsSkew * 100).toFixed(1)}%` : "-"}
+                  </td>
+                  <td className={`px-4 py-3 font-mono ${deriv.oiChangePct != null ? (deriv.oiChangePct >= 0 ? "text-[#10b981]" : "text-[#ef4444]") : "text-[#64748b]"}`}>
+                    {deriv.oiChangePct != null ? `${deriv.oiChangePct >= 0 ? "+" : ""}${deriv.oiChangePct.toFixed(2)}%` : "-"}
                   </td>
                   <td className="px-4 py-3 text-right text-[#64748b] text-xs">{timeAgo(deriv.fetchedAt)}</td>
                 </tr>
@@ -278,27 +299,36 @@ export default function CryptoPage() {
                     <table className="w-full text-xs">
                       <thead>
                         <tr className="text-[#64748b]">
-                          <th className="text-left font-medium pb-1 w-1/3">Name</th>
-                          <th className="text-left font-medium pb-1 w-1/4">Direction</th>
-                          <th className="text-right font-medium pb-1 w-1/4">Normalized</th>
-                          <th className="text-right font-medium pb-1 w-1/4">Raw</th>
+                          <th className="text-left font-medium pb-1 w-2/5">Name</th>
+                          <th className="text-left font-medium pb-1 w-1/5">Direction</th>
+                          <th className="text-right font-medium pb-1 w-1/5">Normalized</th>
+                          <th className="text-right font-medium pb-1 w-1/5">Raw</th>
                         </tr>
                       </thead>
                       <tbody>
                         {activeSignals.map((s) => (
                           <tr key={s.label}>
-                            <td className="py-1 text-[#94a3b8]">{s.label}</td>
-                            <td className={`py-1 ${s.direction === "bullish" ? "text-[#10b981]" : "text-[#ef4444]"}`}>
+                            <td className="py-1.5">
+                              <span className="text-[#94a3b8]">{s.label}</span>
+                              <span className="block text-[#475569] text-[10px] leading-tight mt-0.5">
+                                {SIGNAL_EXPLANATIONS[s.label] ?? ""}
+                              </span>
+                            </td>
+                            <td className={`py-1.5 ${s.direction === "bullish" ? "text-[#10b981]" : "text-[#ef4444]"}`}>
                               {s.direction}
                             </td>
-                            <td className={`py-1 text-right font-mono ${s.direction === "bullish" ? "text-[#10b981]" : "text-[#ef4444]"}`}>
+                            <td className={`py-1.5 text-right font-mono ${s.direction === "bullish" ? "text-[#10b981]" : "text-[#ef4444]"}`}>
                               {s.value > 0 ? "+" : ""}{s.value.toFixed(3)}
                             </td>
-                            <td className="py-1 text-right text-[#64748b] font-mono">
+                            <td className="py-1.5 text-right text-[#64748b] font-mono">
                               {s.label === "Funding Rate" && s.raw != null
                                 ? `${(s.raw * 100).toFixed(4)}%`
                                 : s.label === "Spot CVD" && s.raw != null
                                 ? formatVol(s.raw)
+                                : s.label === "Options Skew" && s.raw != null
+                                ? `${s.raw > 0 ? "+" : ""}${(s.raw * 100).toFixed(1)}%`
+                                : s.label === "Open Interest" && s.raw != null
+                                ? `${s.raw >= 0 ? "+" : ""}${s.raw.toFixed(2)}%`
                                 : "-"}
                             </td>
                           </tr>
