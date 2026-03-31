@@ -13,7 +13,8 @@ import http from 'node:http';
 // ─── Ingestion Layer ───
 import { pollMarkets } from './ingestion/market-discovery.js';
 import { snapshotBooks } from './ingestion/book-fetcher.js';
-import { pollTrades } from './ingestion/trade-fetcher.js';
+import { startChainListener, stopChainListener } from './ingestion/chain-listener.js';
+import { loadTokenRegistry } from './core/token-registry.js';
 
 // ─── Enrichment Layer ───
 import { computeAccuracy } from './enrichment/accuracy-computer.js';
@@ -41,10 +42,10 @@ http.createServer((_req, res) => {
 // ─── Startup ───
 
 console.log('');
-console.log('  CLEARLINE PIPELINE WORKER v3.0 (wallet intelligence rebuild)');
+console.log('  CLEARLINE PIPELINE WORKER v4.0 (on-chain trade ingestion)');
+console.log('  Trades: real-time Polygon chain listener (politics/geopolitics/economics/crypto)');
 console.log('  Ingestion: 30min | Scanner: 2h | Enrichment: 6h | Falcon: weekly');
 console.log('  Crypto: 10min derivatives + sentiment scoring');
-console.log('  Signal: Smart money buy/sell');
 console.log('');
 
 // ─── Register Jobs ───
@@ -53,6 +54,9 @@ console.log('');
 registerJob('market-discovery', '*/30 * * * *', async () => {
   const result = await pollMarkets();
   console.log(`  -> Markets upserted: ${result.upserted}, errors: ${result.errors.length}`);
+  // Refresh token registry so chain listener picks up new markets
+  const size = await loadTokenRegistry();
+  console.log(`  -> Token registry refreshed: ${size} tokens`);
 });
 
 registerJob('book-fetcher', '*/30 * * * *', async () => {
@@ -60,10 +64,7 @@ registerJob('book-fetcher', '*/30 * * * *', async () => {
   console.log(`  -> Books updated: ${result.updated}, errors: ${result.errors.length}`);
 });
 
-registerJob('trade-fetcher', '*/30 * * * *', async () => {
-  const result = await pollTrades();
-  console.log(`  -> Trades inserted: ${result.inserted}, markets: ${result.telemetry.marketsSelected}`);
-});
+// trade-fetcher replaced by chain-listener (started on boot, not cron)
 
 // Enrichment: every 6 hours (heavy queries — run infrequently to save costs)
 registerJob('accuracy', '0 */6 * * *', async () => {
@@ -134,12 +135,14 @@ async function runInitialPipeline(): Promise<void> {
     const markets = await pollMarkets();
     console.log(`  -> ${markets.upserted} markets upserted`);
 
-    console.log('[2/5] Book snapshots + Trade fetching...');
-    const [books, trades] = await Promise.all([
-      snapshotBooks(),
-      pollTrades(),
-    ]);
-    console.log(`  -> ${books.updated} books, ${trades.inserted} trades`);
+    console.log('[2/5] Book snapshots + Chain listener...');
+    const books = await snapshotBooks();
+    console.log(`  -> ${books.updated} books`);
+
+    // Load token registry and start on-chain trade listener
+    console.log('[2.5/5] Starting on-chain trade listener...');
+    await loadTokenRegistry();
+    await startChainListener();
 
     console.log('[3/5] Accuracy + Wallet profiling...');
     const [accuracy, wallets] = await Promise.all([
@@ -174,10 +177,12 @@ setTimeout(runInitialPipeline, 2000);
 // ─── Keep process alive ───
 process.on('SIGINT', () => {
   console.log('\n[Worker] Shutting down...');
+  stopChainListener();
   process.exit(0);
 });
 
 process.on('SIGTERM', () => {
   console.log('\n[Worker] Received SIGTERM, shutting down...');
+  stopChainListener();
   process.exit(0);
 });
