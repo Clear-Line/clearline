@@ -26,7 +26,7 @@ const InteractiveGlobe = dynamic(
 );
 
 type SortOption = "highest-volume" | "biggest-movers" | "smart-money" | "highest-odds" | "lowest-odds";
-const TERMINAL_MARKET_LIMIT = 1000;
+const TERMINAL_MARKET_LIMIT = 500;
 
 function formatVolume(v: number): string {
   if (v >= 1_000_000) return `$${(v / 1_000_000).toFixed(1)}M`;
