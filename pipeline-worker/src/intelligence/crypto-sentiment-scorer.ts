@@ -74,7 +74,7 @@ async function findBtcMarkets(): Promise<BtcMarket[]> {
     return m.active
       && !m.closed
       && (q.includes('bitcoin') || q.includes('btc'))
-      && (q.includes('up or down') || q.includes('above') || q.includes('higher'));
+      && q.includes('up or down');
   });
 
   if (btcMarkets.length === 0) return [];
@@ -86,6 +86,13 @@ async function findBtcMarkets(): Promise<BtcMarket[]> {
     const prices = parseJsonField(m.outcomePrices) as string[];
     const yesPrice = prices.length > 0 ? parseFloat(prices[0]) : NaN;
     if (isNaN(yesPrice) || yesPrice <= 0 || yesPrice >= 1) continue;
+
+    // Skip markets that haven't started yet
+    const startMs = new Date(m.startDate).getTime();
+    if (startMs > now) continue;
+
+    // Skip untouched markets (exactly 50/50 means no real trading yet)
+    if (yesPrice === 0.5) continue;
 
     const endMs = new Date(m.endDate).getTime();
     const hoursToEnd = (endMs - now) / (3_600_000);

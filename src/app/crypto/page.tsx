@@ -80,14 +80,16 @@ function formatPrice(v: number): string {
   });
 }
 
-function timeRemaining(windowEnd: string): string {
-  const diff = new Date(windowEnd).getTime() - Date.now();
+function timeRemaining(windowEnd: string, now: number): string {
+  const diff = new Date(windowEnd).getTime() - now;
   if (diff <= 0) return "Expired";
-  const mins = Math.floor(diff / 60_000);
-  if (mins < 60) return `${mins}m left`;
-  const hours = Math.floor(mins / 60);
-  const rem = mins % 60;
-  return `${hours}h ${rem}m left`;
+  const totalSec = Math.floor(diff / 1000);
+  const hours = Math.floor(totalSec / 3600);
+  const mins = Math.floor((totalSec % 3600) / 60);
+  const secs = totalSec % 60;
+  if (hours > 0) return `${hours}h ${mins}m ${secs}s`;
+  if (mins > 0) return `${mins}m ${secs}s`;
+  return `${secs}s`;
 }
 
 function timeAgo(iso: string): string {
@@ -111,6 +113,7 @@ export default function CryptoPage() {
   const [data, setData] = useState<SentimentResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [now, setNow] = useState(Date.now());
 
   const fetchData = useCallback(async () => {
     try {
@@ -130,6 +133,12 @@ export default function CryptoPage() {
     const interval = setInterval(fetchData, 60_000);
     return () => clearInterval(interval);
   }, [fetchData]);
+
+  // Live countdown tick
+  useEffect(() => {
+    const tick = setInterval(() => setNow(Date.now()), 1_000);
+    return () => clearInterval(tick);
+  }, []);
 
   if (loading) {
     return (
@@ -245,7 +254,7 @@ export default function CryptoPage() {
                         {sig.polymarketQuestion}
                       </span>
                     </div>
-                    <span className="text-[#64748b] text-xs">{timeRemaining(sig.windowEnd)}</span>
+                    <span className="text-[#64748b] text-xs font-mono">{timeRemaining(sig.windowEnd, now)}</span>
                   </div>
 
                   {/* Probability comparison */}
