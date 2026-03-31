@@ -22,6 +22,10 @@ import { bootstrapFromFalcon } from './enrichment/falcon-bootstrap.js';
 
 // ─── Intelligence Layer ───
 import { scanSmartMoney } from './intelligence/smart-money-scanner.js';
+import { scoreCryptoSentiment } from './intelligence/crypto-sentiment-scorer.js';
+
+// ─── Crypto Layer ───
+import { fetchDerivatives } from './ingestion/derivatives-fetcher.js';
 
 // ─── Maintenance ───
 import { ensureTables } from './core/ensure-tables.js';
@@ -39,6 +43,7 @@ http.createServer((_req, res) => {
 console.log('');
 console.log('  CLEARLINE PIPELINE WORKER v3.0 (wallet intelligence rebuild)');
 console.log('  Ingestion: 30min | Scanner: 2h | Enrichment: 6h | Falcon: weekly');
+console.log('  Crypto: 10min derivatives + sentiment scoring');
 console.log('  Signal: Smart money buy/sell');
 console.log('');
 
@@ -78,6 +83,19 @@ registerJob('smart-money-scanner', '0 */2 * * *', async () => {
   console.log(`  -> Cards: ${result.cards}, signals: ${t.marketsWithSignal}, wallets: ${t.smartWalletsUsed}${t.falconEnriched ? ' (Falcon enriched)' : ''}`);
   if (t.divergencesDetected > 0) console.log(`  -> Volume divergences: ${t.divergencesDetected}`);
   if (t.vacuumsDetected > 0) console.log(`  -> Liquidity vacuums: ${t.vacuumsDetected}`);
+  if (result.errors.length > 0) console.log(`  -> Errors: ${result.errors.slice(0, 3).join('; ')}`);
+});
+
+// Crypto: every 10 minutes — derivatives data + sentiment scoring
+registerJob('derivatives-fetcher', '*/10 * * * *', async () => {
+  const result = await fetchDerivatives();
+  console.log(`  -> Derivatives: ${result.asset} FR=${result.fundingRate.toFixed(6)} CVD1h=$${(result.cvd1h / 1e6).toFixed(1)}M CVD4h=$${(result.cvd4h / 1e6).toFixed(1)}M`);
+  if (result.errors.length > 0) console.log(`  -> Errors: ${result.errors.slice(0, 3).join('; ')}`);
+});
+
+registerJob('crypto-sentiment-scorer', '2-59/10 * * * *', async () => {
+  const result = await scoreCryptoSentiment();
+  console.log(`  -> Crypto signals: ${result.signals} computed`);
   if (result.errors.length > 0) console.log(`  -> Errors: ${result.errors.slice(0, 3).join('; ')}`);
 });
 
@@ -137,6 +155,12 @@ async function runInitialPipeline(): Promise<void> {
     if (smt.divergencesDetected > 0) console.log(`  -> Volume divergences: ${smt.divergencesDetected}`);
     if (smt.vacuumsDetected > 0) console.log(`  -> Liquidity vacuums: ${smt.vacuumsDetected}`);
     if (smartMoney.errors.length > 0) console.log(`  -> Errors: ${smartMoney.errors.slice(0, 3).join('; ')}`);
+
+    console.log('[5/5] Crypto derivatives + sentiment scoring...');
+    const derivResult = await fetchDerivatives();
+    console.log(`  -> Derivatives: BTC FR=${derivResult.fundingRate.toFixed(6)} CVD1h=$${(derivResult.cvd1h / 1e6).toFixed(1)}M`);
+    const cryptoSignals = await scoreCryptoSentiment();
+    console.log(`  -> Crypto signals: ${cryptoSignals.signals} computed`);
 
     console.log('\n[Worker] Initial pipeline complete. Scheduler is running.\n');
   } catch (err) {
