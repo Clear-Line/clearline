@@ -116,4 +116,16 @@ export async function ensureTables(): Promise<void> {
       console.warn(`[EnsureTables] Failed to add crypto_derivatives.open_interest_raw: ${msg}`);
     }
   }
+
+  // ─── Pipeline metadata (key-value store for chain listener state) ───
+  await bq.rawQuery(`
+    CREATE TABLE IF NOT EXISTS \`${dataset}.pipeline_metadata\` (
+      key STRING NOT NULL,
+      value STRING,
+      updated_at TIMESTAMP
+    )
+    CLUSTER BY key
+  `);
+
+  console.log('[EnsureTables] Pipeline metadata table ready');
 }
