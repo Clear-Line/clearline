@@ -102,6 +102,35 @@ export async function ensureTables(): Promise<void> {
     CLUSTER BY asset
   `);
 
+  // ─── BTC market cycles (accuracy tracking — permanent, no purge) ───
+  await bq.rawQuery(`
+    CREATE TABLE IF NOT EXISTS \`${dataset}.btc_market_cycles\` (
+      id STRING NOT NULL,
+      condition_id STRING NOT NULL,
+      timeframe STRING NOT NULL,
+      question STRING,
+      window_start TIMESTAMP,
+      window_end TIMESTAMP NOT NULL,
+      initial_polymarket_prob FLOAT64,
+      initial_derivatives_prob FLOAT64,
+      initial_sds FLOAT64,
+      initial_sds_direction STRING,
+      initial_confidence STRING,
+      initial_spot_price FLOAT64,
+      signal_captured_at TIMESTAMP,
+      is_resolved BOOL,
+      resolution_outcome STRING,
+      resolved_at TIMESTAMP,
+      clearline_predicted_up BOOL,
+      polymarket_predicted_up BOOL,
+      clearline_correct BOOL,
+      polymarket_correct BOOL,
+      created_at TIMESTAMP,
+      updated_at TIMESTAMP
+    )
+    CLUSTER BY timeframe
+  `);
+
   console.log('[EnsureTables] Crypto tables ready');
 
   // Add open_interest_raw column (idempotent)

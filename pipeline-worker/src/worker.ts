@@ -19,6 +19,7 @@ import { loadTokenRegistry } from './core/token-registry.js';
 // ─── Enrichment Layer ───
 import { computeAccuracy } from './enrichment/accuracy-computer.js';
 import { profileWallets } from './enrichment/wallet-profiler.js';
+import { checkBtcResolutions } from './enrichment/btc-resolution-checker.js';
 // ─── Intelligence Layer ───
 import { scanSmartMoney } from './intelligence/smart-money-scanner.js';
 import { scoreCryptoSentiment } from './intelligence/crypto-sentiment-scorer.js';
@@ -96,6 +97,10 @@ registerJob('crypto-sentiment-scorer', '2-59/10 * * * *', async () => {
   const result = await scoreCryptoSentiment();
   console.log(`  -> Crypto signals: ${result.signals} computed`);
   if (result.errors.length > 0) console.log(`  -> Errors: ${result.errors.slice(0, 3).join('; ')}`);
+
+  const res = await checkBtcResolutions();
+  if (res.resolved > 0) console.log(`  -> BTC cycles resolved: ${res.resolved}`);
+  if (res.errors.length > 0) console.log(`  -> Resolution errors: ${res.errors.slice(0, 3).join('; ')}`);
 });
 
 // Maintenance: purge old data every 6 hours to keep table sizes small
@@ -151,6 +156,8 @@ async function runInitialPipeline(): Promise<void> {
     console.log(`  -> Derivatives: BTC FR=${derivResult.fundingRate.toFixed(6)} CVD1h=$${(derivResult.cvd1h / 1e6).toFixed(1)}M`);
     const cryptoSignals = await scoreCryptoSentiment();
     console.log(`  -> Crypto signals: ${cryptoSignals.signals} computed`);
+    const btcRes = await checkBtcResolutions();
+    if (btcRes.resolved > 0) console.log(`  -> BTC cycles resolved: ${btcRes.resolved}`);
 
     console.log('\n[Worker] Initial pipeline complete. Scheduler is running.\n');
   } catch (err) {

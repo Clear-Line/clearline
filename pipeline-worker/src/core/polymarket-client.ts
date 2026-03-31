@@ -55,6 +55,28 @@ export async function fetchActiveMarkets(limit = 100, offset = 0): Promise<Gamma
   return res.json();
 }
 
+export async function fetchCryptoMarkets(limit = 200): Promise<GammaMarket[]> {
+  const params = new URLSearchParams({
+    active: 'true',
+    closed: 'false',
+    tag: 'crypto',
+    limit: String(limit),
+  });
+
+  const res = await fetch(`${GAMMA_API}/markets?${params}`);
+  if (!res.ok) throw new Error(`Gamma /markets (crypto) failed: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchMarketByConditionId(conditionId: string): Promise<GammaMarket | null> {
+  const res = await fetch(`${GAMMA_API}/markets/${conditionId}`);
+  if (!res.ok) return null;
+  const data = await res.json();
+  // API may return a single object or an array
+  if (Array.isArray(data)) return data.length > 0 ? data[0] : null;
+  return data;
+}
+
 export async function fetchPoliticalEvents(limit = 100): Promise<GammaEvent[]> {
   const params = new URLSearchParams({
     active: 'true',
