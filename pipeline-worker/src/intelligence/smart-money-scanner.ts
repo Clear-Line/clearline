@@ -165,18 +165,20 @@ export async function scanSmartMoney(): Promise<{
     const eightHoursAgo = new Date(Date.now() - 8 * 60 * 60 * 1000).toISOString();
     const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
 
-    // Get latest snapshot per market — deduplicated at the SQL level
-    // This returns one row per market (the most recent snapshot), ordered by volume
+    // Get mid-volume markets (ranks 101–600) — skip top 100, take next 500
     const { data: dedupedSnaps, error: snapErr } = await bq.rawQuery<SnapshotRow>(`
       SELECT market_id, yes_price, volume_24h, liquidity, spread, timestamp
       FROM (
-        SELECT *, ROW_NUMBER() OVER (PARTITION BY market_id ORDER BY timestamp DESC) AS rn
-        FROM \`${process.env.GCP_PROJECT_ID}.${process.env.BQ_DATASET || 'polymarket'}.market_snapshots\`
-        WHERE timestamp >= @cutoff AND volume_24h > 0
+        SELECT *, ROW_NUMBER() OVER (ORDER BY volume_24h DESC) AS vol_rn
+        FROM (
+          SELECT *, ROW_NUMBER() OVER (PARTITION BY market_id ORDER BY timestamp DESC) AS rn
+          FROM \`${process.env.GCP_PROJECT_ID}.${process.env.BQ_DATASET || 'polymarket'}.market_snapshots\`
+          WHERE timestamp >= @cutoff AND volume_24h > 0
+        )
+        WHERE rn = 1
       )
-      WHERE rn = 1
+      WHERE vol_rn > 100 AND vol_rn <= 600
       ORDER BY volume_24h DESC
-      LIMIT 500
     `, { cutoff: twentyFourHoursAgo });
 
     if (snapErr) {
