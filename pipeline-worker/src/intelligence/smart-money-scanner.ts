@@ -5,8 +5,6 @@
  *
  * Data sources:
  *   - BigQuery: trades (last 12h), market_snapshots (latest + 48h), wallets (accuracy)
- *   - Supabase: markets (title, category, end_date)
- *   - Heisenberg API: Falcon Score leaderboard (enrichment layer, optional)
  *
  * Enrichment signals (computed from local data):
  *   - Volume-price divergence (Edge 3)
@@ -17,7 +15,6 @@
  */
 
 import { bq } from '../core/bigquery.js';
-import { getFalconLeaderboard, type FalconWallet } from '../core/heisenberg-client.js';
 
 // ─── Types ───
 
@@ -75,12 +72,11 @@ interface MarketCard {
   computed_at: string;
 }
 
-// ─── Smart wallet with merged scoring ───
+// ─── Smart wallet ───
 
 interface SmartWallet {
   address: string;
   accuracy_score: number;
-  falcon_score: number | null;  // null if not in Falcon leaderboard
   sample_size: number;
 }
 
@@ -109,13 +105,9 @@ function classifyCategory(question: string, dbCategory: string | null): string {
   return dbCategory || 'other';
 }
 
-// ─── Merge local wallets with Falcon leaderboard ───
+// ─── Build smart wallet pool from local data ───
 
-async function buildSmartWalletPool(): Promise<{
-  pool: Map<string, SmartWallet>;
-  falconEnriched: boolean;
-}> {
-  // Local wallets (ground truth — always available) — cap at 500 to limit scan cost
+async function buildSmartWalletPool(): Promise<Map<string, SmartWallet>> {
   const { data: localWallets, error: wErr } = await bq
     .from('wallets')
     .select('address, accuracy_score, accuracy_sample_size, total_volume_usdc')
@@ -131,7 +123,6 @@ async function buildSmartWalletPool(): Promise<{
     pool.set(w.address, {
       address: w.address,
       accuracy_score: w.accuracy_score,
-      falcon_score: null,
       sample_size: w.accuracy_sample_size,
     });
   }
@@ -140,42 +131,7 @@ async function buildSmartWalletPool(): Promise<{
     console.warn(`[SmartMoney] Local wallet fetch warning: ${wErr.message}`);
   }
 
-  // Heisenberg Falcon enrichment (optional — fails gracefully)
-  let falconEnriched = false;
-  try {
-    const falconWallets = await getFalconLeaderboard(200);
-
-    if (falconWallets && falconWallets.length > 0) {
-      falconEnriched = true;
-      console.log(`[SmartMoney] Falcon leaderboard: ${falconWallets.length} wallets loaded`);
-
-      for (const fw of falconWallets) {
-        const addr = fw.wallet_address;
-        const existing = pool.get(addr);
-
-        if (existing) {
-          // Wallet in both sources — add Falcon score
-          existing.falcon_score = fw.falcon_score;
-        } else {
-          // Wallet only in Falcon — add to pool with Falcon data
-          // Use Falcon win_rate as accuracy proxy if it's above threshold
-          const winRate = fw.win_rate ?? 0;
-          if (winRate >= ACCURACY_THRESHOLD || fw.falcon_score >= 50) {
-            pool.set(addr, {
-              address: addr,
-              accuracy_score: winRate,
-              falcon_score: fw.falcon_score,
-              sample_size: fw.total_trades ?? 0,
-            });
-          }
-        }
-      }
-    }
-  } catch (err) {
-    console.warn(`[SmartMoney] Falcon enrichment failed (falling back to local wallets): ${err instanceof Error ? err.message : err}`);
-  }
-
-  return { pool, falconEnriched };
+  return pool;
 }
 
 // ─── Main ───
@@ -187,7 +143,6 @@ export async function scanSmartMoney(): Promise<{
     marketsScanned: number;
     marketsWithSignal: number;
     smartWalletsUsed: number;
-    falconEnriched: boolean;
     vacuumsDetected: number;
     divergencesDetected: number;
     duration_ms: number;
@@ -197,8 +152,8 @@ export async function scanSmartMoney(): Promise<{
   const errors: string[] = [];
 
   try {
-    // Step 1: Build merged smart wallet pool (local + Falcon)
-    const { pool: smartWalletMap, falconEnriched } = await buildSmartWalletPool();
+    // Step 1: Build smart wallet pool
+    const smartWalletMap = await buildSmartWalletPool();
 
     if (smartWalletMap.size === 0) {
       console.log('[SmartMoney] No smart wallets found (accuracy pipeline may not have run yet). Building cards without signal.');
@@ -210,18 +165,20 @@ export async function scanSmartMoney(): Promise<{
     const eightHoursAgo = new Date(Date.now() - 8 * 60 * 60 * 1000).toISOString();
     const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
 
-    // Get latest snapshot per market — deduplicated at the SQL level
-    // This returns one row per market (the most recent snapshot), ordered by volume
+    // Get mid-volume markets (ranks 101–600) — skip top 100, take next 500
     const { data: dedupedSnaps, error: snapErr } = await bq.rawQuery<SnapshotRow>(`
       SELECT market_id, yes_price, volume_24h, liquidity, spread, timestamp
       FROM (
-        SELECT *, ROW_NUMBER() OVER (PARTITION BY market_id ORDER BY timestamp DESC) AS rn
-        FROM \`${process.env.GCP_PROJECT_ID}.${process.env.BQ_DATASET || 'polymarket'}.market_snapshots\`
-        WHERE timestamp >= @cutoff AND volume_24h > 0
+        SELECT *, ROW_NUMBER() OVER (ORDER BY volume_24h DESC) AS vol_rn
+        FROM (
+          SELECT *, ROW_NUMBER() OVER (PARTITION BY market_id ORDER BY timestamp DESC) AS rn
+          FROM \`${process.env.GCP_PROJECT_ID}.${process.env.BQ_DATASET || 'polymarket'}.market_snapshots\`
+          WHERE timestamp >= @cutoff AND volume_24h > 0
+        )
+        WHERE rn = 1
       )
-      WHERE rn = 1
+      WHERE vol_rn > 100 AND vol_rn <= 600
       ORDER BY volume_24h DESC
-      LIMIT 500
     `, { cutoff: twentyFourHoursAgo });
 
     if (snapErr) {
@@ -235,7 +192,7 @@ export async function scanSmartMoney(): Promise<{
 
     const marketIds = [...latestByMarket.keys()];
     if (marketIds.length === 0) {
-      return { cards: 0, errors, telemetry: { marketsScanned: 0, marketsWithSignal: 0, smartWalletsUsed: smartWalletMap.size, falconEnriched, vacuumsDetected: 0, divergencesDetected: 0, duration_ms: Date.now() - startTime } };
+      return { cards: 0, errors, telemetry: { marketsScanned: 0, marketsWithSignal: 0, smartWalletsUsed: smartWalletMap.size, vacuumsDetected: 0, divergencesDetected: 0, duration_ms: Date.now() - startTime } };
     }
 
     // Step 3: Fetch in parallel — market metadata, 24h-ago snapshots, 7d avg, recent trades
@@ -345,7 +302,7 @@ export async function scanSmartMoney(): Promise<{
     // weekAvgSpread and weekAvgDepth are populated by the raw SQL query above
 
     // Group trades by market — trades already filtered to smart wallets at SQL level
-    const smartTradesByMarket = new Map<string, { wallet: string; side: string; volume: number; accuracy: number; falcon_score: number | null }[]>();
+    const smartTradesByMarket = new Map<string, { wallet: string; side: string; volume: number; accuracy: number }[]>();
     for (const t of recentTrades) {
       const wallet = smartWalletMap.get(t.wallet_address);
       if (!wallet) continue;
@@ -355,7 +312,6 @@ export async function scanSmartMoney(): Promise<{
         side: t.side,
         volume: Number(t.size_usdc) || 0,
         accuracy: wallet.accuracy_score,
-        falcon_score: wallet.falcon_score,
       });
     }
 
@@ -459,13 +415,13 @@ export async function scanSmartMoney(): Promise<{
       }
 
       // ── Top smart wallets (for display) ──
-      const walletAgg = new Map<string, { side: string; volume: number; accuracy: number; falcon_score: number | null }>();
+      const walletAgg = new Map<string, { side: string; volume: number; accuracy: number }>();
       for (const t of smartTrades) {
         const existing = walletAgg.get(t.wallet);
         if (existing) {
           existing.volume += t.volume;
         } else {
-          walletAgg.set(t.wallet, { side: t.side, volume: t.volume, accuracy: t.accuracy, falcon_score: t.falcon_score });
+          walletAgg.set(t.wallet, { side: t.side, volume: t.volume, accuracy: t.accuracy });
         }
       }
 
@@ -475,7 +431,6 @@ export async function scanSmartMoney(): Promise<{
         .map(([address, data]) => ({
           address: `${address.slice(0, 6)}...${address.slice(-4)}`,
           accuracy: Math.round(data.accuracy * 100),
-          falcon_score: data.falcon_score,
           side: data.side,
           volume: Math.round(data.volume),
         }));
@@ -527,7 +482,6 @@ export async function scanSmartMoney(): Promise<{
         marketsScanned: marketIds.length,
         marketsWithSignal,
         smartWalletsUsed: smartWalletMap.size,
-        falconEnriched,
         vacuumsDetected,
         divergencesDetected,
         duration_ms: Date.now() - startTime,
@@ -538,7 +492,7 @@ export async function scanSmartMoney(): Promise<{
     return {
       cards: 0,
       errors,
-      telemetry: { marketsScanned: 0, marketsWithSignal: 0, smartWalletsUsed: 0, falconEnriched: false, vacuumsDetected: 0, divergencesDetected: 0, duration_ms: Date.now() - startTime },
+      telemetry: { marketsScanned: 0, marketsWithSignal: 0, smartWalletsUsed: 0, vacuumsDetected: 0, divergencesDetected: 0, duration_ms: Date.now() - startTime },
     };
   }
 }

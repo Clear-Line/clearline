@@ -19,8 +19,6 @@ import { loadTokenRegistry } from './core/token-registry.js';
 // ─── Enrichment Layer ───
 import { computeAccuracy } from './enrichment/accuracy-computer.js';
 import { profileWallets } from './enrichment/wallet-profiler.js';
-import { bootstrapFromFalcon } from './enrichment/falcon-bootstrap.js';
-
 // ─── Intelligence Layer ───
 import { scanSmartMoney } from './intelligence/smart-money-scanner.js';
 import { scoreCryptoSentiment } from './intelligence/crypto-sentiment-scorer.js';
@@ -44,7 +42,7 @@ http.createServer((_req, res) => {
 console.log('');
 console.log('  CLEARLINE PIPELINE WORKER v4.0 (on-chain trade ingestion)');
 console.log('  Trades: real-time Polygon chain listener (politics/geopolitics/economics/crypto)');
-console.log('  Ingestion: 30min | Scanner: 2h | Enrichment: 6h | Falcon: weekly');
+console.log('  Ingestion: 30min | Scanner: 2h | Enrichment: 6h');
 console.log('  Crypto: 10min derivatives + sentiment scoring');
 console.log('');
 
@@ -81,7 +79,7 @@ registerJob('wallet-profiler', '30 */6 * * *', async () => {
 registerJob('smart-money-scanner', '0 */2 * * *', async () => {
   const result = await scanSmartMoney();
   const t = result.telemetry;
-  console.log(`  -> Cards: ${result.cards}, signals: ${t.marketsWithSignal}, wallets: ${t.smartWalletsUsed}${t.falconEnriched ? ' (Falcon enriched)' : ''}`);
+  console.log(`  -> Cards: ${result.cards}, signals: ${t.marketsWithSignal}, wallets: ${t.smartWalletsUsed}`);
   if (t.divergencesDetected > 0) console.log(`  -> Volume divergences: ${t.divergencesDetected}`);
   if (t.vacuumsDetected > 0) console.log(`  -> Liquidity vacuums: ${t.vacuumsDetected}`);
   if (result.errors.length > 0) console.log(`  -> Errors: ${result.errors.slice(0, 3).join('; ')}`);
@@ -97,13 +95,6 @@ registerJob('derivatives-fetcher', '*/10 * * * *', async () => {
 registerJob('crypto-sentiment-scorer', '2-59/10 * * * *', async () => {
   const result = await scoreCryptoSentiment();
   console.log(`  -> Crypto signals: ${result.signals} computed`);
-  if (result.errors.length > 0) console.log(`  -> Errors: ${result.errors.slice(0, 3).join('; ')}`);
-});
-
-// Falcon bootstrap: weekly refresh of wallet data from Heisenberg leaderboard
-registerJob('falcon-bootstrap', '0 3 * * 0', async () => {
-  const result = await bootstrapFromFalcon();
-  console.log(`  -> Falcon: seeded ${result.seeded}, skipped ${result.skipped}`);
   if (result.errors.length > 0) console.log(`  -> Errors: ${result.errors.slice(0, 3).join('; ')}`);
 });
 
@@ -126,10 +117,6 @@ async function runInitialPipeline(): Promise<void> {
   try {
     // Ensure BigQuery tables exist before any pipeline work
     await ensureTables();
-
-    console.log('[0/5] Falcon bootstrap (seeding wallet data)...');
-    const falcon = await bootstrapFromFalcon();
-    console.log(`  -> Falcon: seeded ${falcon.seeded}, skipped ${falcon.skipped}`);
 
     console.log('[1/5] Market discovery...');
     const markets = await pollMarkets();
@@ -154,7 +141,7 @@ async function runInitialPipeline(): Promise<void> {
     console.log('[4/5] Smart money scanner (building market_cards)...');
     const smartMoney = await scanSmartMoney();
     const smt = smartMoney.telemetry;
-    console.log(`  -> Cards: ${smartMoney.cards}, signals: ${smt.marketsWithSignal}, wallets: ${smt.smartWalletsUsed}${smt.falconEnriched ? ' (Falcon enriched)' : ''}`);
+    console.log(`  -> Cards: ${smartMoney.cards}, signals: ${smt.marketsWithSignal}, wallets: ${smt.smartWalletsUsed}`);
     if (smt.divergencesDetected > 0) console.log(`  -> Volume divergences: ${smt.divergencesDetected}`);
     if (smt.vacuumsDetected > 0) console.log(`  -> Liquidity vacuums: ${smt.vacuumsDetected}`);
     if (smartMoney.errors.length > 0) console.log(`  -> Errors: ${smartMoney.errors.slice(0, 3).join('; ')}`);

@@ -35,7 +35,6 @@ export async function ensureTables(): Promise<void> {
     { name: 'wins', type: 'INT64' },
     { name: 'losses', type: 'INT64' },
     { name: 'data_source', type: 'STRING' },
-    { name: 'falcon_score', type: 'FLOAT64' },
     { name: 'last_accuracy_update', type: 'TIMESTAMP' },
   ];
 

@@ -91,16 +91,26 @@ export async function snapshotBooks(): Promise<{ updated: number; errors: string
   const errors: string[] = [];
   let updated = 0;
 
-  // Get top markets by volume from recent snapshots
-  const { data: topSnaps } = await bq
-    .from('market_snapshots')
-    .select('market_id, volume_24h')
-    .gt('volume_24h', 0)
-    .gte('timestamp', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString())
-    .order('volume_24h', { ascending: false })
-    .limit(500);
+  // Get mid-volume markets (ranks 101–600) — skip top 100, take next 500
+  const dataset = `${process.env.GCP_PROJECT_ID}.${process.env.BQ_DATASET || 'polymarket'}`;
+  const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
 
-  const topMarketIds = [...new Set((topSnaps ?? []).map((s: { market_id: string }) => s.market_id))];
+  const { data: midSnaps } = await bq.rawQuery<{ market_id: string }>(`
+    SELECT market_id FROM (
+      SELECT market_id,
+        ROW_NUMBER() OVER (ORDER BY volume_24h DESC) AS rn
+      FROM (
+        SELECT market_id, volume_24h,
+          ROW_NUMBER() OVER (PARTITION BY market_id ORDER BY timestamp DESC) AS snap_rn
+        FROM \`${dataset}.market_snapshots\`
+        WHERE timestamp >= @cutoff AND volume_24h > 0
+      )
+      WHERE snap_rn = 1
+    )
+    WHERE rn > 100 AND rn <= 600
+  `, { cutoff });
+
+  const topMarketIds = (midSnaps ?? []).map((s) => s.market_id);
 
   if (topMarketIds.length === 0) {
     return { updated: 0, errors: ['No recent snapshots with volume found'] };

@@ -26,14 +26,39 @@ const registry = new Map<string, TokenMapping>();
 // ─── Public API ───
 
 /**
- * Load/refresh the token registry from the BigQuery `markets` table.
- * Should be called on startup and after each market-discovery run.
+ * Load/refresh the token registry — only mid-volume markets (ranks 101–600).
+ * Joins markets with latest snapshots to rank by volume, skips top 100,
+ * takes next 500. Should be called on startup and after each market-discovery run.
  */
 export async function loadTokenRegistry(): Promise<number> {
-  const { data, error } = await bq
-    .from('markets')
-    .select('condition_id, clob_token_ids, outcomes, category')
-    .eq('is_active', true);
+  const dataset = `${process.env.GCP_PROJECT_ID}.${process.env.BQ_DATASET || 'polymarket'}`;
+  const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+
+  const { data, error } = await bq.rawQuery<{
+    condition_id: string;
+    clob_token_ids: string;
+    outcomes: string;
+    category: string;
+  }>(`
+    SELECT m.condition_id, m.clob_token_ids, m.outcomes, m.category
+    FROM \`${dataset}.markets\` m
+    JOIN (
+      SELECT market_id, rn FROM (
+        SELECT market_id, volume_24h,
+          ROW_NUMBER() OVER (ORDER BY volume_24h DESC) AS rn
+        FROM (
+          SELECT market_id, volume_24h,
+            ROW_NUMBER() OVER (PARTITION BY market_id ORDER BY timestamp DESC) AS snap_rn
+          FROM \`${dataset}.market_snapshots\`
+          WHERE timestamp >= @cutoff AND volume_24h > 0
+        )
+        WHERE snap_rn = 1
+      )
+      WHERE rn > 100 AND rn <= 600
+    ) s ON s.market_id = m.condition_id
+    WHERE m.is_active = true
+      AND m.category IN ('politics', 'geopolitics', 'economics', 'crypto')
+  `, { cutoff });
 
   if (error || !data) {
     console.error('[TokenRegistry] Failed to load:', error?.message);
@@ -77,7 +102,7 @@ export async function loadTokenRegistry(): Promise<number> {
     }
   }
 
-  console.log(`[TokenRegistry] Loaded ${registry.size} token mappings from ${data.length} markets`);
+  console.log(`[TokenRegistry] Loaded ${registry.size} token mappings from ${data.length} mid-volume markets (ranks 101-600)`);
   return registry.size;
 }
 
