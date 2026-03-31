@@ -68,6 +68,36 @@ export async function fetchCryptoMarkets(limit = 200): Promise<GammaMarket[]> {
   return res.json();
 }
 
+/**
+ * Fetch BTC Up or Down events directly from the Gamma events API.
+ * These are nested under events (not standalone markets), tagged with
+ * "up-or-down" + "bitcoin". Returns the inner market from each event.
+ */
+export async function fetchBtcUpDownEvents(limit = 10): Promise<GammaMarket[]> {
+  const params = new URLSearchParams({
+    active: 'true',
+    closed: 'false',
+    tag: 'up-or-down',
+    limit: String(limit),
+  });
+
+  const res = await fetch(`${GAMMA_API}/events?${params}`);
+  if (!res.ok) throw new Error(`Gamma /events (up-or-down) failed: ${res.status}`);
+  const events: GammaEvent[] = await res.json();
+
+  // Extract the inner market from each Bitcoin event
+  const markets: GammaMarket[] = [];
+  for (const event of events) {
+    const isBtc = event.title.toLowerCase().includes('bitcoin')
+      || event.title.toLowerCase().includes('btc');
+    if (!isBtc) continue;
+    for (const m of event.markets ?? []) {
+      markets.push(m);
+    }
+  }
+  return markets;
+}
+
 export async function fetchMarketByConditionId(conditionId: string): Promise<GammaMarket | null> {
   const res = await fetch(`${GAMMA_API}/markets/${conditionId}`);
   if (!res.ok) return null;

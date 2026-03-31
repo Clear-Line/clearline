@@ -9,7 +9,7 @@
  */
 
 import { bq } from '../core/bigquery.js';
-import { fetchCryptoMarkets, type GammaMarket } from '../core/polymarket-client.js';
+import { fetchBtcUpDownEvents, type GammaMarket } from '../core/polymarket-client.js';
 
 // ─── Signal weights (full 5-signal model) ───
 const WEIGHTS: Record<string, number> = {
@@ -57,7 +57,7 @@ interface BtcMarket {
   question: string;
   startDate: string;
   endDate: string;
-  yesPrice: number;
+  upPrice: number;
   timeframe: string;
   cvdThreshold: number;
 }
@@ -66,17 +66,11 @@ interface BtcMarket {
  * Find active BTC up/down markets from the Gamma API with live prices.
  */
 async function findBtcMarkets(): Promise<BtcMarket[]> {
-  // Fetch crypto-tagged markets from Polymarket (BTC up/down are low volume)
-  const allMarkets = await fetchCryptoMarkets(200);
+  // Fetch BTC up/down events directly (these are events, not standalone markets)
+  const allMarkets = await fetchBtcUpDownEvents(10);
 
-  // Filter for Bitcoin up/down markets
-  const btcMarkets = allMarkets.filter((m: GammaMarket) => {
-    const q = m.question.toLowerCase();
-    return m.active
-      && !m.closed
-      && (q.includes('bitcoin') || q.includes('btc'))
-      && q.includes('up or down');
-  });
+  // All returned markets are already BTC up/down, just filter for active
+  const btcMarkets = allMarkets.filter((m: GammaMarket) => m.active && !m.closed);
 
   if (btcMarkets.length === 0) return [];
 
@@ -84,16 +78,19 @@ async function findBtcMarkets(): Promise<BtcMarket[]> {
   const results: BtcMarket[] = [];
 
   for (const m of btcMarkets) {
+    const outcomes = parseJsonField(m.outcomes) as string[];
     const prices = parseJsonField(m.outcomePrices) as string[];
-    const yesPrice = prices.length > 0 ? parseFloat(prices[0]) : NaN;
-    if (isNaN(yesPrice) || yesPrice <= 0 || yesPrice >= 1) continue;
+    // Find "Up" outcome price (could be index 0 or 1)
+    const upIdx = outcomes.findIndex(o => String(o).toLowerCase() === 'up');
+    const upPrice = upIdx >= 0 && prices[upIdx] ? parseFloat(prices[upIdx]) : NaN;
+    if (isNaN(upPrice) || upPrice <= 0 || upPrice >= 1) continue;
 
     // Skip markets that haven't started yet
     const startMs = new Date(m.startDate).getTime();
     if (startMs > now) continue;
 
     // Skip untouched markets (exactly 50/50 means no real trading yet)
-    if (yesPrice === 0.5) continue;
+    if (upPrice === 0.5) continue;
 
     const endMs = new Date(m.endDate).getTime();
     const hoursToEnd = (endMs - now) / (3_600_000);
@@ -123,7 +120,7 @@ async function findBtcMarkets(): Promise<BtcMarket[]> {
       question: m.question,
       startDate: m.startDate,
       endDate: m.endDate,
-      yesPrice,
+      upPrice,
       timeframe,
       cvdThreshold,
     });
@@ -169,7 +166,7 @@ export async function scoreCryptoSentiment(): Promise<{ signals: number; errors:
   const computedAt = new Date().toISOString();
 
   for (const market of btcMarkets) {
-    const polymarketProb = market.yesPrice;
+    const polymarketProb = market.upPrice;
 
     // Normalize each signal to [-1, +1], track which are available
     const signals: { key: string; value: number }[] = [];
