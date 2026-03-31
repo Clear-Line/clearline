@@ -1,12 +1,11 @@
 /**
- * Exchange API Client — public REST endpoints for derivatives data via Bybit.
- * No authentication required. Rate limit: 120 req/min (we use ~4 per 10-min cycle).
+ * Exchange API Client — public REST endpoints for derivatives data via Hyperliquid.
+ * No authentication required. No geo-blocking (decentralized exchange).
  *
- * Bybit's public market data endpoints work from US IPs
- * (only trading is restricted for US users).
+ * All endpoints: POST https://api.hyperliquid.xyz/info
  */
 
-const BASE = 'https://api.bybit.com';
+const BASE = 'https://api.hyperliquid.xyz/info';
 
 export interface FundingRateData {
   symbol: string;
@@ -20,91 +19,88 @@ export interface CVDResult {
   sellVol: number;  // estimated taker sell volume in USD
 }
 
+async function hlPost(body: Record<string, unknown>): Promise<unknown> {
+  const res = await fetch(BASE, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`Hyperliquid API failed: ${res.status}`);
+  return res.json();
+}
+
 /**
- * Fetch the latest funding rate for a perpetual futures contract.
- * GET /v5/market/funding/history?category=linear&symbol=BTCUSDT&limit=1
+ * Fetch the latest funding rate and mark price for a perpetual contract.
+ * Uses metaAndAssetCtxs which returns both in one call.
  */
 export async function fetchFundingRate(symbol: string = 'BTCUSDT'): Promise<FundingRateData> {
-  const res = await fetch(
-    `${BASE}/v5/market/funding/history?category=linear&symbol=${symbol}&limit=1`,
-  );
-  if (!res.ok) throw new Error(`Bybit funding rate failed: ${res.status}`);
+  const coin = symbol.replace('USDT', '');
+  const data = await hlPost({ type: 'metaAndAssetCtxs' }) as [
+    { universe: { name: string }[] },
+    { funding: string; markPx: string }[],
+  ];
 
-  const json = await res.json();
-  if (json.retCode !== 0) throw new Error(`Bybit funding rate error: ${json.retMsg}`);
-
-  const list = json.result?.list;
-  if (!Array.isArray(list) || list.length === 0) {
-    throw new Error('Bybit funding rate: empty response');
-  }
+  const [meta, assetCtxs] = data;
+  const idx = meta.universe.findIndex((u) => u.name === coin);
+  if (idx === -1) throw new Error(`Hyperliquid: ${coin} not found`);
 
   return {
-    symbol: list[0].symbol,
-    fundingRate: parseFloat(list[0].fundingRate),
-    fundingTime: parseInt(list[0].fundingRateTimestamp, 10),
+    symbol,
+    fundingRate: parseFloat(assetCtxs[idx].funding),
+    fundingTime: Date.now(),
   };
 }
 
 /**
- * Fetch the current spot price for a trading pair.
- * GET /v5/market/tickers?category=spot&symbol=BTCUSDT
+ * Fetch the current mark price (used as spot proxy for perpetual markets).
  */
 export async function fetchSpotPrice(symbol: string = 'BTCUSDT'): Promise<number> {
-  const res = await fetch(`${BASE}/v5/market/tickers?category=spot&symbol=${symbol}`);
-  if (!res.ok) throw new Error(`Bybit spot price failed: ${res.status}`);
+  const coin = symbol.replace('USDT', '');
+  const data = await hlPost({ type: 'metaAndAssetCtxs' }) as [
+    { universe: { name: string }[] },
+    { markPx: string }[],
+  ];
 
-  const json = await res.json();
-  if (json.retCode !== 0) throw new Error(`Bybit spot price error: ${json.retMsg}`);
+  const [meta, assetCtxs] = data;
+  const idx = meta.universe.findIndex((u) => u.name === coin);
+  if (idx === -1) throw new Error(`Hyperliquid: ${coin} not found`);
 
-  const list = json.result?.list;
-  if (!Array.isArray(list) || list.length === 0) {
-    throw new Error('Bybit spot price: empty response');
-  }
-
-  return parseFloat(list[0].lastPrice);
+  return parseFloat(assetCtxs[idx].markPx);
 }
 
 /**
- * Compute Cumulative Volume Delta from klines (1-minute candles).
+ * Compute Cumulative Volume Delta from 1-minute candles.
  *
- * Bybit klines don't include taker buy/sell volume split, so we use
- * the standard OHLCV approximation:
+ * Hyperliquid candle format: { t, T, s, i, o, c, h, l, v, n }
+ * Uses OHLCV approximation:
  *   buyRatio = (close - low) / (high - low)
  *   buyVol  += volume * buyRatio * close
  *   sellVol += volume * (1 - buyRatio) * close
- *
- * GET /v5/market/kline?category=spot&symbol=BTCUSDT&interval=1&limit={minutes}
- *
- * Bybit kline list format: [timestamp, open, high, low, close, volume, turnover]
- * Note: Bybit returns newest-first, but order doesn't matter for CVD sum.
  */
 export async function fetchKlinesForCVD(
   symbol: string = 'BTCUSDT',
   intervalMinutes: number = 60,
 ): Promise<CVDResult> {
-  const limit = Math.min(intervalMinutes, 1000);
-  const res = await fetch(
-    `${BASE}/v5/market/kline?category=spot&symbol=${symbol}&interval=1&limit=${limit}`,
-  );
-  if (!res.ok) throw new Error(`Bybit klines failed: ${res.status}`);
+  const coin = symbol.replace('USDT', '');
+  const now = Date.now();
+  const startTime = now - intervalMinutes * 60 * 1000;
 
-  const json = await res.json();
-  if (json.retCode !== 0) throw new Error(`Bybit klines error: ${json.retMsg}`);
-
-  const klines: string[][] = json.result?.list ?? [];
+  const candles = await hlPost({
+    type: 'candleSnapshot',
+    req: { coin, interval: '1m', startTime, endTime: now },
+  }) as { o: string; h: string; l: string; c: string; v: string }[];
 
   let buyVol = 0;
   let sellVol = 0;
 
-  for (const k of klines) {
-    const open = parseFloat(k[1]);
-    const high = parseFloat(k[2]);
-    const low = parseFloat(k[3]);
-    const close = parseFloat(k[4]);
-    const volume = parseFloat(k[5]);
+  for (const k of candles) {
+    const open = parseFloat(k.o);
+    const high = parseFloat(k.h);
+    const low = parseFloat(k.l);
+    const close = parseFloat(k.c);
+    const volume = parseFloat(k.v);
 
     const range = high - low;
-    // Avoid division by zero on flat candles — split volume 50/50
     const buyRatio = range > 0 ? (close - low) / range : 0.5;
 
     buyVol += volume * buyRatio * close;
