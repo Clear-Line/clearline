@@ -106,6 +106,8 @@ export async function GET(request: Request) {
     cvd4h: deriv.cvd_4h,
     buyVol: deriv.cvd_raw_buy_vol,
     sellVol: deriv.cvd_raw_sell_vol,
+    optionsSkew: deriv.options_skew,
+    oiChangePct: deriv.oi_change_pct,
     fetchedAt: deriv.fetched_at,
   } : null;
 
@@ -113,8 +115,8 @@ export async function GET(request: Request) {
     signals,
     derivatives,
     meta: {
-      phase: 1,
-      activeSignals: ['funding_rate', 'cvd'],
+      phase: 2,
+      activeSignals: ['funding_rate', 'cvd', 'options_skew', 'oi'],
       totalSignals: 5,
     },
   });

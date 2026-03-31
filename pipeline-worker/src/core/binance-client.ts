@@ -1,16 +1,18 @@
 /**
- * Exchange API Client — public REST endpoints for derivatives data via Hyperliquid.
- * No authentication required. No geo-blocking (decentralized exchange).
+ * Exchange API Client — public REST endpoints for derivatives data.
+ * Hyperliquid: funding rate, spot price, open interest, CVD
+ * Deribit: BTC options skew (put/call OI ratio)
  *
- * All endpoints: POST https://api.hyperliquid.xyz/info
+ * No authentication required. No geo-blocking.
  */
 
-const BASE = 'https://api.hyperliquid.xyz/info';
+const HL_BASE = 'https://api.hyperliquid.xyz/info';
 
 export interface FundingRateData {
   symbol: string;
   fundingRate: number;
   fundingTime: number;
+  openInterest: number; // total OI in coins
 }
 
 export interface CVDResult {
@@ -19,8 +21,14 @@ export interface CVDResult {
   sellVol: number;  // estimated taker sell volume in USD
 }
 
+export interface OptionsSkewData {
+  skew: number;    // putOI/callOI - 1.0 (positive = bearish, negative = bullish)
+  putOI: number;
+  callOI: number;
+}
+
 async function hlPost(body: Record<string, unknown>): Promise<unknown> {
-  const res = await fetch(BASE, {
+  const res = await fetch(HL_BASE, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -30,14 +38,14 @@ async function hlPost(body: Record<string, unknown>): Promise<unknown> {
 }
 
 /**
- * Fetch the latest funding rate and mark price for a perpetual contract.
- * Uses metaAndAssetCtxs which returns both in one call.
+ * Fetch the latest funding rate, mark price, and open interest.
+ * Uses metaAndAssetCtxs which returns all three in one call.
  */
 export async function fetchFundingRate(symbol: string = 'BTCUSDT'): Promise<FundingRateData> {
   const coin = symbol.replace('USDT', '');
   const data = await hlPost({ type: 'metaAndAssetCtxs' }) as [
     { universe: { name: string }[] },
-    { funding: string; markPx: string }[],
+    { funding: string; markPx: string; openInterest: string }[],
   ];
 
   const [meta, assetCtxs] = data;
@@ -48,6 +56,7 @@ export async function fetchFundingRate(symbol: string = 'BTCUSDT'): Promise<Fund
     symbol,
     fundingRate: parseFloat(assetCtxs[idx].funding),
     fundingTime: Date.now(),
+    openInterest: parseFloat(assetCtxs[idx].openInterest),
   };
 }
 
@@ -112,4 +121,71 @@ export async function fetchKlinesForCVD(
     buyVol: Math.round(buyVol),
     sellVol: Math.round(sellVol),
   };
+}
+
+/**
+ * Fetch BTC options skew from Deribit (put/call OI ratio).
+ * Filters to options expiring within 7 days for short-term sentiment.
+ * Positive skew = more put demand (bearish), negative = more call demand (bullish).
+ */
+export async function fetchOptionsSkew(): Promise<OptionsSkewData> {
+  const res = await fetch(
+    'https://www.deribit.com/api/v2/public/get_book_summary_by_currency?currency=BTC&kind=option',
+  );
+  if (!res.ok) throw new Error(`Deribit options failed: ${res.status}`);
+
+  const json = await res.json();
+  const instruments: { instrument_name: string; open_interest: number }[] = json.result ?? [];
+
+  const now = Date.now();
+  const sevenDays = 7 * 24 * 60 * 60 * 1000;
+
+  let putOI = 0;
+  let callOI = 0;
+
+  for (const inst of instruments) {
+    // Instrument name format: BTC-30MAR26-90000-P or BTC-30MAR26-90000-C
+    const parts = inst.instrument_name.split('-');
+    if (parts.length < 4) continue;
+
+    const expiryStr = parts[1]; // e.g. "30MAR26"
+    const optionType = parts[parts.length - 1]; // "P" or "C"
+    const oi = inst.open_interest ?? 0;
+    if (oi <= 0) continue;
+
+    // Parse expiry date
+    const expiry = parseDeribitExpiry(expiryStr);
+    if (!expiry) continue;
+
+    // Only include near-term options (within 7 days)
+    if (expiry.getTime() - now > sevenDays || expiry.getTime() < now) continue;
+
+    if (optionType === 'P') putOI += oi;
+    else if (optionType === 'C') callOI += oi;
+  }
+
+  if (callOI === 0 && putOI === 0) {
+    throw new Error('Deribit: no near-term BTC options found');
+  }
+
+  const skew = callOI > 0 ? (putOI / callOI) - 1.0 : 0;
+
+  return { skew, putOI, callOI };
+}
+
+function parseDeribitExpiry(s: string): Date | null {
+  // Format: "30MAR26" → 30 March 2026
+  const match = s.match(/^(\d{1,2})([A-Z]{3})(\d{2})$/);
+  if (!match) return null;
+
+  const day = parseInt(match[1], 10);
+  const monthMap: Record<string, number> = {
+    JAN: 0, FEB: 1, MAR: 2, APR: 3, MAY: 4, JUN: 5,
+    JUL: 6, AUG: 7, SEP: 8, OCT: 9, NOV: 10, DEC: 11,
+  };
+  const month = monthMap[match[2]];
+  if (month === undefined) return null;
+  const year = 2000 + parseInt(match[3], 10);
+
+  return new Date(Date.UTC(year, month, day, 8, 0, 0)); // Deribit expires at 08:00 UTC
 }
