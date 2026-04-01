@@ -156,4 +156,23 @@ export async function ensureTables(): Promise<void> {
   `);
 
   console.log('[EnsureTables] Pipeline metadata table ready');
+
+  // ─── Wallet trade positions (accumulated from chain listener, NOT purged) ───
+  await bq.rawQuery(`
+    CREATE TABLE IF NOT EXISTS \`${dataset}.wallet_trade_positions\` (
+      wallet_address STRING NOT NULL,
+      market_id STRING NOT NULL,
+      outcome STRING,
+      buy_volume FLOAT64,
+      sell_volume FLOAT64,
+      avg_buy_price FLOAT64,
+      buy_count INT64,
+      sell_count INT64,
+      last_trade_at TIMESTAMP,
+      updated_at TIMESTAMP
+    )
+    CLUSTER BY market_id, wallet_address
+  `);
+
+  console.log('[EnsureTables] Wallet trade positions table ready');
 }

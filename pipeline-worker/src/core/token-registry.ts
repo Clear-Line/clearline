@@ -26,9 +26,9 @@ const registry = new Map<string, TokenMapping>();
 // ─── Public API ───
 
 /**
- * Load/refresh the token registry — only mid-volume markets (ranks 101–600).
- * Joins markets with latest snapshots to rank by volume, skips top 100,
- * takes next 500. Should be called on startup and after each market-discovery run.
+ * Load/refresh the token registry — top 500 markets by volume.
+ * Joins markets with latest snapshots to rank by volume.
+ * Should be called on startup and after each market-discovery run.
  */
 export async function loadTokenRegistry(): Promise<number> {
   const dataset = `${process.env.GCP_PROJECT_ID}.${process.env.BQ_DATASET || 'polymarket'}`;
@@ -54,7 +54,7 @@ export async function loadTokenRegistry(): Promise<number> {
         )
         WHERE snap_rn = 1
       )
-      WHERE rn > 100 AND rn <= 600
+      WHERE rn <= 500
     ) s ON s.market_id = m.condition_id
     WHERE m.is_active = true
       AND m.category IN ('politics', 'geopolitics', 'economics', 'crypto')
@@ -102,7 +102,7 @@ export async function loadTokenRegistry(): Promise<number> {
     }
   }
 
-  console.log(`[TokenRegistry] Loaded ${registry.size} token mappings from ${data.length} mid-volume markets (ranks 101-600)`);
+  console.log(`[TokenRegistry] Loaded ${registry.size} token mappings from ${data.length} top 500 markets by volume`);
   return registry.size;
 }
 
