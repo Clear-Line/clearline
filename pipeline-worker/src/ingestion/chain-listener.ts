@@ -276,7 +276,95 @@ async function flushTradeBuffer(): Promise<void> {
   // Mark markets as dirty for downstream enrichment
   dirtyTracker.markMany([...new Set(unique.map(t => t.market_id))]);
 
+  // Accumulate wallet positions (for accuracy scoring without API dependency)
+  await accumulatePositions(unique);
+
   console.log(`[ChainListener] Flushed ${unique.length} trades (${walletAddresses.length} wallets)`);
+}
+
+/**
+ * Accumulate net wallet positions from trades using a single additive MERGE.
+ * One row per (wallet_address, market_id) pair. Never purged by time —
+ * cleaned up by accuracy-computer after market resolution.
+ */
+async function accumulatePositions(trades: typeof tradeBuffer): Promise<void> {
+  // Group by (wallet_address, market_id)
+  const deltas = new Map<string, {
+    wallet_address: string;
+    market_id: string;
+    outcome: string;
+    buy_volume: number;
+    sell_volume: number;
+    buy_price_sum: number;
+    buy_count: number;
+    sell_count: number;
+    last_trade_at: string;
+  }>();
+
+  for (const t of trades) {
+    const key = `${t.wallet_address}|${t.market_id}`;
+    const d = deltas.get(key) ?? {
+      wallet_address: t.wallet_address,
+      market_id: t.market_id,
+      outcome: t.outcome,
+      buy_volume: 0, sell_volume: 0,
+      buy_price_sum: 0, buy_count: 0, sell_count: 0,
+      last_trade_at: t.timestamp,
+    };
+
+    if (t.side === 'BUY') {
+      d.buy_volume += t.size_usdc;
+      d.buy_price_sum += t.price;
+      d.buy_count++;
+    } else {
+      d.sell_volume += t.size_usdc;
+      d.sell_count++;
+    }
+    d.outcome = t.outcome;
+    if (t.timestamp > d.last_trade_at) d.last_trade_at = t.timestamp;
+    deltas.set(key, d);
+  }
+
+  if (deltas.size === 0) return;
+
+  const dataset = `${process.env.GCP_PROJECT_ID}.${process.env.BQ_DATASET || 'polymarket'}`;
+  const now = new Date().toISOString();
+
+  // Build source rows for MERGE
+  const sourceRows = [...deltas.values()].map((d) => {
+    const avgBuyPrice = d.buy_count > 0 ? Math.round((d.buy_price_sum / d.buy_count) * 1e6) / 1e6 : 0;
+    return `SELECT '${d.wallet_address}' AS wallet_address, '${d.market_id}' AS market_id, '${d.outcome.replace(/'/g, "\\'")}' AS outcome, ${d.buy_volume} AS buy_volume, ${d.sell_volume} AS sell_volume, ${avgBuyPrice} AS avg_buy_price, ${d.buy_count} AS buy_count, ${d.sell_count} AS sell_count, TIMESTAMP('${d.last_trade_at}') AS last_trade_at, TIMESTAMP('${now}') AS updated_at`;
+  });
+
+  const mergeSQL = `
+    MERGE \`${dataset}.wallet_trade_positions\` AS target
+    USING (${sourceRows.join('\nUNION ALL\n')}) AS source
+    ON target.wallet_address = source.wallet_address AND target.market_id = source.market_id
+    WHEN MATCHED THEN UPDATE SET
+      buy_volume = target.buy_volume + source.buy_volume,
+      sell_volume = target.sell_volume + source.sell_volume,
+      avg_buy_price = CASE
+        WHEN target.buy_count + source.buy_count > 0
+        THEN ROUND((target.avg_buy_price * target.buy_count + source.avg_buy_price * source.buy_count)
+             / (target.buy_count + source.buy_count), 6)
+        ELSE 0
+      END,
+      buy_count = target.buy_count + source.buy_count,
+      sell_count = target.sell_count + source.sell_count,
+      outcome = source.outcome,
+      last_trade_at = GREATEST(target.last_trade_at, source.last_trade_at),
+      updated_at = source.updated_at
+    WHEN NOT MATCHED THEN
+      INSERT (wallet_address, market_id, outcome, buy_volume, sell_volume, avg_buy_price, buy_count, sell_count, last_trade_at, updated_at)
+      VALUES (source.wallet_address, source.market_id, source.outcome, source.buy_volume, source.sell_volume, source.avg_buy_price, source.buy_count, source.sell_count, source.last_trade_at, source.updated_at)
+  `;
+
+  try {
+    await bq.rawQuery(mergeSQL);
+  } catch (err) {
+    // Don't block trade pipeline — positions are a bonus, not critical path
+    console.warn(`[ChainListener] Position accumulation failed: ${err}`);
+  }
 }
 
 // ─── Backfill ───

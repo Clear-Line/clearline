@@ -207,7 +207,12 @@ export async function fetchMarketTrades(
   });
   const res = await fetch(`${DATA_API}/trades?${params}`);
   if (!res.ok) throw new Error(`Data /trades failed: ${res.status}`);
-  return res.json();
+  const raw: any[] = await res.json();
+  // API returns `size` (tokens) but not `usdcSize` — compute it
+  return raw.map((t) => ({
+    ...t,
+    usdcSize: t.usdcSize ?? (t.size || 0) * (t.price || 0),
+  }));
 }
 
 /**

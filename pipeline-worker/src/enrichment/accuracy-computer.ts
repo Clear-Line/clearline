@@ -109,9 +109,12 @@ export async function computeAccuracy(): Promise<{
       if (batch.length < limit) keepGoing = false;
       else offset += limit;
 
-      // Stop after 5 consecutive pages with no new resolutions —
-      // Gamma sorts by endDate DESC so we've moved past relevant markets
-      if (emptyPages >= 5) keepGoing = false;
+      // Stop after 20 consecutive pages with no new resolutions —
+      // our unresolved markets are spread across Gamma's full history
+      if (emptyPages >= 20) keepGoing = false;
+
+      // Hard cap at 5,000 pages (500K markets) to avoid infinite scanning
+      if (offset > 500000) keepGoing = false;
 
       // Rate limit between Gamma API pages
       if (keepGoing) await new Promise((r) => setTimeout(r, 100));
@@ -123,25 +126,26 @@ export async function computeAccuracy(): Promise<{
 
   console.log(`[Accuracy] Scanned ${offset + limit} closed markets, found ${newlyResolved.length} newly resolved (from ${unresolvedIds.size} unresolved)`);
 
-  // ─── Step 3: Mark resolved markets in DB ───
-  const MARK_BATCH = 50;
+  // ─── Step 3: Mark resolved markets in DB (batched MERGE for speed) ───
+  const now = new Date().toISOString();
+  const MARK_BATCH = 100;
   for (let i = 0; i < newlyResolved.length; i += MARK_BATCH) {
     const chunk = newlyResolved.slice(i, i + MARK_BATCH);
-    for (const m of chunk) {
-      const { error } = await bq
-        .from('markets')
-        .update({
-          is_resolved: true,
-          resolution_outcome: m.outcome,
-          resolved_at: new Date().toISOString(),
-        })
-        .eq('condition_id', m.conditionId);
+    const rows = chunk.map((m) => ({
+      condition_id: m.conditionId,
+      is_resolved: true,
+      resolution_outcome: m.outcome,
+      resolved_at: now,
+    }));
 
-      if (error) {
-        errors.push(`Resolve ${m.conditionId}: ${error.message}`);
-      } else {
-        resolved++;
-      }
+    const { error } = await bq
+      .from('markets')
+      .upsert(rows, { onConflict: 'condition_id' });
+
+    if (error) {
+      errors.push(`Resolve batch ${i}: ${error.message}`);
+    } else {
+      resolved += chunk.length;
     }
   }
 
@@ -155,49 +159,69 @@ export async function computeAccuracy(): Promise<{
 
   // Collect per-wallet results across all newly resolved markets
   const walletDeltas = new Map<string, { winDelta: number; lossDelta: number; pnlDelta: number }>();
+  let localHits = 0;
+  let apiFallbacks = 0;
 
   for (const market of newlyResolved) {
     try {
-      // Fetch trades from Polymarket API — gets ALL trades for this market
-      const { trades } = await fetchMarketTradesPaginated(market.conditionId, {
-        maxPages: 10,
-        pageSize: 100,
-      });
+      // Phase 1: Check our own blockchain-sourced position data first
+      const { data: localPositions } = await bq
+        .from('wallet_trade_positions')
+        .select('wallet_address, outcome, buy_volume, sell_volume, avg_buy_price, buy_count, sell_count')
+        .eq('market_id', market.conditionId);
 
-      if (trades.length === 0) continue;
-
-      // Determine each wallet's net position direction
-      // Use volume-weighted approach: sum BUY vs SELL volume per wallet
       const walletPositions = new Map<string, {
         buyVolume: number;
         sellVolume: number;
         outcome: string;
-        totalUsdc: number;
         avgBuyPrice: number;
         buyCount: number;
       }>();
 
-      for (const t of trades) {
-        const existing = walletPositions.get(t.proxyWallet) ?? {
-          buyVolume: 0, sellVolume: 0, outcome: t.outcome,
-          totalUsdc: 0, avgBuyPrice: 0, buyCount: 0,
-        };
-
-        if (t.side === 'BUY') {
-          existing.buyVolume += t.usdcSize || 0;
-          existing.avgBuyPrice = ((existing.avgBuyPrice * existing.buyCount) + (t.price || 0)) / (existing.buyCount + 1);
-          existing.buyCount++;
-        } else {
-          existing.sellVolume += t.usdcSize || 0;
+      if (localPositions && localPositions.length > 0) {
+        // Use blockchain-sourced positions — complete, uncapped data
+        for (const pos of localPositions) {
+          walletPositions.set(pos.wallet_address, {
+            buyVolume: pos.buy_volume || 0,
+            sellVolume: pos.sell_volume || 0,
+            outcome: pos.outcome || '',
+            avgBuyPrice: pos.avg_buy_price || 0,
+            buyCount: pos.buy_count || 0,
+          });
         }
-        existing.totalUsdc += t.usdcSize || 0;
-        existing.outcome = t.outcome; // last outcome traded
+        localHits++;
+      } else {
+        // Phase 2: Fall back to Polymarket API (capped at 1,000 trades)
+        const { trades } = await fetchMarketTradesPaginated(market.conditionId, {
+          maxPages: 10,
+          pageSize: 100,
+        });
 
-        // Capture username/pseudonym for wallet upsert
-        walletPositions.set(t.proxyWallet, existing);
+        if (trades.length === 0) continue;
+
+        for (const t of trades) {
+          const existing = walletPositions.get(t.proxyWallet) ?? {
+            buyVolume: 0, sellVolume: 0, outcome: t.outcome,
+            avgBuyPrice: 0, buyCount: 0,
+          };
+
+          if (t.side === 'BUY') {
+            existing.buyVolume += t.usdcSize || 0;
+            existing.avgBuyPrice = ((existing.avgBuyPrice * existing.buyCount) + (t.price || 0)) / (existing.buyCount + 1);
+            existing.buyCount++;
+          } else {
+            existing.sellVolume += t.usdcSize || 0;
+          }
+          existing.outcome = t.outcome;
+          walletPositions.set(t.proxyWallet, existing);
+        }
+        apiFallbacks++;
+
+        // Rate limit: small delay between API calls
+        await new Promise((r) => setTimeout(r, 200));
       }
 
-      // Score each wallet
+      // Score each wallet (same logic regardless of data source)
       for (const [address, pos] of walletPositions) {
         const isNetBuyer = pos.buyVolume > pos.sellVolume;
         const bettedOnWinner = pos.outcome === market.outcome;
@@ -221,12 +245,16 @@ export async function computeAccuracy(): Promise<{
         walletDeltas.set(address, existing);
       }
 
-      // Rate limit: small delay between market API calls
-      await new Promise((r) => setTimeout(r, 200));
+      // Clean up local positions after scoring (data consumed into wallets table)
+      if (localPositions && localPositions.length > 0) {
+        await bq.from('wallet_trade_positions').delete().eq('market_id', market.conditionId);
+      }
     } catch (err) {
       errors.push(`Score market ${market.conditionId}: ${err}`);
     }
   }
+
+  console.log(`[Accuracy] Scoring sources: ${localHits} local, ${apiFallbacks} API fallback`);
 
   // ─── Step 5: Read existing wallet rows and increment ───
   const walletAddresses = [...walletDeltas.keys()];
