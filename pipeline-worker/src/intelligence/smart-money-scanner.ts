@@ -83,8 +83,8 @@ interface SmartWallet {
 // ─── Constants ───
 
 const ACCURACY_THRESHOLD = 0.55;
-const MIN_SAMPLE_SIZE = 5;
-const MIN_VOLUME = 100;
+const MIN_SAMPLE_SIZE = 3;  // lowered from 5 — bootstrap while resolution data accumulates
+const MIN_VOLUME = 50;      // lowered from 100 — bootstrap while profiler backfills
 const ID_BATCH = 200;
 const UPSERT_BATCH = 200;
 const DIVERGENCE_THRESHOLD = 5;
@@ -160,12 +160,12 @@ export async function scanSmartMoney(): Promise<{
     }
 
     // Step 2: Get active markets with recent volume
-    const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+    const sixHoursAgo = new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString();
     const fourHoursAgo = new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString();
     const eightHoursAgo = new Date(Date.now() - 8 * 60 * 60 * 1000).toISOString();
     const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
 
-    // Get mid-volume markets (ranks 101–600) — skip top 100, take next 500
+    // Get top 500 markets by volume (includes high-volume markets where smart money is most active)
     const { data: dedupedSnaps, error: snapErr } = await bq.rawQuery<SnapshotRow>(`
       SELECT market_id, yes_price, volume_24h, liquidity, spread, timestamp
       FROM (
@@ -177,7 +177,7 @@ export async function scanSmartMoney(): Promise<{
         )
         WHERE rn = 1
       )
-      WHERE vol_rn > 100 AND vol_rn <= 600
+      WHERE vol_rn <= 500
       ORDER BY volume_24h DESC
     `, { cutoff: twentyFourHoursAgo });
 
@@ -272,7 +272,7 @@ export async function scanSmartMoney(): Promise<{
            FROM \`${dataset}.trades\`
            WHERE timestamp >= @cutoff
              AND wallet_address IN UNNEST(@wallets)`,
-          { cutoff: twoHoursAgo, wallets: walletAddresses }
+          { cutoff: sixHoursAgo, wallets: walletAddresses }
         ).then((r) => {
           if (r.data) recentTrades.push(...r.data);
           if (r.error) errors.push(`Trade fetch: ${r.error.message}`);

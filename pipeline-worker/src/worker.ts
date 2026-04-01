@@ -136,12 +136,13 @@ async function runInitialPipeline(): Promise<void> {
     await loadTokenRegistry();
     await startChainListener();
 
-    console.log('[3/5] Accuracy + Wallet profiling...');
-    const [accuracy, wallets] = await Promise.all([
-      computeAccuracy(),
-      profileWallets(),
-    ]);
-    console.log(`  -> Resolved: ${accuracy.resolved}, wallets: ${wallets.updated}`);
+    console.log('[3/5] Accuracy (resolving markets + scoring wallets)...');
+    const accuracy = await computeAccuracy();
+    console.log(`  -> Resolved: ${accuracy.resolved}, wallets scored: ${accuracy.walletsUpdated}`);
+
+    console.log('[3.5/5] Wallet profiling (backfill + incremental)...');
+    const wallets = await profileWallets();
+    console.log(`  -> Wallets profiled: ${wallets.updated}`);
 
     console.log('[4/5] Smart money scanner (building market_cards)...');
     const smartMoney = await scanSmartMoney();
