@@ -14,6 +14,11 @@ export async function profileWallets(): Promise<{ updated: number; errors: strin
   const errors: string[] = [];
   let updated = 0;
 
+  // Backfill wallets that have accuracy data but no trade stats
+  const backfillResult = await backfillWalletStats();
+  errors.push(...backfillResult.errors);
+  updated += backfillResult.updated;
+
   const profileResult = await incrementalProfileWallets();
   errors.push(...profileResult.errors);
   updated += profileResult.updated;
@@ -26,6 +31,92 @@ export async function profileWallets(): Promise<{ updated: number; errors: strin
 }
 
 /**
+ * Backfill wallet stats for wallets that have accuracy data (wins/losses)
+ * but no trade stats (total_trades = 0 or null). Uses a single BigQuery
+ * aggregation over the trades table (3-day retention).
+ */
+async function backfillWalletStats(): Promise<{ updated: number; errors: string[] }> {
+  const errors: string[] = [];
+  let updated = 0;
+
+  // Find wallets that have been scored but have no trade stats
+  const { data: needsBackfill, error: qErr } = await bq
+    .from('wallets')
+    .select('address')
+    .gt('accuracy_sample_size', 0)
+    .lte('total_trades', 0);
+
+  // Also fetch wallets where total_trades is null
+  const { data: needsBackfillNull } = await bq
+    .from('wallets')
+    .select('address')
+    .gt('accuracy_sample_size', 0)
+    .eq('total_trades', 0);
+
+  const backfillAddresses = new Set<string>();
+  for (const w of needsBackfill ?? []) backfillAddresses.add(w.address);
+  for (const w of needsBackfillNull ?? []) backfillAddresses.add(w.address);
+
+  if (backfillAddresses.size === 0) {
+    return { updated: 0, errors: qErr ? [`Backfill query: ${qErr.message}`] : [] };
+  }
+
+  console.log(`[WalletProfiler] Backfilling stats for ${backfillAddresses.size} wallets...`);
+
+  // Aggregate from trades table in batches
+  const addresses = [...backfillAddresses];
+  const BATCH = 200;
+  const dataset = process.env.BQ_DATASET || 'polymarket';
+
+  for (let i = 0; i < addresses.length; i += BATCH) {
+    const batch = addresses.slice(i, i + BATCH);
+
+    const { data: agg, error: aggErr } = await bq.rawQuery<{
+      wallet_address: string;
+      trade_count: number;
+      total_volume: number;
+      markets_traded: number;
+    }>(`
+      SELECT wallet_address,
+             COUNT(*) as trade_count,
+             SUM(CAST(size_usdc AS FLOAT64)) as total_volume,
+             COUNT(DISTINCT market_id) as markets_traded
+      FROM \`${process.env.GCP_PROJECT_ID}.${dataset}.trades\`
+      WHERE wallet_address IN UNNEST(@wallets)
+      GROUP BY wallet_address
+    `, { wallets: batch });
+
+    if (aggErr) {
+      errors.push(`Backfill agg batch ${i}: ${aggErr.message}`);
+      continue;
+    }
+
+    if (!agg || agg.length === 0) continue;
+
+    const upsertRows = agg.map((row) => ({
+      address: row.wallet_address,
+      total_trades: Number(row.trade_count) || 0,
+      total_volume_usdc: Math.round((Number(row.total_volume) || 0) * 100) / 100,
+      total_markets_traded: Number(row.markets_traded) || 0,
+      last_updated: new Date().toISOString(),
+    }));
+
+    const { error: uErr } = await bq
+      .from('wallets')
+      .upsert(upsertRows, { onConflict: 'address' });
+
+    if (uErr) {
+      errors.push(`Backfill upsert batch ${i}: ${uErr.message}`);
+    } else {
+      updated += upsertRows.length;
+    }
+  }
+
+  console.log(`[WalletProfiler] Backfilled ${updated} wallets from trades table`);
+  return { updated, errors };
+}
+
+/**
  * Incrementally update wallet stats from recent trades only (last 12h).
  * Adds to existing totals rather than replacing them.
  */
@@ -33,14 +124,23 @@ async function incrementalProfileWallets(): Promise<{ updated: number; errors: s
   const errors: string[] = [];
   let updated = 0;
 
-  // Only look at trades from last 12 hours (matches job interval)
-  const twelveHoursAgo = new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString();
+  // Use watermark: fetch trades since the last profiler run to avoid double-counting.
+  // Falls back to 72h ago on first run (covers full trades table retention).
+  const { data: watermarkRow } = await bq.rawQuery<{ wm: string }>(`
+    SELECT MAX(last_updated) as wm
+    FROM \`${process.env.GCP_PROJECT_ID}.${process.env.BQ_DATASET || 'polymarket'}.wallets\`
+    WHERE last_updated IS NOT NULL
+  `);
 
-  // Fetch recent trades — partition-pruned by timestamp
+  const watermark = watermarkRow?.[0]?.wm
+    ? new Date(watermarkRow[0].wm).toISOString()
+    : new Date(Date.now() - 72 * 60 * 60 * 1000).toISOString();
+
+  // Fetch trades since watermark — partition-pruned by timestamp
   const { data: recentTrades, error: tError } = await bq
     .from('trades')
     .select('wallet_address, market_id, size_usdc, timestamp')
-    .gte('timestamp', twelveHoursAgo);
+    .gte('timestamp', watermark);
 
   if (tError) {
     return { updated: 0, errors: [`Failed to fetch recent trades: ${tError.message}`] };

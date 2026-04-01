@@ -83,10 +83,13 @@ export async function computeAccuracy(): Promise<{
   let offset = 0;
   const limit = 100;
   let keepGoing = true;
+  let emptyPages = 0; // consecutive pages with no new resolutions
 
   while (keepGoing) {
     try {
       const batch = await fetchClosedMarkets(limit, offset);
+      let pageHits = 0;
+
       for (const m of batch) {
         if (!m.conditionId || !unresolvedIds.has(m.conditionId)) continue;
 
@@ -96,16 +99,29 @@ export async function computeAccuracy(): Promise<{
 
         if (winner) {
           newlyResolved.push({ conditionId: m.conditionId, outcome: winner });
+          pageHits++;
         }
       }
+
+      if (pageHits > 0) emptyPages = 0;
+      else emptyPages++;
+
       if (batch.length < limit) keepGoing = false;
       else offset += limit;
-      if (offset > 1000) keepGoing = false;
+
+      // Stop after 5 consecutive pages with no new resolutions —
+      // Gamma sorts by endDate DESC so we've moved past relevant markets
+      if (emptyPages >= 5) keepGoing = false;
+
+      // Rate limit between Gamma API pages
+      if (keepGoing) await new Promise((r) => setTimeout(r, 100));
     } catch (err) {
       errors.push(`Fetch closed markets offset=${offset}: ${err}`);
       keepGoing = false;
     }
   }
+
+  console.log(`[Accuracy] Scanned ${offset + limit} closed markets, found ${newlyResolved.length} newly resolved (from ${unresolvedIds.size} unresolved)`);
 
   // ─── Step 3: Mark resolved markets in DB ───
   const MARK_BATCH = 50;
