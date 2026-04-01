@@ -107,7 +107,7 @@ export async function snapshotBooks(): Promise<{ updated: number; errors: string
       )
       WHERE snap_rn = 1
     )
-    WHERE rn > 100 AND rn <= 600
+    WHERE rn <= 500
   `, { cutoff });
 
   const topMarketIds = (midSnaps ?? []).map((s) => s.market_id);

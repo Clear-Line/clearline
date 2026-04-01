@@ -131,7 +131,7 @@ export default function WalletTracker() {
                     <SortHeader label="Trades" sortKey="trades" className="justify-end" />
                   </th>
                   <th className="text-right px-4 py-3">
-                    <span className="text-[10px] tracking-[0.14em] uppercase text-[#64748b]">Active</span>
+                    <span className="text-[10px] tracking-[0.14em] uppercase text-[#64748b]">Markets</span>
                   </th>
                   <th className="text-right px-4 py-3">
                     <span className="text-[10px] tracking-[0.14em] uppercase text-[#64748b]">Wins</span>
@@ -204,10 +204,10 @@ export default function WalletTracker() {
                           </div>
                         </td>
                         <td className="px-4 py-3.5 text-right">
-                          <span className="text-sm text-white">{w.totalPositions}</span>
+                          <span className="text-sm text-white">{w.totalTrades}</span>
                         </td>
                         <td className="px-4 py-3.5 text-right">
-                          <span className="text-sm text-white">{w.activePositions}</span>
+                          <span className="text-sm text-white">{w.totalPositions}</span>
                         </td>
                         <td className="px-4 py-3.5 text-right">
                           <span className="text-sm text-[#10b981]">{w.wins}</span>
