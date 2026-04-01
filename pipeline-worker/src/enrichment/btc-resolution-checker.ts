@@ -48,7 +48,7 @@ export async function checkBtcResolutions(): Promise<{
 
       if (!winner) continue; // Not yet resolved
 
-      const resolvedUp = winner === 'Yes';
+      const resolvedUp = winner === 'Up';
       const clearlineCorrect = cycle.clearline_predicted_up === resolvedUp;
       const polymarketCorrect = cycle.polymarket_predicted_up === resolvedUp;
 
