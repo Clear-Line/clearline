@@ -145,6 +145,23 @@ export async function ensureTables(): Promise<void> {
     }
   }
 
+  // Add ML prediction columns to crypto_signals (idempotent)
+  for (const col of [
+    { name: 'ml_prob', type: 'FLOAT64' },
+    { name: 'ml_features_computed', type: 'BOOL' },
+  ]) {
+    try {
+      await bq.rawQuery(
+        `ALTER TABLE \`${dataset}.crypto_signals\` ADD COLUMN IF NOT EXISTS ${col.name} ${col.type}`
+      );
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (!msg.includes('already exists')) {
+        console.warn(`[EnsureTables] Failed to add crypto_signals.${col.name}: ${msg}`);
+      }
+    }
+  }
+
   // ─── Pipeline metadata (key-value store for chain listener state) ───
   await bq.rawQuery(`
     CREATE TABLE IF NOT EXISTS \`${dataset}.pipeline_metadata\` (

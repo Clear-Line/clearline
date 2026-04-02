@@ -24,11 +24,36 @@ export async function GET(request: Request) {
   }
 
   // Deduplicate: keep only the latest signal per timeframe
+  const now = new Date();
   const latestByTimeframe = new Map<string, Record<string, unknown>>();
   for (const row of signalRows ?? []) {
     const tf = row.timeframe as string;
     if (!latestByTimeframe.has(tf)) {
       latestByTimeframe.set(tf, row);
+    }
+  }
+
+  // Separate active vs expired vs ML-only signals
+  const activeSignals = new Map<string, Record<string, unknown>>();
+  const expiredSignals = new Map<string, Record<string, unknown>>();
+  let latestMlProb: number | null = null;
+  let latestMlComputedAt: string | null = null;
+
+  for (const [tf, row] of latestByTimeframe) {
+    // Track the latest ML prediction from any row
+    if (row.ml_prob != null && row.ml_features_computed) {
+      latestMlProb = row.ml_prob as number;
+      latestMlComputedAt = row.computed_at as string;
+    }
+
+    // ml_only rows are not displayed as signal cards
+    if (tf === 'ml_only') continue;
+
+    const windowEnd = row.window_end as string | null;
+    if (windowEnd && new Date(windowEnd) < now) {
+      expiredSignals.set(tf, row);
+    } else {
+      activeSignals.set(tf, row);
     }
   }
 
@@ -46,8 +71,23 @@ export async function GET(request: Request) {
 
   const deriv = derivRows?.[0] ?? null;
 
-  // Format signals
-  const signals = [...latestByTimeframe.values()].map((s: Record<string, unknown>) => ({
+  // Determine data freshness status
+  const derivFetchedAt = deriv?.fetched_at ? new Date(deriv.fetched_at as string) : null;
+  const derivFreshnessMin = derivFetchedAt
+    ? Math.floor((now.getTime() - derivFetchedAt.getTime()) / 60_000)
+    : null;
+
+  let dataStatus: 'live' | 'derivatives_only' | 'stale';
+  if (activeSignals.size > 0) {
+    dataStatus = 'live';
+  } else if (derivFreshnessMin !== null && derivFreshnessMin < 30) {
+    dataStatus = 'derivatives_only';
+  } else {
+    dataStatus = 'stale';
+  }
+
+  // Format signals — only return active (non-expired) signals
+  const signals = [...activeSignals.values()].map((s: Record<string, unknown>) => ({
     asset: s.asset,
     timeframe: s.timeframe,
     polymarketProb: s.polymarket_prob,
@@ -111,13 +151,36 @@ export async function GET(request: Request) {
     fetchedAt: deriv.fetched_at,
   } : null;
 
+  // ML prediction data
+  const mlPrediction = latestMlProb != null ? {
+    prob: latestMlProb,
+    computedAt: latestMlComputedAt,
+    model: {
+      type: 'XGBoost',
+      trees: 172,
+      maxDepth: 4,
+      holdoutAccuracy: 0.5689,
+      trainingSamples: 5268,
+      topFeatures: [
+        { name: 'consecutive_up', importance: 0.045 },
+        { name: 'ret_5m', importance: 0.030 },
+        { name: 'consecutive_down', importance: 0.030 },
+        { name: 'taker_buy_ratio_5m', importance: 0.029 },
+        { name: 'ret_5m_accel', importance: 0.029 },
+      ],
+    },
+  } : null;
+
   return NextResponse.json({
     signals,
     derivatives,
+    mlPrediction,
+    dataStatus,
     meta: {
       phase: 2,
       activeSignals: ['funding_rate', 'cvd', 'options_skew', 'oi'],
       totalSignals: 5,
+      derivativesFreshnessMin: derivFreshnessMin,
     },
   });
 }
