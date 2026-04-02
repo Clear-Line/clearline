@@ -95,7 +95,11 @@ registerJob('derivatives-fetcher', '*/10 * * * *', async () => {
 
 registerJob('crypto-sentiment-scorer', '2-59/10 * * * *', async () => {
   const result = await scoreCryptoSentiment();
-  console.log(`  -> Crypto signals: ${result.signals} computed`);
+  if (result.status === 'no_markets') {
+    console.log(`  -> No active BTC Polymarket markets right now`);
+  } else {
+    console.log(`  -> Crypto signals: ${result.signals} computed`);
+  }
   if (result.errors.length > 0) console.log(`  -> Errors: ${result.errors.slice(0, 3).join('; ')}`);
 
   const res = await checkBtcResolutions();

@@ -59,13 +59,29 @@ interface DerivativesData {
   fetchedAt: string;
 }
 
+interface MLPrediction {
+  prob: number;
+  computedAt: string;
+  model: {
+    type: string;
+    trees: number;
+    maxDepth: number;
+    holdoutAccuracy: number;
+    trainingSamples: number;
+    topFeatures: { name: string; importance: number }[];
+  };
+}
+
 interface SentimentResponse {
   signals: SentimentSignal[];
   derivatives: DerivativesData | null;
+  mlPrediction: MLPrediction | null;
+  dataStatus: 'live' | 'derivatives_only' | 'stale';
   meta: {
     phase: number;
     activeSignals: string[];
     totalSignals: number;
+    derivativesFreshnessMin: number | null;
   };
 }
 
@@ -214,7 +230,23 @@ export default function CryptoPage() {
 
         {/* Header */}
         <div className="mb-6">
-          <h1 className="text-xl font-semibold text-white">Crypto Sentiment</h1>
+          <div className="flex items-center gap-3">
+            <h1 className="text-xl font-semibold text-white">Crypto Sentiment</h1>
+            {data?.dataStatus && (
+              <span className="flex items-center gap-1.5 text-xs">
+                <span className={`w-2 h-2 rounded-full ${
+                  data.dataStatus === 'live' ? 'bg-[#10b981]' :
+                  data.dataStatus === 'derivatives_only' ? 'bg-[#f59e0b]' :
+                  'bg-[#ef4444]'
+                }`} />
+                <span className="text-[#64748b]">
+                  {data.dataStatus === 'live' ? 'Live' :
+                   data.dataStatus === 'derivatives_only' ? 'Derivatives only' :
+                   'Stale'}
+                </span>
+              </span>
+            )}
+          </div>
           <p className="text-[#64748b] text-sm mt-1">
             Derivatives consensus vs Polymarket probability
           </p>
@@ -260,6 +292,81 @@ export default function CryptoPage() {
                 </tr>
               </tbody>
             </table>
+          </div>
+        )}
+
+        {/* ML Model Prediction */}
+        {data?.mlPrediction && (
+          <div className="bg-[#0d1117] rounded-lg border border-[rgba(255,255,255,0.06)] mb-6 overflow-hidden">
+            <div className="px-4 py-3 border-b border-[rgba(255,255,255,0.06)] flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="text-white font-medium text-sm">ML Model Prediction</span>
+                <span className="text-[10px] text-[#64748b] bg-[rgba(255,255,255,0.06)] px-1.5 py-0.5 rounded">XGBoost</span>
+              </div>
+              <span className="text-[#64748b] text-xs">Updated {timeAgo(data.mlPrediction.computedAt)}</span>
+            </div>
+            <div className="px-4 py-4">
+              <div className="flex items-center gap-8">
+                <div>
+                  <div className="text-[#64748b] text-xs mb-1">Predicted Prob (Up)</div>
+                  <div className={`text-2xl font-mono font-semibold ${
+                    data.mlPrediction.prob > 0.55 ? "text-[#10b981]" :
+                    data.mlPrediction.prob < 0.45 ? "text-[#ef4444]" :
+                    "text-[#94a3b8]"
+                  }`}>
+                    {Math.round(data.mlPrediction.prob * 100)}%
+                  </div>
+                  <div className="text-[#475569] text-xs mt-1">
+                    {data.mlPrediction.prob > 0.55 ? "Bullish" :
+                     data.mlPrediction.prob < 0.45 ? "Bearish" : "Neutral"}
+                  </div>
+                </div>
+                <div className="border-l border-[rgba(255,255,255,0.06)] pl-8">
+                  <div className="text-[#64748b] text-xs mb-2">Model Info</div>
+                  <div className="grid grid-cols-3 gap-x-6 gap-y-1 text-xs">
+                    <div>
+                      <span className="text-[#475569]">Type: </span>
+                      <span className="text-[#94a3b8] font-mono">{data.mlPrediction.model.type}</span>
+                    </div>
+                    <div>
+                      <span className="text-[#475569]">Trees: </span>
+                      <span className="text-[#94a3b8] font-mono">{data.mlPrediction.model.trees}</span>
+                    </div>
+                    <div>
+                      <span className="text-[#475569]">Depth: </span>
+                      <span className="text-[#94a3b8] font-mono">{data.mlPrediction.model.maxDepth}</span>
+                    </div>
+                    <div>
+                      <span className="text-[#475569]">Accuracy: </span>
+                      <span className="text-[#00d4ff] font-mono">{(data.mlPrediction.model.holdoutAccuracy * 100).toFixed(1)}%</span>
+                    </div>
+                    <div>
+                      <span className="text-[#475569]">Samples: </span>
+                      <span className="text-[#94a3b8] font-mono">{data.mlPrediction.model.trainingSamples.toLocaleString()}</span>
+                    </div>
+                    <div>
+                      <span className="text-[#475569]">Features: </span>
+                      <span className="text-[#94a3b8] font-mono">42</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              {/* Top features */}
+              <div className="mt-4 pt-3 border-t border-[rgba(255,255,255,0.06)]">
+                <div className="text-[#64748b] text-xs mb-2">Top Predictive Features</div>
+                <div className="flex gap-3 flex-wrap">
+                  {data.mlPrediction.model.topFeatures.map((f) => (
+                    <div key={f.name} className="flex items-center gap-1.5">
+                      <div
+                        className="h-1.5 rounded-full bg-[#00d4ff]"
+                        style={{ width: `${Math.max(f.importance * 1000, 12)}px` }}
+                      />
+                      <span className="text-[#94a3b8] text-[10px] font-mono">{f.name.replace(/_/g, ' ')}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
           </div>
         )}
 
@@ -325,6 +432,13 @@ export default function CryptoPage() {
                           <td className="py-1 text-[#94a3b8]">Derivatives</td>
                           <td className="py-1 text-white font-mono">{derivPct}%</td>
                         </tr>
+                        {data?.mlPrediction && (
+                          <tr>
+                            <td className="py-1 text-[#94a3b8]">ML Model</td>
+                            <td className="py-1 text-white font-mono">{Math.round(data.mlPrediction.prob * 100)}%</td>
+                            <td className="py-1 text-[#64748b] text-xs">{(data.mlPrediction.model.holdoutAccuracy * 100).toFixed(1)}% holdout acc</td>
+                          </tr>
+                        )}
                       </tbody>
                     </table>
 
@@ -394,9 +508,13 @@ export default function CryptoPage() {
           </div>
         ) : (
           <div className="bg-[#0d1117] rounded-lg border border-[rgba(255,255,255,0.06)] px-6 py-10 text-center">
-            <p className="text-[#94a3b8] text-sm">No active BTC prediction markets found</p>
+            <p className="text-[#94a3b8] text-sm">No active BTC prediction markets right now</p>
             <p className="text-[#64748b] text-xs mt-1">
-              Signals appear when Polymarket has active Bitcoin up/down markets
+              {data?.dataStatus === 'derivatives_only'
+                ? `Derivatives data is live (updated ${data.meta.derivativesFreshnessMin != null ? `${data.meta.derivativesFreshnessMin}m ago` : 'recently'}). Signal cards appear when Polymarket lists new Bitcoin up/down markets.`
+                : data?.dataStatus === 'stale'
+                ? 'Pipeline data may be stale. Derivatives and Polymarket signals are not updating.'
+                : 'Signals appear when Polymarket has active Bitcoin up/down markets'}
             </p>
           </div>
         )}
