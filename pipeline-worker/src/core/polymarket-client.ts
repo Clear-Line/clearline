@@ -69,33 +69,86 @@ export async function fetchCryptoMarkets(limit = 200): Promise<GammaMarket[]> {
 }
 
 /**
- * Fetch BTC Up or Down events directly from the Gamma events API.
- * These are nested under events (not standalone markets), tagged with
- * "up-or-down" + "bitcoin". Returns the inner market from each event.
+ * Fetch BTC Up or Down events using slug-based lookup.
+ *
+ * The Gamma events API tag filter is unreliable (returns unrelated events),
+ * but slug-based lookup works perfectly. BTC up/down markets follow two
+ * predictable slug patterns:
+ *
+ *   1H: "bitcoin-up-or-down-{month}-{day}-{year}-{hour}{am/pm}-et"
+ *   4H: "btc-updown-4h-{unixTimestamp}"
+ *
+ * We generate candidate slugs for the current and upcoming windows,
+ * then fetch each from the Gamma API.
  */
-export async function fetchBtcUpDownEvents(limit = 10): Promise<GammaMarket[]> {
-  const params = new URLSearchParams({
-    active: 'true',
-    closed: 'false',
-    tag: 'up-or-down',
-    limit: String(limit),
-  });
+export async function fetchBtcUpDownEvents(_limit = 10): Promise<GammaMarket[]> {
+  const now = new Date();
+  const slugs = generateBtcUpDownSlugs(now);
 
-  const res = await fetch(`${GAMMA_API}/events?${params}`);
-  if (!res.ok) throw new Error(`Gamma /events (up-or-down) failed: ${res.status}`);
-  const events: GammaEvent[] = await res.json();
-
-  // Extract the inner market from each Bitcoin event
   const markets: GammaMarket[] = [];
-  for (const event of events) {
-    const isBtc = event.title.toLowerCase().includes('bitcoin')
-      || event.title.toLowerCase().includes('btc');
-    if (!isBtc) continue;
-    for (const m of event.markets ?? []) {
-      markets.push(m);
+  const seen = new Set<string>();
+
+  // Fetch events by slug in parallel (max ~8 slugs)
+  const results = await Promise.allSettled(
+    slugs.map(async (slug) => {
+      const res = await fetch(`${GAMMA_API}/events?slug=${slug}`);
+      if (!res.ok) return [];
+      const events: GammaEvent[] = await res.json();
+      return events;
+    }),
+  );
+
+  for (const result of results) {
+    if (result.status !== 'fulfilled') continue;
+    for (const event of result.value) {
+      for (const m of event.markets ?? []) {
+        if (!seen.has(m.conditionId)) {
+          seen.add(m.conditionId);
+          markets.push(m);
+        }
+      }
     }
   }
+
   return markets;
+}
+
+const MONTH_NAMES = [
+  '', 'january', 'february', 'march', 'april', 'may', 'june',
+  'july', 'august', 'september', 'october', 'november', 'december',
+];
+
+function generateBtcUpDownSlugs(now: Date): string[] {
+  const slugs: string[] = [];
+
+  // ET is UTC-4 (EDT) or UTC-5 (EST). Use -4 for EDT (March-November).
+  const etOffsetMs = -4 * 60 * 60 * 1000;
+  const nowEt = new Date(now.getTime() + etOffsetMs);
+  const month = MONTH_NAMES[nowEt.getMonth() + 1];
+  const day = nowEt.getDate();
+  const year = nowEt.getFullYear();
+
+  // 1H windows: generate for current hour and next 2 hours (9am-8pm ET)
+  const currentHourEt = nowEt.getHours();
+  for (let h = Math.max(currentHourEt - 1, 9); h <= Math.min(currentHourEt + 2, 20); h++) {
+    const ampm = h < 12 ? 'am' : 'pm';
+    const displayH = h <= 12 ? h : h - 12;
+    slugs.push(`bitcoin-up-or-down-${month}-${day}-${year}-${displayH}${ampm}-et`);
+  }
+
+  // 4H windows: 0:00, 4:00, 8:00, 12:00, 16:00, 20:00 UTC
+  const todayUtcMidnight = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  for (let h = 0; h < 24; h += 4) {
+    const windowStart = new Date(todayUtcMidnight.getTime() + h * 3600_000);
+    const windowEnd = new Date(windowStart.getTime() + 4 * 3600_000);
+    // Include if window is active or starts within the next 4 hours
+    if (windowEnd > now && windowStart.getTime() < now.getTime() + 4 * 3600_000) {
+      const ts = Math.floor(windowStart.getTime() / 1000);
+      slugs.push(`btc-updown-4h-${ts}`);
+    }
+  }
+
+  return slugs;
 }
 
 export async function fetchMarketByConditionId(conditionId: string): Promise<GammaMarket | null> {
