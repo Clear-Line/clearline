@@ -34,7 +34,7 @@ export function loadModel(): XGBoostModel {
   if (cachedModel) return cachedModel;
 
   const __dirname = dirname(fileURLToPath(import.meta.url));
-  const modelPath = resolve(__dirname, '../../../scripts/btc_model.json');
+  const modelPath = resolve(__dirname, '../../models/btc_model.json');
   const raw = JSON.parse(readFileSync(modelPath, 'utf-8'));
 
   const learner = raw.learner;
@@ -95,7 +95,7 @@ export function predict(features: number[]): number {
 export function getFeatureNames(): string[] {
   const model = loadModel();
   const __dirname = dirname(fileURLToPath(import.meta.url));
-  const configPath = resolve(__dirname, '../../../scripts/btc_model_config.json');
+  const configPath = resolve(__dirname, '../../models/btc_model_config.json');
   const config = JSON.parse(readFileSync(configPath, 'utf-8'));
   return config.features as string[];
 }
@@ -107,7 +107,7 @@ export function getModelInfo(): {
   topFeatures: { name: string; importance: number }[];
 } {
   const __dirname = dirname(fileURLToPath(import.meta.url));
-  const configPath = resolve(__dirname, '../../../scripts/btc_model_config.json');
+  const configPath = resolve(__dirname, '../../models/btc_model_config.json');
   const config = JSON.parse(readFileSync(configPath, 'utf-8'));
   loadModel(); // ensure model is loaded
   return {

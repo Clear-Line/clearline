@@ -1,0 +1,111 @@
+{
+  "features": [
+    "ret_5m",
+    "ret_15m",
+    "ret_1h",
+    "ret_4h",
+    "ret_5m_accel",
+    "close_vs_vwap_1h",
+    "high_low_position_1h",
+    "atr_15m",
+    "atr_1h",
+    "vol_expansion",
+    "return_std_1h",
+    "vol_ratio_5m_1h",
+    "vol_ratio_15m_1h",
+    "vol_trend_15m",
+    "trade_count_ratio",
+    "large_candle_count",
+    "cvd_5m",
+    "cvd_15m",
+    "cvd_1h",
+    "cvd_4h",
+    "cvd_5m_norm",
+    "cvd_slope_15m",
+    "rsi_14",
+    "bb_pctb_20",
+    "macd_hist",
+    "ema_cross",
+    "price_vs_ema50",
+    "hour_utc",
+    "minute_utc",
+    "day_of_week",
+    "is_us_hours",
+    "consecutive_up",
+    "consecutive_down",
+    "up_ratio_15m",
+    "body_ratio_5m",
+    "window_duration",
+    "ret_window_lookback",
+    "momentum_sharpe",
+    "taker_buy_ratio_5m",
+    "taker_buy_ratio_15m",
+    "price_acceleration",
+    "vol_price_corr_15m"
+  ],
+  "n_features": 42,
+  "hyperparameters": {
+    "max_depth": 4,
+    "learning_rate": 0.022181107521192164,
+    "n_estimators": 172,
+    "subsample": 0.7533464001192736,
+    "colsample_bytree": 0.8600315407150256,
+    "min_child_weight": 9,
+    "reg_alpha": 1.385136323759168,
+    "reg_lambda": 4.565694852917154,
+    "gamma": 1.1139948731952785
+  },
+  "holdout_accuracy": 0.5689,
+  "n_training_samples": 4477,
+  "n_holdout_samples": 791,
+  "total_samples": 5268,
+  "top_features": [
+    {
+      "name": "consecutive_up",
+      "importance": 0.045
+    },
+    {
+      "name": "ret_5m",
+      "importance": 0.03
+    },
+    {
+      "name": "consecutive_down",
+      "importance": 0.0299
+    },
+    {
+      "name": "taker_buy_ratio_5m",
+      "importance": 0.0292
+    },
+    {
+      "name": "ret_5m_accel",
+      "importance": 0.0288
+    },
+    {
+      "name": "ema_cross",
+      "importance": 0.0279
+    },
+    {
+      "name": "bb_pctb_20",
+      "importance": 0.0265
+    },
+    {
+      "name": "momentum_sharpe",
+      "importance": 0.0265
+    },
+    {
+      "name": "price_vs_ema50",
+      "importance": 0.026
+    },
+    {
+      "name": "close_vs_vwap_1h",
+      "importance": 0.0252
+    }
+  ],
+  "timeframes": [
+    "5M",
+    "15M",
+    "1H",
+    "4H"
+  ],
+  "trained_at": "2026-03-31T21:47:04.483086"
+}
