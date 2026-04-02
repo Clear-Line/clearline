@@ -10,6 +10,8 @@
 
 import { bq } from '../core/bigquery.js';
 import { fetchBtcUpDownEvents, type GammaMarket } from '../core/polymarket-client.js';
+import { predict as mlPredict, getModelInfo } from './xgboost-inference.js';
+import { buildFeatures } from './ml-feature-builder.js';
 
 // ─── Signal weights (full 5-signal model) ───
 const WEIGHTS: Record<string, number> = {
@@ -131,7 +133,7 @@ async function findBtcMarkets(): Promise<BtcMarket[]> {
   return results.slice(0, 3);
 }
 
-export async function scoreCryptoSentiment(): Promise<{ signals: number; errors: string[] }> {
+export async function scoreCryptoSentiment(): Promise<{ signals: number; errors: string[]; status?: string }> {
   const errors: string[] = [];
   let signalsWritten = 0;
 
@@ -149,7 +151,19 @@ export async function scoreCryptoSentiment(): Promise<{ signals: number; errors:
 
   const deriv: DerivativesRow = derivRows[0];
 
-  // Step 2: Find active BTC markets with LIVE prices from Polymarket
+  // Step 2: Run ML model (independent of Polymarket markets — only needs kline data)
+  let mlProb: number | null = null;
+  let mlFeaturesComputed = false;
+  try {
+    const { features } = await buildFeatures(60);
+    mlProb = mlPredict(features);
+    mlFeaturesComputed = true;
+    console.log(`[CryptoSentiment] ML model prediction: ${(mlProb * 100).toFixed(1)}% Up`);
+  } catch (err) {
+    errors.push(`ML prediction: ${err instanceof Error ? err.message : String(err)}`);
+  }
+
+  // Step 3: Find active BTC markets with LIVE prices from Polymarket
   let btcMarkets: BtcMarket[];
   try {
     btcMarkets = await findBtcMarkets();
@@ -158,10 +172,47 @@ export async function scoreCryptoSentiment(): Promise<{ signals: number; errors:
   }
 
   if (btcMarkets.length === 0) {
-    return { signals: 0, errors: ['No active BTC Polymarket markets found'] };
+    // Even without active markets, write ML-only signal so frontend has fresh predictions
+    if (mlFeaturesComputed && mlProb != null) {
+      const mlOnlyId = `BTC_ml_${Date.now()}`;
+      const { error: mlInsertErr } = await bq
+        .from('crypto_signals')
+        .upsert([{
+          id: mlOnlyId,
+          asset: 'BTC',
+          timeframe: 'ml_only',
+          polymarket_prob: null,
+          polymarket_market_id: null,
+          polymarket_question: null,
+          derivatives_prob: null,
+          sds: null,
+          sds_direction: null,
+          signal_funding_rate: null,
+          signal_cvd: null,
+          signal_options_skew: null,
+          signal_oi: null,
+          signal_liquidation: null,
+          signals_active: 0,
+          signals_agreeing: 0,
+          agreement_score: null,
+          confidence: null,
+          spot_price: deriv.spot_price,
+          window_end: null,
+          computed_at: new Date().toISOString(),
+          ml_prob: Math.round(mlProb * 10000) / 10000,
+          ml_features_computed: true,
+        }], { onConflict: 'id' });
+
+      if (mlInsertErr) {
+        errors.push(`ML-only insert: ${mlInsertErr.message}`);
+      } else {
+        return { signals: 1, errors, status: 'no_markets' };
+      }
+    }
+    return { signals: 0, errors, status: 'no_markets' };
   }
 
-  // Step 3: Compute signals and write rows
+  // Step 4: Compute signals and write rows
   const upsertRows = [];
   const computedAt = new Date().toISOString();
 
@@ -250,6 +301,8 @@ export async function scoreCryptoSentiment(): Promise<{ signals: number; errors:
       spot_price: deriv.spot_price,
       window_end: market.endDate,
       computed_at: computedAt,
+      ml_prob: mlProb != null ? Math.round(mlProb * 10000) / 10000 : null,
+      ml_features_computed: mlFeaturesComputed,
     });
   }
 
