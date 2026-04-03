@@ -44,7 +44,7 @@ console.log('');
 console.log('  CLEARLINE PIPELINE WORKER v4.0 (on-chain trade ingestion)');
 console.log('  Trades: real-time Polygon chain listener (politics/geopolitics/economics/crypto)');
 console.log('  Ingestion: 30min | Scanner: 2h | Enrichment: 6h');
-console.log('  Crypto: 10min derivatives + sentiment scoring');
+console.log('  Crypto: PAUSED (derivatives + ML disabled)');
 console.log('');
 
 // ─── Register Jobs ───
@@ -86,26 +86,26 @@ registerJob('smart-money-scanner', '0 */2 * * *', async () => {
   if (result.errors.length > 0) console.log(`  -> Errors: ${result.errors.slice(0, 3).join('; ')}`);
 });
 
-// Crypto: every 10 minutes — derivatives data + sentiment scoring
-registerJob('derivatives-fetcher', '*/10 * * * *', async () => {
-  const result = await fetchDerivatives();
-  console.log(`  -> Derivatives: ${result.asset} FR=${result.fundingRate.toFixed(6)} CVD1h=$${(result.cvd1h / 1e6).toFixed(1)}M CVD4h=$${(result.cvd4h / 1e6).toFixed(1)}M`);
-  if (result.errors.length > 0) console.log(`  -> Errors: ${result.errors.slice(0, 3).join('; ')}`);
-});
+// Crypto: PAUSED — derivatives + sentiment scoring disabled to reduce costs
+// registerJob('derivatives-fetcher', '*/10 * * * *', async () => {
+//   const result = await fetchDerivatives();
+//   console.log(`  -> Derivatives: ${result.asset} FR=${result.fundingRate.toFixed(6)} CVD1h=$${(result.cvd1h / 1e6).toFixed(1)}M CVD4h=$${(result.cvd4h / 1e6).toFixed(1)}M`);
+//   if (result.errors.length > 0) console.log(`  -> Errors: ${result.errors.slice(0, 3).join('; ')}`);
+// });
 
-registerJob('crypto-sentiment-scorer', '2-59/10 * * * *', async () => {
-  const result = await scoreCryptoSentiment();
-  if (result.status === 'no_markets') {
-    console.log(`  -> No active BTC Polymarket markets right now`);
-  } else {
-    console.log(`  -> Crypto signals: ${result.signals} computed`);
-  }
-  if (result.errors.length > 0) console.log(`  -> Errors: ${result.errors.slice(0, 3).join('; ')}`);
-
-  const res = await checkBtcResolutions();
-  if (res.resolved > 0) console.log(`  -> BTC cycles resolved: ${res.resolved}`);
-  if (res.errors.length > 0) console.log(`  -> Resolution errors: ${res.errors.slice(0, 3).join('; ')}`);
-});
+// registerJob('crypto-sentiment-scorer', '2-59/10 * * * *', async () => {
+//   const result = await scoreCryptoSentiment();
+//   if (result.status === 'no_markets') {
+//     console.log(`  -> No active BTC Polymarket markets right now`);
+//   } else {
+//     console.log(`  -> Crypto signals: ${result.signals} computed`);
+//   }
+//   if (result.errors.length > 0) console.log(`  -> Errors: ${result.errors.slice(0, 3).join('; ')}`);
+//
+//   const res = await checkBtcResolutions();
+//   if (res.resolved > 0) console.log(`  -> BTC cycles resolved: ${res.resolved}`);
+//   if (res.errors.length > 0) console.log(`  -> Resolution errors: ${res.errors.slice(0, 3).join('; ')}`);
+// });
 
 // Maintenance: purge old data every 6 hours to keep table sizes small
 registerJob('data-purge', '0 */6 * * *', async () => {
@@ -156,13 +156,14 @@ async function runInitialPipeline(): Promise<void> {
     if (smt.vacuumsDetected > 0) console.log(`  -> Liquidity vacuums: ${smt.vacuumsDetected}`);
     if (smartMoney.errors.length > 0) console.log(`  -> Errors: ${smartMoney.errors.slice(0, 3).join('; ')}`);
 
-    console.log('[5/5] Crypto derivatives + sentiment scoring...');
-    const derivResult = await fetchDerivatives();
-    console.log(`  -> Derivatives: BTC FR=${derivResult.fundingRate.toFixed(6)} CVD1h=$${(derivResult.cvd1h / 1e6).toFixed(1)}M`);
-    const cryptoSignals = await scoreCryptoSentiment();
-    console.log(`  -> Crypto signals: ${cryptoSignals.signals} computed`);
-    const btcRes = await checkBtcResolutions();
-    if (btcRes.resolved > 0) console.log(`  -> BTC cycles resolved: ${btcRes.resolved}`);
+    // Crypto: PAUSED — disabled to reduce costs
+    // console.log('[5/5] Crypto derivatives + sentiment scoring...');
+    // const derivResult = await fetchDerivatives();
+    // console.log(`  -> Derivatives: BTC FR=${derivResult.fundingRate.toFixed(6)} CVD1h=$${(derivResult.cvd1h / 1e6).toFixed(1)}M`);
+    // const cryptoSignals = await scoreCryptoSentiment();
+    // console.log(`  -> Crypto signals: ${cryptoSignals.signals} computed`);
+    // const btcRes = await checkBtcResolutions();
+    // if (btcRes.resolved > 0) console.log(`  -> BTC cycles resolved: ${btcRes.resolved}`);
 
     console.log('\n[Worker] Initial pipeline complete. Scheduler is running.\n');
   } catch (err) {
