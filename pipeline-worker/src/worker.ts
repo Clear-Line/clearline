@@ -19,14 +19,9 @@ import { loadTokenRegistry } from './core/token-registry.js';
 // ─── Enrichment Layer ───
 import { computeAccuracy } from './enrichment/accuracy-computer.js';
 import { profileWallets } from './enrichment/wallet-profiler.js';
-import { checkBtcResolutions } from './enrichment/btc-resolution-checker.js';
 // ─── Intelligence Layer ───
 import { scanSmartMoney } from './intelligence/smart-money-scanner.js';
-import { scoreCryptoSentiment } from './intelligence/crypto-sentiment-scorer.js';
 import { computeEdges } from './intelligence/edge-computer.js';
-
-// ─── Crypto Layer ───
-import { fetchDerivatives } from './ingestion/derivatives-fetcher.js';
 
 // ─── Maintenance ───
 import { ensureTables } from './core/ensure-tables.js';
@@ -45,7 +40,7 @@ console.log('');
 console.log('  CLEARLINE PIPELINE WORKER v4.0 (on-chain trade ingestion)');
 console.log('  Trades: real-time Polygon chain listener (politics/geopolitics/economics/crypto)');
 console.log('  Ingestion: 30min | Scanner: 2h | Enrichment: 6h');
-console.log('  Crypto: PAUSED (derivatives + ML disabled)');
+console.log('  Crypto: DISABLED');
 console.log('');
 
 // ─── Register Jobs ───
@@ -86,27 +81,6 @@ registerJob('smart-money-scanner', '0 */2 * * *', async () => {
   if (t.vacuumsDetected > 0) console.log(`  -> Liquidity vacuums: ${t.vacuumsDetected}`);
   if (result.errors.length > 0) console.log(`  -> Errors: ${result.errors.slice(0, 3).join('; ')}`);
 });
-
-// Crypto: PAUSED — derivatives + sentiment scoring disabled to reduce costs
-// registerJob('derivatives-fetcher', '*/10 * * * *', async () => {
-//   const result = await fetchDerivatives();
-//   console.log(`  -> Derivatives: ${result.asset} FR=${result.fundingRate.toFixed(6)} CVD1h=$${(result.cvd1h / 1e6).toFixed(1)}M CVD4h=$${(result.cvd4h / 1e6).toFixed(1)}M`);
-//   if (result.errors.length > 0) console.log(`  -> Errors: ${result.errors.slice(0, 3).join('; ')}`);
-// });
-
-// registerJob('crypto-sentiment-scorer', '2-59/10 * * * *', async () => {
-//   const result = await scoreCryptoSentiment();
-//   if (result.status === 'no_markets') {
-//     console.log(`  -> No active BTC Polymarket markets right now`);
-//   } else {
-//     console.log(`  -> Crypto signals: ${result.signals} computed`);
-//   }
-//   if (result.errors.length > 0) console.log(`  -> Errors: ${result.errors.slice(0, 3).join('; ')}`);
-//
-//   const res = await checkBtcResolutions();
-//   if (res.resolved > 0) console.log(`  -> BTC cycles resolved: ${res.resolved}`);
-//   if (res.errors.length > 0) console.log(`  -> Resolution errors: ${res.errors.slice(0, 3).join('; ')}`);
-// });
 
 // Maintenance: purge old data every 6 hours to keep table sizes small
 registerJob('data-purge', '0 */6 * * *', async () => {
@@ -171,11 +145,6 @@ async function runInitialPipeline(): Promise<void> {
     const et = edges.telemetry;
     console.log(`  -> Edges: ${edges.edgesComputed}, overlap pairs: ${et.pairsWithOverlap}, corr pairs: ${et.pairsWithCorrelation}`);
     if (edges.errors.length > 0) console.log(`  -> Errors: ${edges.errors.slice(0, 3).join('; ')}`);
-
-    // Crypto: PAUSED — disabled to reduce costs
-    // const derivResult = await fetchDerivatives();
-    // const cryptoSignals = await scoreCryptoSentiment();
-    // const btcRes = await checkBtcResolutions();
 
     console.log('\n[Worker] Initial pipeline complete. Scheduler is running.\n');
   } catch (err) {
