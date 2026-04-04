@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useMemo, useEffect, memo } from "react";
-import dynamic from "next/dynamic";
 import {
   Loader2,
   Activity,
@@ -10,20 +9,11 @@ import {
   Search,
   Zap,
   ArrowRight,
-  Globe,
   ArrowUpCircle,
   ArrowDownCircle,
 } from "lucide-react";
 import { Market } from "../types/market";
 import { MarketCard } from "./MarketCard";
-
-const InteractiveGlobe = dynamic(
-  () => import("./ui/interactive-globe").then((m) => m.InteractiveGlobe),
-  {
-    ssr: false,
-    loading: () => <div className="w-full aspect-square bg-[#0d1117] rounded-full animate-pulse" />,
-  },
-);
 
 type SortOption = "highest-volume" | "biggest-movers" | "smart-money" | "highest-odds" | "lowest-odds";
 const TERMINAL_MARKET_LIMIT = 500;
@@ -237,41 +227,7 @@ export function TerminalDashboard() {
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 mb-8">
-          <div className="lg:col-span-4 xl:col-span-3">
-            <div className="bg-[#0d1117] border border-[rgba(255,255,255,0.06)] rounded-2xl p-6 h-full">
-              <div className="flex items-center gap-2 mb-6">
-                <Globe className="h-4 w-4 text-[#00d4ff]" />
-                <h2 className="text-[11px] font-bold text-[#10b981] tracking-[0.15em] uppercase">
-                  Global Market Activity
-                </h2>
-              </div>
-
-              <div className="relative mx-auto mb-8 aspect-square w-full max-w-[260px]">
-                <InteractiveGlobe
-                  size={260}
-                  className="h-full w-full rounded-full"
-                  autoRotateSpeed={0.0018}
-                  arcColor="rgba(0, 212, 255, 0.35)"
-                  markerColor="rgba(16, 185, 129, 1)"
-                />
-              </div>
-
-              <div className="border-t border-[rgba(255,255,255,0.06)] pt-5" />
-
-              <div className="grid grid-cols-2 gap-3">
-                <div className="text-center">
-                  <div className="text-xl font-bold text-[#10b981]">{signalCount}</div>
-                  <div className="text-[9px] text-[#64748b] tracking-[0.15em] uppercase mt-0.5">Active Signals</div>
-                </div>
-                <div className="text-center">
-                  <div className="text-xl font-bold text-[#00d4ff]">{markets.length}</div>
-                  <div className="text-[9px] text-[#64748b] tracking-[0.15em] uppercase mt-0.5">Markets</div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div className="lg:col-span-8 xl:col-span-9 space-y-5">
+          <div className="lg:col-span-12 space-y-5">
             {tickerItems.length > 0 && (
               <div className="bg-[#0d1117] border border-[rgba(255,255,255,0.06)] rounded-2xl overflow-hidden">
                 <div className="flex items-center h-10 px-4">
