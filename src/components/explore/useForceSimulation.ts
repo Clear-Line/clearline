@@ -92,7 +92,7 @@ export function useForceSimulation({
       simRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [width, height]);
+  }, [nodes, edges, width, height]);
 
   // Reheat on category filter change
   useEffect(() => {
