@@ -11,6 +11,7 @@ export function Navbar() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   if (pathname.startsWith('/sign-in')) return null;
+  if (pathname.startsWith('/explore')) return null;
 
   const isMarketingPage = pathname === '/';
 

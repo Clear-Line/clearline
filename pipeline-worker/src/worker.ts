@@ -23,6 +23,7 @@ import { checkBtcResolutions } from './enrichment/btc-resolution-checker.js';
 // ─── Intelligence Layer ───
 import { scanSmartMoney } from './intelligence/smart-money-scanner.js';
 import { scoreCryptoSentiment } from './intelligence/crypto-sentiment-scorer.js';
+import { computeEdges } from './intelligence/edge-computer.js';
 
 // ─── Crypto Layer ───
 import { fetchDerivatives } from './ingestion/derivatives-fetcher.js';
@@ -114,6 +115,15 @@ registerJob('data-purge', '0 */6 * * *', async () => {
   if (result.errors.length > 0) console.log(`  -> Purge errors: ${result.errors.join('; ')}`);
 });
 
+// Constellation: daily at 3:30am UTC — computes market_edges for constellation map
+registerJob('edge-computer', '30 3 * * *', async () => {
+  const result = await computeEdges();
+  const t = result.telemetry;
+  console.log(`  -> Edges: ${result.edgesComputed}, markets: ${t.activeMarkets}, multi-wallets: ${t.multiMarketWallets}`);
+  console.log(`  -> Pairs with overlap: ${t.pairsWithOverlap}, with correlation: ${t.pairsWithCorrelation}`);
+  if (result.errors.length > 0) console.log(`  -> Errors: ${result.errors.slice(0, 3).join('; ')}`);
+});
+
 // ─── Start Scheduler ───
 
 startScheduler();
@@ -156,14 +166,16 @@ async function runInitialPipeline(): Promise<void> {
     if (smt.vacuumsDetected > 0) console.log(`  -> Liquidity vacuums: ${smt.vacuumsDetected}`);
     if (smartMoney.errors.length > 0) console.log(`  -> Errors: ${smartMoney.errors.slice(0, 3).join('; ')}`);
 
+    console.log('[5/5] Edge computation (constellation map)...');
+    const edges = await computeEdges();
+    const et = edges.telemetry;
+    console.log(`  -> Edges: ${edges.edgesComputed}, overlap pairs: ${et.pairsWithOverlap}, corr pairs: ${et.pairsWithCorrelation}`);
+    if (edges.errors.length > 0) console.log(`  -> Errors: ${edges.errors.slice(0, 3).join('; ')}`);
+
     // Crypto: PAUSED — disabled to reduce costs
-    // console.log('[5/5] Crypto derivatives + sentiment scoring...');
     // const derivResult = await fetchDerivatives();
-    // console.log(`  -> Derivatives: BTC FR=${derivResult.fundingRate.toFixed(6)} CVD1h=$${(derivResult.cvd1h / 1e6).toFixed(1)}M`);
     // const cryptoSignals = await scoreCryptoSentiment();
-    // console.log(`  -> Crypto signals: ${cryptoSignals.signals} computed`);
     // const btcRes = await checkBtcResolutions();
-    // if (btcRes.resolved > 0) console.log(`  -> BTC cycles resolved: ${btcRes.resolved}`);
 
     console.log('\n[Worker] Initial pipeline complete. Scheduler is running.\n');
   } catch (err) {

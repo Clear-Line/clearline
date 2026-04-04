@@ -17,8 +17,12 @@ export async function GET(
 
   const { id } = await params;
 
-  // Fetch market metadata + market card + snapshots + trades in parallel
-  const [marketRes, cardRes, snapshotsRes, tradesRes] = await Promise.all([
+  const projectId = process.env.GCP_PROJECT_ID!;
+  const ds = process.env.BQ_DATASET || 'polymarket';
+  const fq = (table: string) => `\`${projectId}.${ds}.${table}\``;
+
+  // Fetch market metadata + market card + snapshots + trades + connected markets in parallel
+  const [marketRes, cardRes, snapshotsRes, tradesRes, edgesRes] = await Promise.all([
     bq
       .from('markets')
       .select('condition_id, question, category, outcomes, start_date, end_date, is_active, updated_at')
@@ -39,6 +43,25 @@ export async function GET(
       .eq('market_id', id)
       .order('timestamp', { ascending: false })
       .limit(500),
+    bq.rawQuery<{
+      connected_id: string;
+      wallet_overlap: number;
+      shared_wallets: number;
+      price_corr: number | null;
+      combined_weight: number;
+    }>(`
+      SELECT
+        CASE WHEN market_a = @id THEN market_b ELSE market_a END AS connected_id,
+        wallet_overlap,
+        shared_wallets,
+        price_corr,
+        combined_weight
+      FROM ${fq('market_edges')}
+      WHERE (market_a = @id OR market_b = @id)
+        AND combined_weight > 0.10
+      ORDER BY combined_weight DESC
+      LIMIT 10
+    `, { id }),
   ]);
 
   const market = marketRes.data;
@@ -114,6 +137,23 @@ export async function GET(
     };
   });
 
+  // Connected markets from market_edges
+  const connectedEdges = edgesRes.data ?? [];
+  const connectedIds = connectedEdges.map((e) => e.connected_id);
+  let connectedTitleMap = new Map<string, { question: string; category: string }>();
+  if (connectedIds.length > 0) {
+    const { data: connectedMarkets } = await bq
+      .from('markets')
+      .select('condition_id, question, category')
+      .in('condition_id', connectedIds);
+    connectedTitleMap = new Map(
+      (connectedMarkets ?? []).map((m: Record<string, unknown>) => [
+        m.condition_id as string,
+        { question: m.question as string, category: m.category as string },
+      ]),
+    );
+  }
+
   // Smart money signal from pre-computed card
   let topSmartWallets: unknown[] = [];
   try {
@@ -162,5 +202,18 @@ export async function GET(
     smartSellVolume: Number(card?.smart_sell_volume) || 0,
     smartWalletCount: Number(card?.smart_wallet_count) || 0,
     topSmartWallets,
+    // Connected markets from constellation map edges
+    connectedMarkets: connectedEdges.map((e) => {
+      const meta = connectedTitleMap.get(e.connected_id);
+      return {
+        id: e.connected_id,
+        title: meta?.question ?? e.connected_id,
+        category: meta?.category ?? 'other',
+        weight: e.combined_weight,
+        sharedWallets: e.shared_wallets,
+        walletOverlap: e.wallet_overlap,
+        priceCorrelation: e.price_corr,
+      };
+    }),
   });
 }
