@@ -45,13 +45,19 @@ export async function GET() {
         s.volume_24h,
         s.liquidity
       FROM ${fq('markets')} m
-      LEFT JOIN (
+      INNER JOIN (
         SELECT market_id, yes_price, volume_24h, liquidity,
           ROW_NUMBER() OVER (PARTITION BY market_id ORDER BY timestamp DESC) AS rn
         FROM ${fq('market_snapshots')}
         WHERE timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR)
       ) s ON s.market_id = m.condition_id AND s.rn = 1
-      WHERE m.is_active = true AND m.is_resolved = false
+      WHERE m.is_active = true
+        AND m.is_resolved = false
+        AND m.category IN ('politics', 'crypto', 'economics', 'geopolitics', 'sports', 'culture')
+        AND s.volume_24h > 0
+        AND s.yes_price > 0.01 AND s.yes_price < 0.99
+      ORDER BY s.volume_24h DESC
+      LIMIT 300
     `),
     bq.from('market_edges')
       .select('market_a, market_b, wallet_overlap, shared_wallets, price_corr, corr_samples, combined_weight')
