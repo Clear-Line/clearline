@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Activity, Wallet, Bell, TrendingUp, Menu, X, ArrowRight } from 'lucide-react';
+import { Activity, Wallet, Bell, Menu, X, ArrowRight } from 'lucide-react';
 import { useState } from 'react';
 import { SignedIn, SignedOut, SignInButton, SignUpButton, UserButton } from '@clerk/nextjs';
 
@@ -19,7 +19,6 @@ export function Navbar() {
     { name: 'Terminal', href: '/terminal', icon: Activity },
     { name: 'Wallet Tracker', href: '/wallets', icon: Wallet },
     { name: 'Alerts', href: '/alerts', icon: Bell },
-    { name: 'Crypto', href: '/crypto', icon: TrendingUp },
   ];
 
   const marketingNavigation = [

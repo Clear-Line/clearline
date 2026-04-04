@@ -55,28 +55,6 @@ export async function purgeOldData(): Promise<{
     errors.push(`Card purge: ${cardResult.error.message}`);
   }
 
-  // Purge old crypto derivatives (7-day retention)
-  const cryptoCutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
-
-  const derivResult = await bq
-    .from('crypto_derivatives')
-    .delete({ count: 'exact' })
-    .lt('fetched_at', cryptoCutoff);
-
-  if (derivResult.error) {
-    errors.push(`Crypto derivatives purge: ${derivResult.error.message}`);
-  }
-
-  // Purge old crypto signals (7-day retention)
-  const sigResult = await bq
-    .from('crypto_signals')
-    .delete({ count: 'exact' })
-    .lt('computed_at', cryptoCutoff);
-
-  if (sigResult.error) {
-    errors.push(`Crypto signals purge: ${sigResult.error.message}`);
-  }
-
   // Purge market_edges referencing resolved markets
   try {
     await bq.rawQuery(`
