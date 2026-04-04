@@ -81,15 +81,20 @@ export async function GET() {
     endDate: n.end_date ?? null,
   }));
 
-  const edges = (edgesResult.data ?? []).map((e) => ({
-    source: e.market_a,
-    target: e.market_b,
-    weight: e.combined_weight,
-    walletOverlap: e.wallet_overlap,
-    sharedWallets: e.shared_wallets,
-    priceCorrelation: e.price_corr,
-    corrSamples: e.corr_samples,
-  }));
+  // Only include edges where both endpoints are in the visible node set
+  const nodeIds = new Set(nodes.map((n) => n.id));
+
+  const edges = (edgesResult.data ?? [])
+    .filter((e) => nodeIds.has(e.market_a) && nodeIds.has(e.market_b))
+    .map((e) => ({
+      source: e.market_a,
+      target: e.market_b,
+      weight: e.combined_weight,
+      walletOverlap: e.wallet_overlap,
+      sharedWallets: e.shared_wallets,
+      priceCorrelation: e.price_corr,
+      corrSamples: e.corr_samples,
+    }));
 
   const response = NextResponse.json({
     nodes,
