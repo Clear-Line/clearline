@@ -18,7 +18,6 @@ export function Navbar() {
     { name: 'Crypto', href: '/crypto' },
     { name: 'Pricing', href: '/pricing' },
     { name: 'Case Studies', href: '/case-studies' },
-    { name: 'Articles', href: '/articles' },
   ];
 
   return (

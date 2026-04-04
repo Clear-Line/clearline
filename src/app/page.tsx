@@ -2,19 +2,29 @@
 
 import Link from "next/link";
 import { ArrowRight } from "lucide-react";
+import { BackgroundGradientAnimation } from "@/components/ui/background-gradient-animation";
 
 export default function HomePage() {
   return (
     <div className="min-h-screen bg-[#04040B] text-white">
       {/* ─── Hero ─── */}
       <section className="relative min-h-[90vh] flex items-center justify-center overflow-hidden">
-        {/* Dramatic gradient background inspired by Bubblemaps */}
-        <div className="absolute inset-0">
-          <div className="absolute inset-0 bg-[radial-gradient(ellipse_80%_60%_at_50%_40%,rgba(0,212,255,0.15),transparent_60%)]" />
-          <div className="absolute inset-0 bg-[radial-gradient(ellipse_60%_50%_at_30%_60%,rgba(59,130,246,0.12),transparent_50%)]" />
-          <div className="absolute inset-0 bg-[radial-gradient(ellipse_50%_40%_at_70%_50%,rgba(139,92,246,0.10),transparent_50%)]" />
-          <div className="absolute bottom-0 left-0 right-0 h-[1px] bg-gradient-to-r from-transparent via-white/10 to-transparent" />
-        </div>
+        {/* Animated gradient background */}
+        <BackgroundGradientAnimation
+          gradientBackgroundStart="rgb(4, 4, 11)"
+          gradientBackgroundEnd="rgb(4, 10, 30)"
+          firstColor="0, 150, 200"
+          secondColor="0, 212, 255"
+          thirdColor="30, 100, 180"
+          fourthColor="0, 80, 160"
+          fifthColor="60, 160, 220"
+          pointerColor="0, 180, 255"
+          size="100%"
+          blendingValue="hard-light"
+          interactive={true}
+          containerClassName="!absolute !inset-0 !h-full !w-full"
+          className="hidden"
+        />
 
         <div className="relative z-10 mx-auto max-w-4xl px-4 text-center">
           <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-[#00d4ff]/70 mb-8">
