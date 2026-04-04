@@ -7,6 +7,7 @@ import { Activity } from 'lucide-react';
 export function AppFooter() {
   const pathname = usePathname();
   if (pathname.startsWith('/sign-in')) return null;
+  if (pathname.startsWith('/explore')) return null;
 
   const isMarketingPage = pathname === '/';
 

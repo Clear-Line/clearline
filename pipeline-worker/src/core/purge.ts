@@ -5,7 +5,8 @@
 
 import { bq } from './bigquery.js';
 
-const RETENTION_DAYS = 3;
+const TRADE_RETENTION_DAYS = 3;
+const SNAPSHOT_RETENTION_DAYS = 30;
 
 export async function purgeOldData(): Promise<{
   snapshotsDeleted: number;
@@ -15,13 +16,15 @@ export async function purgeOldData(): Promise<{
   const errors: string[] = [];
   let snapshotsDeleted = 0;
   let tradesDeleted = 0;
-  const cutoff = new Date(Date.now() - RETENTION_DAYS * 24 * 60 * 60 * 1000).toISOString();
+  const dataset = `${process.env.GCP_PROJECT_ID}.${process.env.BQ_DATASET || 'polymarket'}`;
+  const tradeCutoff = new Date(Date.now() - TRADE_RETENTION_DAYS * 24 * 60 * 60 * 1000).toISOString();
+  const snapshotCutoff = new Date(Date.now() - SNAPSHOT_RETENTION_DAYS * 24 * 60 * 60 * 1000).toISOString();
 
-  // Purge old snapshots
+  // Purge old snapshots (30-day retention for price correlation)
   const snapResult = await bq
     .from('market_snapshots')
     .delete({ count: 'exact' })
-    .lt('timestamp', cutoff);
+    .lt('timestamp', snapshotCutoff);
 
   if (snapResult.error) {
     errors.push(`Snapshot purge: ${snapResult.error.message}`);
@@ -29,11 +32,11 @@ export async function purgeOldData(): Promise<{
     snapshotsDeleted = snapResult.count ?? 0;
   }
 
-  // Purge old trades
+  // Purge old trades (3-day retention)
   const tradeResult = await bq
     .from('trades')
     .delete({ count: 'exact' })
-    .lt('timestamp', cutoff);
+    .lt('timestamp', tradeCutoff);
 
   if (tradeResult.error) {
     errors.push(`Trade purge: ${tradeResult.error.message}`);
@@ -74,9 +77,23 @@ export async function purgeOldData(): Promise<{
     errors.push(`Crypto signals purge: ${sigResult.error.message}`);
   }
 
+  // Purge market_edges referencing resolved markets
+  try {
+    await bq.rawQuery(`
+      DELETE FROM \`${dataset}.market_edges\`
+      WHERE market_a IN (
+        SELECT condition_id FROM \`${dataset}.markets\` WHERE is_resolved = true
+      )
+      OR market_b IN (
+        SELECT condition_id FROM \`${dataset}.markets\` WHERE is_resolved = true
+      )
+    `);
+  } catch (err) {
+    errors.push(`Edge cleanup: ${err}`);
+  }
+
   // Purge orphaned wallet_trade_positions for markets already resolved > 1 day ago
   // (safety net in case accuracy-computer's post-scoring cleanup fails)
-  const dataset = `${process.env.GCP_PROJECT_ID}.${process.env.BQ_DATASET || 'polymarket'}`;
   try {
     await bq.rawQuery(`
       DELETE FROM \`${dataset}.wallet_trade_positions\` wtp

@@ -192,4 +192,21 @@ export async function ensureTables(): Promise<void> {
   `);
 
   console.log('[EnsureTables] Wallet trade positions table ready');
+
+  // ─── Market edges (constellation map — pairwise market relationships) ───
+  await bq.rawQuery(`
+    CREATE TABLE IF NOT EXISTS \`${dataset}.market_edges\` (
+      market_a STRING NOT NULL,
+      market_b STRING NOT NULL,
+      wallet_overlap FLOAT64,
+      shared_wallets INT64,
+      price_corr FLOAT64,
+      corr_samples INT64,
+      combined_weight FLOAT64,
+      updated_at TIMESTAMP
+    )
+    CLUSTER BY market_a
+  `);
+
+  console.log('[EnsureTables] Market edges table ready');
 }
