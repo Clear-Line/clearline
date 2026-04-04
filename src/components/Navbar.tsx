@@ -15,6 +15,8 @@ export function Navbar() {
 
   const navigation = [
     { name: 'Dashboard', href: '/terminal' },
+    { name: 'Wallets', href: '/wallets' },
+    { name: 'Alerts', href: '/alerts' },
     { name: 'Crypto', href: '/crypto' },
     { name: 'Pricing', href: '/pricing' },
     { name: 'Case Studies', href: '/case-studies' },
