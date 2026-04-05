@@ -37,16 +37,16 @@ http.createServer((_req, res) => {
 // ─── Startup ───
 
 console.log('');
-console.log('  CLEARLINE PIPELINE WORKER v4.0 (on-chain trade ingestion)');
-console.log('  Trades: real-time Polygon chain listener (politics/geopolitics/economics/crypto)');
-console.log('  Ingestion: 30min | Scanner: 2h | Enrichment: 6h');
+console.log('  CLEARLINE PIPELINE WORKER v4.1 (cost-optimized)');
+console.log('  Trades: Polygon chain listener every 15min');
+console.log('  Ingestion: 2h | Scanner: 6h | Enrichment: daily');
 console.log('  Crypto: DISABLED');
 console.log('');
 
 // ─── Register Jobs ───
 
-// Ingestion: every 30 minutes (reduced to cut BigQuery costs)
-registerJob('market-discovery', '*/30 * * * *', async () => {
+// Ingestion: every 2 hours (reduced from 30min to cut BigQuery costs)
+registerJob('market-discovery', '0 */2 * * *', async () => {
   const result = await pollMarkets();
   console.log(`  -> Markets upserted: ${result.upserted}, errors: ${result.errors.length}`);
   // Refresh token registry so chain listener picks up new markets
@@ -54,26 +54,28 @@ registerJob('market-discovery', '*/30 * * * *', async () => {
   console.log(`  -> Token registry refreshed: ${size} tokens`);
 });
 
-registerJob('book-fetcher', '*/30 * * * *', async () => {
+// Book snapshots: every 2 hours (reduced from 30min)
+registerJob('book-fetcher', '15 */2 * * *', async () => {
   const result = await snapshotBooks();
   console.log(`  -> Books updated: ${result.updated}, errors: ${result.errors.length}`);
 });
 
 // trade-fetcher replaced by chain-listener (started on boot, not cron)
 
-// Enrichment: every 6 hours (heavy queries — run infrequently to save costs)
-registerJob('accuracy', '0 */6 * * *', async () => {
+// Enrichment: daily (heavy queries — markets resolve slowly)
+registerJob('accuracy', '0 6 * * *', async () => {
   const result = await computeAccuracy();
   console.log(`  -> Resolved: ${result.resolved}, wallets updated: ${result.walletsUpdated}`);
 });
 
-registerJob('wallet-profiler', '30 */6 * * *', async () => {
+// Wallet profiler: daily (cosmetic stats, accuracy is separate)
+registerJob('wallet-profiler', '30 6 * * *', async () => {
   const result = await profileWallets();
   console.log(`  -> Wallets profiled: ${result.updated}, errors: ${result.errors.length}`);
 });
 
-// Intelligence: every 2 hours — builds market_cards table
-registerJob('smart-money-scanner', '0 */2 * * *', async () => {
+// Intelligence: every 6 hours — builds market_cards table (reduced from 2h, biggest cost saver)
+registerJob('smart-money-scanner', '0 */6 * * *', async () => {
   const result = await scanSmartMoney();
   const t = result.telemetry;
   console.log(`  -> Cards: ${result.cards}, signals: ${t.marketsWithSignal}, wallets: ${t.smartWalletsUsed}`);
@@ -82,8 +84,8 @@ registerJob('smart-money-scanner', '0 */2 * * *', async () => {
   if (result.errors.length > 0) console.log(`  -> Errors: ${result.errors.slice(0, 3).join('; ')}`);
 });
 
-// Maintenance: purge old data every 6 hours to keep table sizes small
-registerJob('data-purge', '0 */6 * * *', async () => {
+// Maintenance: purge old data daily
+registerJob('data-purge', '0 3 * * *', async () => {
   const result = await purgeOldData();
   console.log(`  -> Purged: ${result.snapshotsDeleted} snapshots, ${result.tradesDeleted} trades`);
   if (result.errors.length > 0) console.log(`  -> Purge errors: ${result.errors.join('; ')}`);
@@ -140,11 +142,7 @@ async function runInitialPipeline(): Promise<void> {
     if (smt.vacuumsDetected > 0) console.log(`  -> Liquidity vacuums: ${smt.vacuumsDetected}`);
     if (smartMoney.errors.length > 0) console.log(`  -> Errors: ${smartMoney.errors.slice(0, 3).join('; ')}`);
 
-    console.log('[5/5] Edge computation (constellation map)...');
-    const edges = await computeEdges();
-    const et = edges.telemetry;
-    console.log(`  -> Edges: ${edges.edgesComputed}, overlap pairs: ${et.pairsWithOverlap}, corr pairs: ${et.pairsWithCorrelation}`);
-    if (edges.errors.length > 0) console.log(`  -> Errors: ${edges.errors.slice(0, 3).join('; ')}`);
+    // Edge computation skipped on startup — runs daily at 3:30am UTC to save costs
 
     console.log('\n[Worker] Initial pipeline complete. Scheduler is running.\n');
   } catch (err) {
