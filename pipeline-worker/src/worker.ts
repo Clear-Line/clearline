@@ -37,10 +37,10 @@ http.createServer((_req, res) => {
 // ─── Startup ───
 
 console.log('');
-console.log('  CLEARLINE PIPELINE WORKER v4.1 (cost-optimized)');
-console.log('  Trades: Polygon chain listener every 15min');
+console.log('  CLEARLINE PIPELINE WORKER v4.2 (cost-optimized)');
+console.log('  Startup: market-discovery + books + chain-listener only');
 console.log('  Ingestion: 2h | Scanner: 6h | Enrichment: daily');
-console.log('  Crypto: DISABLED');
+console.log('  Accuracy/profiler/scanner NOT run on startup');
 console.log('');
 
 // ─── Register Jobs ───
@@ -107,52 +107,37 @@ startScheduler();
 // ─── Run initial pipeline on startup ───
 
 async function runInitialPipeline(): Promise<void> {
-  console.log('\n[Worker] Running initial pipeline cycle...\n');
+  console.log('\n[Worker] Running startup pipeline (lightweight)...\n');
 
   try {
     // Ensure BigQuery tables exist before any pipeline work
     await ensureTables();
 
-    // One-time: reset legacy wallets with stale accuracy data (wins=0 but accuracy>0)
-    console.log('[0/5] Backfilling legacy wallet accuracy...');
+    // One-time: reset legacy wallets with stale accuracy data (checks flag, skips if already done)
+    console.log('[1/4] Legacy wallet backfill check...');
     const backfill = await backfillLegacyWallets();
     if (backfill.reset > 0) console.log(`  -> Reset ${backfill.reset} legacy wallets`);
-    if (backfill.errors.length > 0) console.log(`  -> Backfill errors: ${backfill.errors.slice(0, 3).join('; ')}`);
 
-    console.log('[1/5] Market discovery...');
+    console.log('[2/4] Market discovery...');
     const markets = await pollMarkets();
     console.log(`  -> ${markets.upserted} markets upserted`);
 
-    console.log('[2/5] Book snapshots + Chain listener...');
+    console.log('[3/4] Book snapshots...');
     const books = await snapshotBooks();
     console.log(`  -> ${books.updated} books`);
 
     // Load token registry and start on-chain trade listener
-    console.log('[2.5/5] Starting on-chain trade listener...');
+    console.log('[4/4] Starting on-chain trade listener...');
     await loadTokenRegistry();
     await startChainListener();
 
-    console.log('[3/5] Accuracy (resolving markets + scoring wallets)...');
-    const accuracy = await computeAccuracy();
-    console.log(`  -> Resolved: ${accuracy.resolved}, wallets scored: ${accuracy.walletsUpdated}`);
+    // Accuracy, wallet-profiler, smart-money-scanner are NOT run on startup.
+    // They run on their scheduled cron intervals to avoid expensive duplicate
+    // queries when Railway restarts the worker (which can happen multiple times/day).
 
-    console.log('[3.5/5] Wallet profiling (backfill + incremental)...');
-    const wallets = await profileWallets();
-    console.log(`  -> Wallets profiled: ${wallets.updated}`);
-
-    console.log('[4/5] Smart money scanner (building market_cards)...');
-    const smartMoney = await scanSmartMoney();
-    const smt = smartMoney.telemetry;
-    console.log(`  -> Cards: ${smartMoney.cards}, signals: ${smt.marketsWithSignal}, wallets: ${smt.smartWalletsUsed}`);
-    if (smt.divergencesDetected > 0) console.log(`  -> Volume divergences: ${smt.divergencesDetected}`);
-    if (smt.vacuumsDetected > 0) console.log(`  -> Liquidity vacuums: ${smt.vacuumsDetected}`);
-    if (smartMoney.errors.length > 0) console.log(`  -> Errors: ${smartMoney.errors.slice(0, 3).join('; ')}`);
-
-    // Edge computation skipped on startup — runs daily at 3:30am UTC to save costs
-
-    console.log('\n[Worker] Initial pipeline complete. Scheduler is running.\n');
+    console.log('\n[Worker] Startup complete. Scheduler will handle remaining jobs.\n');
   } catch (err) {
-    console.error('[Worker] Initial pipeline error:', err);
+    console.error('[Worker] Startup error:', err);
     console.log('[Worker] Scheduler will retry on next cycle.\n');
   }
 }

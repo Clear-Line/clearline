@@ -153,8 +153,21 @@ export async function computeEdges(): Promise<{
 
   // ─── Step 2: Price correlation ───
 
+  // Only compute correlation for markets that have wallet overlap (not all-pairs)
+  const overlapMarketIds = new Set<string>();
+  for (const row of overlapRows) {
+    overlapMarketIds.add(row.market_a);
+    overlapMarketIds.add(row.market_b);
+  }
+
   let correlationRows: PriceCorrelationRow[] = [];
-  try {
+  if (overlapMarketIds.size < 2) {
+    // Skip correlation if no wallet overlap pairs exist
+    console.log('[EdgeComputer] Skipping price correlation — no wallet overlap pairs');
+  }
+
+  if (overlapMarketIds.size >= 2) try {
+    const marketIdArray = [...overlapMarketIds];
     const corrResult = await bq.rawQuery<PriceCorrelationRow>(`
       WITH daily_prices AS (
         SELECT
@@ -162,7 +175,8 @@ export async function computeEdges(): Promise<{
           DATE(timestamp) AS price_date,
           AVG(yes_price) AS avg_price
         FROM \`${dataset}.market_snapshots\`
-        WHERE timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 30 DAY)
+        WHERE timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 14 DAY)
+          AND market_id IN UNNEST(@market_ids)
         GROUP BY market_id, DATE(timestamp)
       ),
       price_changes AS (
@@ -196,7 +210,7 @@ export async function computeEdges(): Promise<{
         AND ABS(CORR(a.price_change, b.price_change)) >= 0.3
       ORDER BY ABS(CORR(a.price_change, b.price_change)) DESC
       LIMIT 5000
-    `, { min_samples: MIN_CORR_SAMPLES });
+    `, { min_samples: MIN_CORR_SAMPLES, market_ids: marketIdArray });
 
     if (corrResult.error) {
       errors.push(`Price correlation: ${corrResult.error.message}`);

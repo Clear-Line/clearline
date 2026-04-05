@@ -58,6 +58,18 @@ export async function backfillLegacyWallets(): Promise<{ reset: number; errors: 
   const errors: string[] = [];
   const dataset = `${process.env.GCP_PROJECT_ID}.${process.env.BQ_DATASET || 'polymarket'}`;
 
+  // Check if backfill already ran — skip if so (one-time operation)
+  const { data: flagRow } = await bq
+    .from('pipeline_metadata')
+    .select('value')
+    .eq('key', 'legacy_wallet_backfill_done')
+    .limit(1);
+
+  if (flagRow?.[0]?.value === 'true') {
+    console.log('[Accuracy] Legacy wallet backfill already completed — skipping');
+    return { reset: 0, errors: [] };
+  }
+
   // Find wallets with stale legacy data: accuracy_score > 0 but wins=0 and losses=0
   const { data: legacy, error: qErr } = await bq.rawQuery<{ cnt: number }>(`
     SELECT COUNT(*) as cnt FROM \`${dataset}.wallets\`
@@ -175,6 +187,14 @@ export async function backfillLegacyWallets(): Promise<{ reset: number; errors: 
     if (error) errors.push(`Backfill upsert batch ${i}: ${error.message}`);
     else upserted += chunk.length;
   }
+
+  // Mark as done so it never runs again
+  try {
+    await bq.from('pipeline_metadata').upsert(
+      [{ key: 'legacy_wallet_backfill_done', value: 'true', updated_at: new Date().toISOString() }],
+      { onConflict: 'key' },
+    );
+  } catch { /* non-critical */ }
 
   console.log(`[Accuracy] Backfill complete: reset ${count} legacy wallets, re-scored ${upserted} from ${marketsProcessed} resolved markets`);
   return { reset: count, errors };

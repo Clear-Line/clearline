@@ -2,7 +2,7 @@
 
 import { useState, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, TrendingUp, TrendingDown, DollarSign, Clock, Droplets } from 'lucide-react';
+import { X, TrendingUp, TrendingDown, DollarSign, Clock, Droplets, Users } from 'lucide-react';
 import type { MapNode, MapGraph, ConnectedMarket } from './mapTypes';
 import { CATEGORY_COLORS, CATEGORY_LABELS } from './mapConstants';
 
@@ -110,7 +110,11 @@ export function MapSidebar({ node, graph, onClose, onSelectNode }: MapSidebarPro
           <div className="flex gap-5 px-5 py-3.5 border-y border-white/[0.04] shrink-0">
             <Stat icon={<DollarSign className="h-3 w-3 text-[#475569]" />} label="Volume" value={formatVolume(node.volume24h)} />
             <Stat icon={<Droplets className="h-3 w-3 text-[#475569]" />} label="Liquidity" value={formatVolume(node.liquidity)} />
-            <Stat icon={<Clock className="h-3 w-3 text-[#475569]" />} label="Ends" value={formatDate(node.endDate)} />
+            {node.smartWalletCount > 0 ? (
+              <Stat icon={<Users className="h-3 w-3 text-[#475569]" />} label="Smart Wallets" value={String(node.smartWalletCount)} />
+            ) : (
+              <Stat icon={<Clock className="h-3 w-3 text-[#475569]" />} label="Ends" value={formatDate(node.endDate)} />
+            )}
           </div>
 
           {/* Tabs */}
