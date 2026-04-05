@@ -14,6 +14,9 @@ interface NodeRow {
   volume_24h: number | null;
   liquidity: number | null;
   end_date: string | null;
+  price_change: number | null;
+  smart_wallet_count: number | null;
+  signal: string | null;
 }
 
 interface EdgeRow {
@@ -43,7 +46,10 @@ export async function GET() {
         m.end_date,
         s.yes_price,
         s.volume_24h,
-        s.liquidity
+        s.liquidity,
+        c.price_change,
+        c.smart_wallet_count,
+        c.signal
       FROM ${fq('markets')} m
       INNER JOIN (
         SELECT market_id, yes_price, volume_24h, liquidity,
@@ -51,6 +57,11 @@ export async function GET() {
         FROM ${fq('market_snapshots')}
         WHERE timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR)
       ) s ON s.market_id = m.condition_id AND s.rn = 1
+      LEFT JOIN (
+        SELECT market_id, price_change, smart_wallet_count, signal,
+          ROW_NUMBER() OVER (PARTITION BY market_id ORDER BY computed_at DESC) AS rn
+        FROM ${fq('market_cards')}
+      ) c ON c.market_id = m.condition_id AND c.rn = 1
       WHERE m.is_active = true
         AND m.is_resolved = false
         AND m.category IN ('politics', 'crypto', 'economics', 'geopolitics', 'sports', 'culture')
@@ -79,6 +90,9 @@ export async function GET() {
     volume: n.volume_24h ?? 0,
     liquidity: n.liquidity ?? 0,
     endDate: n.end_date ?? null,
+    priceChange: n.price_change ?? 0,
+    smartWalletCount: n.smart_wallet_count ?? 0,
+    signal: n.signal ?? 'NEUTRAL',
   }));
 
   // Only include edges where both endpoints are in the visible node set

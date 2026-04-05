@@ -20,6 +20,9 @@ interface ApiNode {
   volume: number;
   liquidity: number;
   endDate: string | null;
+  priceChange: number;
+  smartWalletCount: number;
+  signal: string;
 }
 
 interface ApiEdge {
@@ -61,9 +64,9 @@ function transformResponse(data: ApiResponse): MapGraph {
       volume24h,
       totalVolume: volume24h,
       liquidity: n.liquidity ?? 0,
-      change24h: 0,
-      smartWalletCount: 0,
-      signal: 'NEUTRAL' as const,
+      change24h: n.priceChange ?? 0,
+      smartWalletCount: n.smartWalletCount ?? 0,
+      signal: (n.signal ?? 'NEUTRAL') as 'BUY' | 'SELL' | 'NEUTRAL',
       endDate: n.endDate,
       radius: computeRadius(volume24h),
     };
