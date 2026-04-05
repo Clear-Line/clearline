@@ -43,9 +43,9 @@ interface MarketEdge {
 
 // ─── Constants ───
 
-const MIN_SHARED_WALLETS = 3;
-const MIN_CORR_SAMPLES = 14;
-const MIN_COMBINED_WEIGHT = 0.10;
+const MIN_SHARED_WALLETS = 2;
+const MIN_CORR_SAMPLES = 7;
+const MIN_COMBINED_WEIGHT = 0.03;
 const WALLET_WEIGHT = 0.6;
 const CORRELATION_WEIGHT = 0.4;
 const BATCH_SIZE = 500;
@@ -134,7 +134,7 @@ export async function computeEdges(): Promise<{
       JOIN market_wallet_counts mwc_a ON mwc_a.market_id = pc.market_a
       JOIN market_wallet_counts mwc_b ON mwc_b.market_id = pc.market_b
       ORDER BY shared_wallets DESC
-      LIMIT 5000
+      LIMIT 10000
     `, { min_shared: MIN_SHARED_WALLETS });
 
     if (overlapResult.error) {
@@ -209,7 +209,7 @@ export async function computeEdges(): Promise<{
       HAVING COUNT(*) >= @min_samples
         AND ABS(CORR(a.price_change, b.price_change)) >= 0.3
       ORDER BY ABS(CORR(a.price_change, b.price_change)) DESC
-      LIMIT 5000
+      LIMIT 10000
     `, { min_samples: MIN_CORR_SAMPLES, market_ids: marketIdArray });
 
     if (corrResult.error) {

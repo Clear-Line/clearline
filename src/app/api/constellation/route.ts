@@ -72,7 +72,7 @@ export async function GET() {
     `),
     bq.from('market_edges')
       .select('market_a, market_b, wallet_overlap, shared_wallets, price_corr, corr_samples, combined_weight')
-      .gt('combined_weight', 0.10),
+      .gt('combined_weight', 0.03),
   ]);
 
   if (nodesResult.error) {
