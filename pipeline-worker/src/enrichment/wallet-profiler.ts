@@ -66,7 +66,7 @@ async function backfillWalletStats(): Promise<{ updated: number; errors: string[
   // Aggregate from trades table in batches
   const addresses = [...backfillAddresses];
   const BATCH = 200;
-  const dataset = process.env.BQ_DATASET || 'polymarket';
+  const bqDataset = process.env.BQ_DATASET || 'polymarket';
 
   for (let i = 0; i < addresses.length; i += BATCH) {
     const batch = addresses.slice(i, i + BATCH);
@@ -81,7 +81,7 @@ async function backfillWalletStats(): Promise<{ updated: number; errors: string[
              COUNT(*) as trade_count,
              SUM(CAST(size_usdc AS FLOAT64)) as total_volume,
              COUNT(DISTINCT market_id) as markets_traded
-      FROM \`${process.env.GCP_PROJECT_ID}.${dataset}.trades\`
+      FROM \`${process.env.GCP_PROJECT_ID}.${bqDataset}.trades\`
       WHERE wallet_address IN UNNEST(@wallets)
       GROUP BY wallet_address
     `, { wallets: batch });
@@ -113,28 +113,52 @@ async function backfillWalletStats(): Promise<{ updated: number; errors: string[
   }
 
   console.log(`[WalletProfiler] Backfilled ${updated} wallets from trades table`);
+
+  // Recompute total_markets_traded from wallet_trade_positions (permanent, accurate source)
+  // This replaces the additive increment approach that caused double-counting.
+  const dsName = process.env.BQ_DATASET || 'polymarket';
+  try {
+    await bq.rawQuery(`
+      UPDATE \`${process.env.GCP_PROJECT_ID}.${dsName}.wallets\` AS w
+      SET total_markets_traded = sub.market_count
+      FROM (
+        SELECT wallet_address, COUNT(DISTINCT market_id) AS market_count
+        FROM \`${process.env.GCP_PROJECT_ID}.${dsName}.wallet_trade_positions\`
+        GROUP BY wallet_address
+      ) AS sub
+      WHERE w.address = sub.wallet_address
+        AND (w.total_markets_traded IS NULL OR w.total_markets_traded != sub.market_count)
+    `);
+    console.log('[WalletProfiler] Recomputed total_markets_traded from positions');
+  } catch (err) {
+    errors.push(`Markets traded recompute: ${err instanceof Error ? err.message : err}`);
+  }
+
   return { updated, errors };
 }
 
 /**
- * Incrementally update wallet stats from recent trades only (last 12h).
- * Adds to existing totals rather than replacing them.
+ * Incrementally update wallet stats from recent trades only.
+ * Uses a dedicated watermark in pipeline_metadata to prevent double-counting.
  */
 async function incrementalProfileWallets(): Promise<{ updated: number; errors: string[] }> {
   const errors: string[] = [];
   let updated = 0;
 
-  // Use watermark: fetch trades since the last profiler run to avoid double-counting.
-  // Falls back to 72h ago on first run (covers full trades table retention).
-  const { data: watermarkRow } = await bq.rawQuery<{ wm: string }>(`
-    SELECT MAX(last_updated) as wm
-    FROM \`${process.env.GCP_PROJECT_ID}.${process.env.BQ_DATASET || 'polymarket'}.wallets\`
-    WHERE last_updated IS NOT NULL
-  `);
+  // Use a dedicated watermark stored in pipeline_metadata — NOT derived from wallets table.
+  // This prevents double-counting when the profiler runs multiple times.
+  const WATERMARK_KEY = 'wallet_profiler_watermark';
+  const { data: wmRow } = await bq
+    .from('pipeline_metadata')
+    .select('value')
+    .eq('key', WATERMARK_KEY)
+    .limit(1);
 
-  const watermark = watermarkRow?.[0]?.wm
-    ? new Date(watermarkRow[0].wm).toISOString()
+  const watermark = wmRow?.[0]?.value
+    ? new Date(wmRow[0].value).toISOString()
     : new Date(Date.now() - 72 * 60 * 60 * 1000).toISOString();
+
+  const runTimestamp = new Date().toISOString();
 
   // Fetch trades since watermark — partition-pruned by timestamp
   const { data: recentTrades, error: tError } = await bq
@@ -219,7 +243,8 @@ async function incrementalProfileWallets(): Promise<{ updated: number; errors: s
       address,
       total_trades: existing.total_trades + newData.newTrades,
       total_volume_usdc: Math.round((existing.total_volume_usdc + newData.newVolume) * 100) / 100,
-      total_markets_traded: existing.total_markets_traded + newData.newMarkets.size,
+      // Note: total_markets_traded is NOT incremented here — it's recomputed
+      // in the backfill phase from wallet_trade_positions to avoid double-counting
       last_updated: now,
     };
 
@@ -243,6 +268,18 @@ async function incrementalProfileWallets(): Promise<{ updated: number; errors: s
       errors.push(`Profile batch ${i}: ${error.message}`);
     } else {
       updated += chunk.length;
+    }
+  }
+
+  // Save watermark so next run doesn't re-process these trades
+  if (updated > 0) {
+    try {
+      await bq.from('pipeline_metadata').upsert(
+        [{ key: WATERMARK_KEY, value: runTimestamp, updated_at: runTimestamp }],
+        { onConflict: 'key' },
+      );
+    } catch (err) {
+      errors.push(`Save watermark: ${err instanceof Error ? err.message : err}`);
     }
   }
 
