@@ -20,7 +20,7 @@ import { dirtyTracker } from '../core/dirty-tracker.js';
 // ─── Config ───
 
 const ALLOWED_CATEGORIES = new Set(['politics', 'geopolitics', 'economics', 'crypto']);
-const POLL_INTERVAL_MS = 300_000; // 5 minutes
+const POLL_INTERVAL_MS = 900_000; // 15 minutes (reduced from 5min to cut costs)
 const BACKFILL_BATCH_SIZE = 9n; // blocks per getLogs call (Alchemy free tier: max 10 blocks)
 const USDC_DECIMALS = 1e6;
 

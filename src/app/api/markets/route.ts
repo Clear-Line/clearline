@@ -83,5 +83,7 @@ export async function GET(request: Request) {
     };
   }).filter((m: { category: string }) => m.category !== 'sports');
 
-  return NextResponse.json({ markets, count: markets.length });
+  const response = NextResponse.json({ markets, count: markets.length });
+  response.headers.set('Cache-Control', 'public, s-maxage=300, stale-while-revalidate=150');
+  return response;
 }

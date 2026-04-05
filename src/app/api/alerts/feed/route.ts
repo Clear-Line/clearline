@@ -69,9 +69,11 @@ export async function GET(req: NextRequest) {
       };
     });
 
-  return NextResponse.json({
+  const response = NextResponse.json({
     alerts,
     count: alerts.length,
     scan_time: `${Date.now() - start}ms`,
   });
+  response.headers.set('Cache-Control', 'public, s-maxage=300, stale-while-revalidate=150');
+  return response;
 }
