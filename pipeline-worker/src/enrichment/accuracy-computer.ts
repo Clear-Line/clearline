@@ -48,6 +48,138 @@ function parseJsonField(raw: string | null | undefined): string[] {
   try { return JSON.parse(raw); } catch { return []; }
 }
 
+/**
+ * One-time backfill: reset legacy wallets that have accuracy_score set
+ * but wins=0 and losses=0 (from before the wins/losses columns existed).
+ * Clears their stale accuracy_score and total_pnl_usdc so they get
+ * re-scored properly by the normal accuracy flow.
+ */
+export async function backfillLegacyWallets(): Promise<{ reset: number; errors: string[] }> {
+  const errors: string[] = [];
+  const dataset = `${process.env.GCP_PROJECT_ID}.${process.env.BQ_DATASET || 'polymarket'}`;
+
+  // Find wallets with stale legacy data: accuracy_score > 0 but wins=0 and losses=0
+  const { data: legacy, error: qErr } = await bq.rawQuery<{ cnt: number }>(`
+    SELECT COUNT(*) as cnt FROM \`${dataset}.wallets\`
+    WHERE accuracy_score > 0
+      AND (wins IS NULL OR wins = 0)
+      AND (losses IS NULL OR losses = 0)
+  `);
+
+  const count = legacy?.[0]?.cnt ?? 0;
+  if (qErr) return { reset: 0, errors: [`Legacy query: ${qErr.message}`] };
+  if (count === 0) {
+    console.log('[Accuracy] No legacy wallets to reset');
+    return { reset: 0, errors: [] };
+  }
+
+  console.log(`[Accuracy] Resetting ${count} legacy wallets with stale accuracy data...`);
+
+  // Reset their accuracy_score, total_pnl_usdc, and accuracy_sample_size
+  // so they start fresh. The normal accuracy flow will re-score them
+  // when their markets resolve (or have already resolved).
+  try {
+    await bq.rawQuery(`
+      UPDATE \`${dataset}.wallets\`
+      SET accuracy_score = 0,
+          accuracy_sample_size = 0,
+          total_pnl_usdc = 0,
+          credibility_score = NULL,
+          last_accuracy_update = CURRENT_TIMESTAMP()
+      WHERE accuracy_score > 0
+        AND (wins IS NULL OR wins = 0)
+        AND (losses IS NULL OR losses = 0)
+    `);
+  } catch (err) {
+    errors.push(`Legacy reset: ${err}`);
+    return { reset: 0, errors };
+  }
+
+  // Now re-score these wallets from already-resolved markets
+  // by finding their positions in wallet_trade_positions for resolved markets
+  const { data: resolvedMarkets, error: rmErr } = await bq
+    .from('markets')
+    .select('condition_id, resolution_outcome')
+    .eq('is_resolved', true)
+    .not('resolution_outcome', 'is', null);
+
+  if (rmErr || !resolvedMarkets || resolvedMarkets.length === 0) {
+    console.log('[Accuracy] No resolved markets to backfill from');
+    return { reset: count, errors };
+  }
+
+  console.log(`[Accuracy] Re-scoring from ${resolvedMarkets.length} resolved markets...`);
+
+  const walletDeltas = new Map<string, { winDelta: number; lossDelta: number; pnlDelta: number }>();
+  let marketsProcessed = 0;
+
+  for (const market of resolvedMarkets) {
+    try {
+      const { data: positions } = await bq
+        .from('wallet_trade_positions')
+        .select('wallet_address, outcome, buy_volume, sell_volume, avg_buy_price, buy_count, sell_count')
+        .eq('market_id', market.condition_id);
+
+      if (!positions || positions.length === 0) continue;
+      marketsProcessed++;
+
+      for (const pos of positions) {
+        const isNetBuyer = (pos.buy_volume || 0) > (pos.sell_volume || 0);
+        const bettedOnWinner = pos.outcome === market.resolution_outcome;
+        const isCorrect = (isNetBuyer && bettedOnWinner) || (!isNetBuyer && !bettedOnWinner);
+
+        let pnl = 0;
+        if (isNetBuyer && pos.avg_buy_price > 0) {
+          const netInvested = (pos.buy_volume || 0) - (pos.sell_volume || 0);
+          pnl = bettedOnWinner ? netInvested * (1 / pos.avg_buy_price - 1) : -netInvested;
+        } else if (!isNetBuyer) {
+          const netSold = (pos.sell_volume || 0) - (pos.buy_volume || 0);
+          pnl = bettedOnWinner ? -netSold : netSold * 0.5; // conservative estimate for sellers
+        }
+
+        const existing = walletDeltas.get(pos.wallet_address) ?? { winDelta: 0, lossDelta: 0, pnlDelta: 0 };
+        if (isCorrect) existing.winDelta++;
+        else existing.lossDelta++;
+        existing.pnlDelta += pnl;
+        walletDeltas.set(pos.wallet_address, existing);
+      }
+    } catch (err) {
+      errors.push(`Backfill market ${market.condition_id}: ${err}`);
+    }
+  }
+
+  // Upsert re-scored wallets
+  const upsertRows = [];
+  for (const [address, delta] of walletDeltas) {
+    const newWins = delta.winDelta;
+    const newLosses = delta.lossDelta;
+    const newSampleSize = newWins + newLosses;
+    const newAccuracy = newSampleSize > 0 ? newWins / newSampleSize : 0;
+
+    upsertRows.push({
+      address,
+      wins: newWins,
+      losses: newLosses,
+      accuracy_score: Math.round(newAccuracy * 10000) / 10000,
+      accuracy_sample_size: newSampleSize,
+      total_pnl_usdc: Math.round(delta.pnlDelta * 100) / 100,
+      last_accuracy_update: new Date().toISOString(),
+    });
+  }
+
+  const BATCH = 500;
+  let upserted = 0;
+  for (let i = 0; i < upsertRows.length; i += BATCH) {
+    const chunk = upsertRows.slice(i, i + BATCH);
+    const { error } = await bq.from('wallets').upsert(chunk, { onConflict: 'address' });
+    if (error) errors.push(`Backfill upsert batch ${i}: ${error.message}`);
+    else upserted += chunk.length;
+  }
+
+  console.log(`[Accuracy] Backfill complete: reset ${count} legacy wallets, re-scored ${upserted} from ${marketsProcessed} resolved markets`);
+  return { reset: count, errors };
+}
+
 export async function computeAccuracy(): Promise<{
   resolved: number;
   walletsUpdated: number;
@@ -234,8 +366,10 @@ export async function computeAccuracy(): Promise<{
           pnl = bettedOnWinner
             ? netInvested * (1 / pos.avgBuyPrice - 1)
             : -netInvested;
-        } else {
-          pnl = bettedOnWinner ? -pos.sellVolume : pos.sellVolume;
+        } else if (!isNetBuyer) {
+          // Net seller: conservative estimate — profit is capped at net sold amount
+          const netSold = pos.sellVolume - pos.buyVolume;
+          pnl = bettedOnWinner ? -netSold : netSold * 0.5;
         }
 
         const existing = walletDeltas.get(address) ?? { winDelta: 0, lossDelta: 0, pnlDelta: 0 };

@@ -23,10 +23,10 @@ export async function GET(request: Request) {
     case 'pnl': default: orderColumn = 'total_pnl_usdc'; break;
   }
 
-  // Minimum 3 resolved outcomes — low bar to show data, Falcon bootstrap fills the rest
+  // Minimum 3 resolved outcomes to appear on leaderboard
   const { data: wallets, error: wErr } = await bq
     .from('wallets')
-    .select('address, username, pseudonym, accuracy_score, accuracy_sample_size, total_trades, total_volume_usdc, total_markets_traded, total_pnl_usdc, credibility_score, wins, losses, falcon_score')
+    .select('address, username, pseudonym, accuracy_score, accuracy_sample_size, total_trades, total_volume_usdc, total_markets_traded, total_pnl_usdc, credibility_score, wins, losses')
     .gte('accuracy_sample_size', 3)
     .order(orderColumn, { ascending: false })
     .limit(200);
@@ -60,7 +60,6 @@ export async function GET(request: Request) {
       pnl: Math.round(pnl * 100) / 100,
       credibilityScore: w.credibility_score ?? null,
       totalTrades: w.total_trades ?? 0,
-      falconScore: w.falcon_score ?? null,
     };
   });
 

@@ -17,7 +17,7 @@ import { startChainListener, stopChainListener } from './ingestion/chain-listene
 import { loadTokenRegistry } from './core/token-registry.js';
 
 // ─── Enrichment Layer ───
-import { computeAccuracy } from './enrichment/accuracy-computer.js';
+import { computeAccuracy, backfillLegacyWallets } from './enrichment/accuracy-computer.js';
 import { profileWallets } from './enrichment/wallet-profiler.js';
 // ─── Intelligence Layer ───
 import { scanSmartMoney } from './intelligence/smart-money-scanner.js';
@@ -112,6 +112,12 @@ async function runInitialPipeline(): Promise<void> {
   try {
     // Ensure BigQuery tables exist before any pipeline work
     await ensureTables();
+
+    // One-time: reset legacy wallets with stale accuracy data (wins=0 but accuracy>0)
+    console.log('[0/5] Backfilling legacy wallet accuracy...');
+    const backfill = await backfillLegacyWallets();
+    if (backfill.reset > 0) console.log(`  -> Reset ${backfill.reset} legacy wallets`);
+    if (backfill.errors.length > 0) console.log(`  -> Backfill errors: ${backfill.errors.slice(0, 3).join('; ')}`);
 
     console.log('[1/5] Market discovery...');
     const markets = await pollMarkets();
