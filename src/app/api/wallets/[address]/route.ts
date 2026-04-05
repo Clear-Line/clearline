@@ -17,7 +17,7 @@ export async function GET(
   // ─── Wallet profile from BQ (accumulated stats) ───
   const { data: walletRow, error: wErr } = await bq
     .from('wallets')
-    .select('address, username, pseudonym, accuracy_score, accuracy_sample_size, total_trades, total_volume_usdc, total_markets_traded, total_pnl_usdc, credibility_score, first_seen_polymarket, wins, losses, falcon_score')
+    .select('address, username, pseudonym, accuracy_score, accuracy_sample_size, total_trades, total_volume_usdc, total_markets_traded, total_pnl_usdc, credibility_score, first_seen_polymarket, wins, losses')
     .eq('address', address)
     .single();
 
@@ -221,7 +221,6 @@ export async function GET(
       sampleSize: walletRow.accuracy_sample_size ?? 0,
       wins: walletRow.wins ?? 0,
       losses: walletRow.losses ?? 0,
-      falconScore: walletRow.falcon_score ?? null,
     },
     activePositions,
     resolvedPositions: resolvedPositions.slice(0, 50),

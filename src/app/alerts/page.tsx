@@ -28,7 +28,7 @@ interface SmartMoneyAlert {
   current_price: number;
   price_change: number;
   volume_24h: number;
-  top_wallets: { address: string; accuracy: number; falcon_score?: number | null; side: string; volume: number }[];
+  top_wallets: { address: string; accuracy: number; side: string; volume: number }[];
   volume_divergence: number | null;
   spread_ratio: number | null;
   depth_ratio: number | null;
