@@ -114,24 +114,39 @@ async function backfillWalletStats(): Promise<{ updated: number; errors: string[
 
   console.log(`[WalletProfiler] Backfilled ${updated} wallets from trades table`);
 
-  // Recompute total_markets_traded from wallet_trade_positions (permanent, accurate source)
-  // This replaces the additive increment approach that caused double-counting.
-  const dsName = process.env.BQ_DATASET || 'polymarket';
-  try {
-    await bq.rawQuery(`
-      UPDATE \`${process.env.GCP_PROJECT_ID}.${dsName}.wallets\` AS w
-      SET total_markets_traded = sub.market_count
-      FROM (
-        SELECT wallet_address, COUNT(DISTINCT market_id) AS market_count
-        FROM \`${process.env.GCP_PROJECT_ID}.${dsName}.wallet_trade_positions\`
-        GROUP BY wallet_address
-      ) AS sub
-      WHERE w.address = sub.wallet_address
-        AND (w.total_markets_traded IS NULL OR w.total_markets_traded != sub.market_count)
-    `);
-    console.log('[WalletProfiler] Recomputed total_markets_traded from positions');
-  } catch (err) {
-    errors.push(`Markets traded recompute: ${err instanceof Error ? err.message : err}`);
+  // Recompute total_markets_traded weekly (expensive full-table scan).
+  const RECOMPUTE_KEY = 'markets_traded_last_recompute';
+  const { data: recomputeRow } = await bq
+    .from('pipeline_metadata')
+    .select('value')
+    .eq('key', RECOMPUTE_KEY)
+    .limit(1);
+
+  const lastRecompute = recomputeRow?.[0]?.value ? new Date(recomputeRow[0].value).getTime() : 0;
+  const ONE_WEEK = 7 * 24 * 60 * 60 * 1000;
+
+  if (Date.now() - lastRecompute > ONE_WEEK) {
+    const dsName = process.env.BQ_DATASET || 'polymarket';
+    try {
+      await bq.rawQuery(`
+        UPDATE \`${process.env.GCP_PROJECT_ID}.${dsName}.wallets\` AS w
+        SET total_markets_traded = sub.market_count
+        FROM (
+          SELECT wallet_address, COUNT(DISTINCT market_id) AS market_count
+          FROM \`${process.env.GCP_PROJECT_ID}.${dsName}.wallet_trade_positions\`
+          GROUP BY wallet_address
+        ) AS sub
+        WHERE w.address = sub.wallet_address
+          AND (w.total_markets_traded IS NULL OR w.total_markets_traded != sub.market_count)
+      `);
+      await bq.from('pipeline_metadata').upsert(
+        [{ key: RECOMPUTE_KEY, value: new Date().toISOString(), updated_at: new Date().toISOString() }],
+        { onConflict: 'key' },
+      );
+      console.log('[WalletProfiler] Recomputed total_markets_traded from positions');
+    } catch (err) {
+      errors.push(`Markets traded recompute: ${err instanceof Error ? err.message : err}`);
+    }
   }
 
   return { updated, errors };
