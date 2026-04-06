@@ -14,5 +14,6 @@ CLAUDE.md
 
 # ML scripts (training data, models, charts)
 scripts/
+!pipeline-worker/src/scripts/
 pipeline-worker/dist/
 tsconfig.tsbuildinfo
