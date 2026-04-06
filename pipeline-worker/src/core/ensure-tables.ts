@@ -209,4 +209,60 @@ export async function ensureTables(): Promise<void> {
   `);
 
   console.log('[EnsureTables] Market edges table ready');
+
+  // ─── Case studies (permanent, frozen at creation — no purge) ───
+  await bq.rawQuery(`
+    CREATE TABLE IF NOT EXISTS \`${dataset}.case_studies\` (
+      slug STRING NOT NULL,
+      title STRING NOT NULL,
+      study_type STRING NOT NULL,
+      trigger_timestamp TIMESTAMP NOT NULL,
+      trigger_market_id STRING,
+      trigger_market_title STRING,
+      external_headline STRING,
+      external_source_url STRING,
+      calendar_event_name STRING,
+      window_start TIMESTAMP NOT NULL,
+      window_end TIMESTAMP NOT NULL,
+      evidence_stat STRING,
+      narrative_md STRING,
+      affected_count INT64,
+      max_lag_hours FLOAT64,
+      published BOOL,
+      created_at TIMESTAMP,
+      updated_at TIMESTAMP
+    )
+    CLUSTER BY slug
+  `);
+
+  await bq.rawQuery(`
+    CREATE TABLE IF NOT EXISTS \`${dataset}.case_study_series\` (
+      slug STRING NOT NULL,
+      market_id STRING NOT NULL,
+      timestamp TIMESTAMP NOT NULL,
+      yes_price FLOAT64,
+      volume_24h FLOAT64,
+      liquidity FLOAT64
+    )
+    CLUSTER BY slug, market_id
+  `);
+
+  await bq.rawQuery(`
+    CREATE TABLE IF NOT EXISTS \`${dataset}.case_study_markets\` (
+      slug STRING NOT NULL,
+      market_id STRING NOT NULL,
+      market_title STRING,
+      category STRING,
+      role STRING,
+      lag_hours FLOAT64,
+      price_delta FLOAT64,
+      volume_delta_pct FLOAT64,
+      lagged_correlation FLOAT64,
+      best_lag_hours FLOAT64,
+      rank INT64
+    )
+    CLUSTER BY slug
+  `);
+
+  console.log('[EnsureTables] Case studies tables ready');
 }
