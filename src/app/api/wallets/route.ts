@@ -23,11 +23,15 @@ export async function GET(request: Request) {
     case 'pnl': default: orderColumn = 'total_pnl_usdc'; break;
   }
 
-  // Minimum 3 resolved outcomes to appear on leaderboard
+  // Quality bar: ≥5 resolved markets, ≥5 trades, ≥$100 lifetime volume.
+  // Without these, low-sample wallets (e.g. 3 resolved markets, all winners)
+  // trivially top the leaderboard at 100% accuracy with $0 volume.
   const { data: wallets, error: wErr } = await bq
     .from('wallets')
     .select('address, username, pseudonym, accuracy_score, accuracy_sample_size, total_trades, total_volume_usdc, total_markets_traded, total_pnl_usdc, credibility_score, wins, losses')
-    .gte('accuracy_sample_size', 3)
+    .gte('accuracy_sample_size', 5)
+    .gte('total_trades', 5)
+    .gte('total_volume_usdc', 100)
     .order(orderColumn, { ascending: false })
     .limit(200);
 
