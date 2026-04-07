@@ -22,6 +22,7 @@ import { profileWallets } from './enrichment/wallet-profiler.js';
 // ─── Intelligence Layer ───
 import { scanSmartMoney } from './intelligence/smart-money-scanner.js';
 import { computeEdges } from './intelligence/edge-computer.js';
+import { runWatchlistAlerts } from './intelligence/watchlist-alerts.js';
 
 // ─── Maintenance ───
 import { ensureTables } from './core/ensure-tables.js';
@@ -89,6 +90,19 @@ registerJob('data-purge', '0 3 * * *', async () => {
   const result = await purgeOldData();
   console.log(`  -> Purged: ${result.snapshotsDeleted} snapshots, ${result.tradesDeleted} trades`);
   if (result.errors.length > 0) console.log(`  -> Purge errors: ${result.errors.join('; ')}`);
+});
+
+// Watchlist alerts: every 15 minutes — scans watchlisted markets for >=5pt moves
+// and posts a single Discord embed to #alerts per moved market with @mentions
+// for every user watching it. Dedup'd via user_market_alert_log in Supabase.
+registerJob('watchlist-alerts', '*/15 * * * *', async () => {
+  const result = await runWatchlistAlerts();
+  console.log(
+    `  -> Scanned: ${result.marketsScanned}, moved: ${result.marketsMoved}, alerts: ${result.alertsSent}, users mentioned: ${result.usersMentioned}`,
+  );
+  if (result.errors.length > 0) {
+    console.log(`  -> Errors: ${result.errors.slice(0, 3).join('; ')}`);
+  }
 });
 
 // Constellation: daily at 3:30am UTC — computes market_edges for constellation map

@@ -1,14 +1,21 @@
 'use client';
 
 import Link from 'next/link';
+import dynamic from 'next/dynamic';
 import { usePathname } from 'next/navigation';
-import { Activity, Menu, X, ArrowRight } from 'lucide-react';
+import { Activity, Menu, X, ArrowRight, Wallet } from 'lucide-react';
 import { useState } from 'react';
 import { SignedIn, SignedOut, SignInButton, UserButton } from '@clerk/nextjs';
+
+const LinkWalletModal = dynamic(
+  () => import('./explore/LinkWalletModal').then((m) => m.LinkWalletModal),
+  { ssr: false },
+);
 
 export function Navbar() {
   const pathname = usePathname();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [walletModalOpen, setWalletModalOpen] = useState(false);
 
   if (pathname.startsWith('/sign-in')) return null;
   if (pathname.startsWith('/explore')) return null;
@@ -63,6 +70,20 @@ export function Navbar() {
               </SignInButton>
             </SignedOut>
             <SignedIn>
+              <button
+                onClick={() => setWalletModalOpen(true)}
+                className="hidden md:inline-flex items-center gap-1.5 px-3 py-1.5 text-[13px] font-medium text-[#94a3b8] hover:text-white transition-colors"
+                title="Link Polygon wallet"
+              >
+                <Wallet className="h-3.5 w-3.5 text-[#10B981]" />
+                Wallet
+              </button>
+              <Link
+                href="/settings"
+                className="hidden md:inline-flex px-3 py-1.5 text-[13px] font-medium text-[#94a3b8] hover:text-white transition-colors"
+              >
+                Settings
+              </Link>
               <UserButton afterSignOutUrl="/sign-in" />
             </SignedIn>
             <Link
@@ -82,6 +103,13 @@ export function Navbar() {
           </div>
         </div>
       </div>
+
+      {walletModalOpen && (
+        <LinkWalletModal
+          open={walletModalOpen}
+          onClose={() => setWalletModalOpen(false)}
+        />
+      )}
 
       {mobileMenuOpen && (
         <div className="lg:hidden border-t border-white/[0.06] bg-[#04040B]">

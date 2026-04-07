@@ -68,3 +68,25 @@ export interface ConnectedMarket {
   probability: number;
   overlapStrength: number;
 }
+
+/** A single user's aggregated position across all their linked wallets for one market. */
+export interface UserPosition {
+  marketId: string;
+  title: string;
+  category: string;
+  side: 'BUY' | 'SELL';
+  invested: number;
+  avgPrice: number;
+  currentPrice: number;
+  currentValue: number;
+  unrealizedPnl: number;
+  unrealizedPnlPct: number;
+  trades: number;
+  wallets: string[];
+}
+
+export interface PortfolioTotals {
+  exposure: number;
+  unrealizedPnl: number;
+  held: number;
+}

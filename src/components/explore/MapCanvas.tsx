@@ -15,6 +15,8 @@ interface MapCanvasProps {
   onNodeHover: (h: HoveredNode | null) => void;
   onNodeClick: (n: MapNode | null) => void;
   selectedNodeId: string | null;
+  heldMarketIds?: Set<string>;
+  watchlistedMarketIds?: Set<string>;
 }
 
 export function MapCanvas({
@@ -26,6 +28,8 @@ export function MapCanvas({
   onNodeHover,
   onNodeClick,
   selectedNodeId,
+  heldMarketIds,
+  watchlistedMarketIds,
 }: MapCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const hoveredIdRef = useRef<string | null>(null);
@@ -58,10 +62,21 @@ export function MapCanvas({
       selectedNodeId,
       hoveredNodeId: hoveredIdRef.current,
       viewState,
+      heldMarketIds,
+      watchlistedMarketIds,
     });
 
     rafRef.current = requestAnimationFrame(drawFrame);
-  }, [graph, activeCategories, searchQuery, selectedNodeId, viewState, render]);
+  }, [
+    graph,
+    activeCategories,
+    searchQuery,
+    selectedNodeId,
+    viewState,
+    render,
+    heldMarketIds,
+    watchlistedMarketIds,
+  ]);
 
   // Force simulation
   const onTick = useCallback(() => {
