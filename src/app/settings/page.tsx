@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { Suspense, useCallback, useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { SignedIn, SignedOut, SignInButton } from '@clerk/nextjs';
 import { Loader2, MessageCircle, ExternalLink, Check, X, Trash2 } from 'lucide-react';
@@ -15,6 +15,16 @@ interface DiscordSettings {
 }
 
 export default function SettingsPage() {
+  // Wrapped in Suspense because useSearchParams() forces client-side rendering
+  // bailout — without the boundary, Next.js fails the build at prerender time.
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-[#04040B]" />}>
+      <SettingsPageInner />
+    </Suspense>
+  );
+}
+
+function SettingsPageInner() {
   const searchParams = useSearchParams();
   const discordFlash = searchParams.get('discord');
 
