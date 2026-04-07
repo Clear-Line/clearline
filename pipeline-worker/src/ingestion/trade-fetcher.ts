@@ -19,6 +19,11 @@ const BATCH_SIZE = 10;          // concurrent market fetches
 const MAX_PAGES_PER_MARKET = 2; // fewer pages per market = more markets covered
 const PAGE_SIZE = 100;
 
+// Polymarket /trades occasionally returns a position-id–shaped string
+// (`<address>-<tokenId>`) in the proxyWallet field. Reject anything that
+// isn't a plain 0x + 40-hex-char wallet so we don't pollute trades / wallets.
+const ETH_ADDR_RE = /^0x[a-f0-9]{40}$/;
+
 export async function pollTrades(): Promise<{
   inserted: number;
   skipped: number;
@@ -152,9 +157,12 @@ export async function pollTrades(): Promise<{
 
         for (const t of result.trades) {
           if (!t.transactionHash || !t.proxyWallet) continue;
+          const addr = t.proxyWallet.toLowerCase();
+          if (!ETH_ADDR_RE.test(addr)) continue; // skip malformed (e.g. position-id strings)
+
           allTradeRows.push({
             market_id: market.condition_id,
-            wallet_address: t.proxyWallet,
+            wallet_address: addr,
             side: t.side,
             size_tokens: t.size,
             price: t.price,
@@ -165,9 +173,12 @@ export async function pollTrades(): Promise<{
             timestamp: new Date(t.timestamp * 1000).toISOString(),
           });
 
-          allWalletMap.set(t.proxyWallet, {
-            address: t.proxyWallet,
-            username: t.name || null,
+          // Polymarket returns the proxy-wallet id (`0x...-<tokenId>`) in `t.name`
+          // for users who haven't set a real handle. Don't store that as a username.
+          const cleanName = t.name && !/^0x[a-fA-F0-9]{40}-/.test(t.name) ? t.name : null;
+          allWalletMap.set(addr, {
+            address: addr,
+            username: cleanName,
             pseudonym: t.pseudonym || null,
             last_updated: new Date().toISOString(),
           });
