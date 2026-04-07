@@ -1,7 +1,8 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { Loader2 } from 'lucide-react';
+import { Loader2, Wallet } from 'lucide-react';
+import { useUser } from '@clerk/nextjs';
 import type { Category, MapNode, MapEdge, MapGraph, HoveredNode, MapViewState } from './mapTypes';
 import { ALL_CATEGORIES, computeRadius } from './mapConstants';
 import { MapCanvas } from './MapCanvas';
@@ -9,6 +10,10 @@ import { MapTopBar } from './MapTopBar';
 import { MapBottomBar } from './MapBottomBar';
 import { MapSidebar } from './MapSidebar';
 import { MapTooltip } from './MapTooltip';
+import { PortfolioHud } from './PortfolioHud';
+import { LinkWalletModal } from './LinkWalletModal';
+import { useOwnedPositions } from './useOwnedPositions';
+import { useWatchlist } from './useWatchlist';
 
 // ─── API response types ───
 
@@ -105,6 +110,18 @@ export function ConstellationMap() {
     scale: 1,
   });
 
+  // ─── Personal portfolio overlay ───
+  const { isSignedIn } = useUser();
+  const {
+    wallets: linkedWallets,
+    heldMap,
+    heldSet,
+    totals: portfolioTotals,
+    refetch: refetchPositions,
+  } = useOwnedPositions();
+  const { watchlistedSet, toggle: toggleWatchlist } = useWatchlist();
+  const [walletModalOpen, setWalletModalOpen] = useState(false);
+
   const fetchData = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -190,6 +207,9 @@ export function ConstellationMap() {
     );
   }
 
+  const hasLinkedWallets = linkedWallets.length > 0;
+  const selectedUserPosition = selectedNode ? heldMap.get(selectedNode.id) : undefined;
+
   return (
     <div className="fixed inset-0 bg-[#04040B] overflow-hidden">
       <MapCanvas
@@ -201,6 +221,8 @@ export function ConstellationMap() {
         onNodeHover={handleNodeHover}
         onNodeClick={handleNodeClick}
         selectedNodeId={selectedNode?.id ?? null}
+        heldMarketIds={heldSet}
+        watchlistedMarketIds={watchlistedSet}
       />
 
       <MapTopBar
@@ -221,6 +243,33 @@ export function ConstellationMap() {
         graph={graph}
         onClose={handleSidebarClose}
         onSelectNode={handleNodeClick}
+        userPosition={selectedUserPosition}
+        isWatchlisted={selectedNode ? watchlistedSet.has(selectedNode.id) : false}
+        onToggleWatchlist={toggleWatchlist}
+        canWatchlist={Boolean(isSignedIn)}
+      />
+
+      {hasLinkedWallets ? (
+        <PortfolioHud
+          totals={portfolioTotals}
+          walletCount={linkedWallets.length}
+          watchingCount={watchlistedSet.size}
+          onClick={() => setWalletModalOpen(true)}
+        />
+      ) : isSignedIn ? (
+        <button
+          onClick={() => setWalletModalOpen(true)}
+          className="fixed bottom-12 left-4 z-20 flex items-center gap-1.5 bg-[#04040B]/90 backdrop-blur-2xl border border-white/[0.08] hover:border-[#10B981]/40 rounded-xl px-3.5 py-2 text-[11px] font-medium text-[#94A3B8] hover:text-white transition-colors shadow-lg"
+        >
+          <Wallet className="h-3.5 w-3.5 text-[#10B981]" />
+          Link Wallet
+        </button>
+      ) : null}
+
+      <LinkWalletModal
+        open={walletModalOpen}
+        onClose={() => setWalletModalOpen(false)}
+        onChange={refetchPositions}
       />
 
       <MapTooltip hovered={hoveredNode} />

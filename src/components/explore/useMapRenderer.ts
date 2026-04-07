@@ -1,6 +1,14 @@
 import { useCallback, useRef } from 'react';
 import type { MapNode, MapEdge, Category, MapViewState } from './mapTypes';
-import { CATEGORY_COLORS, RENDER } from './mapConstants';
+import {
+  CATEGORY_COLORS,
+  RENDER,
+  HELD_RING_COLOR,
+  HELD_RING_WIDTH_MIN,
+  HELD_RING_GAP,
+  WATCHLIST_MARKER_COLOR,
+  WATCHLIST_MARKER_SIZE,
+} from './mapConstants';
 
 function hexToRgb(hex: string): [number, number, number] {
   const n = parseInt(hex.slice(1), 16);
@@ -15,6 +23,10 @@ interface RendererOpts {
   selectedNodeId: string | null;
   hoveredNodeId: string | null;
   viewState: MapViewState;
+  /** Market ids the signed-in user currently holds. Drawn as green rings. */
+  heldMarketIds?: Set<string>;
+  /** Market ids the signed-in user has watchlisted. Drawn as star markers. */
+  watchlistedMarketIds?: Set<string>;
 }
 
 export function useMapRenderer() {
@@ -22,7 +34,17 @@ export function useMapRenderer() {
 
   const render = useCallback(
     (ctx: CanvasRenderingContext2D, opts: RendererOpts) => {
-      const { nodes, edges, activeCategories, searchQuery, selectedNodeId, hoveredNodeId, viewState } = opts;
+      const {
+        nodes,
+        edges,
+        activeCategories,
+        searchQuery,
+        selectedNodeId,
+        hoveredNodeId,
+        viewState,
+        heldMarketIds,
+        watchlistedMarketIds,
+      } = opts;
       const { width, height } = ctx.canvas;
       const dpr = window.devicePixelRatio || 1;
       const w = width / dpr;
@@ -153,6 +175,41 @@ export function useMapRenderer() {
           ctx.strokeStyle = RENDER.selectedStrokeColor;
           ctx.lineWidth = RENDER.selectedStrokeWidth / viewState.scale;
           ctx.stroke();
+        }
+
+        // ─── Personal portfolio overlay: green ring for held markets ───
+        if (heldMarketIds && heldMarketIds.has(node.id)) {
+          const ringWidth = Math.max(HELD_RING_WIDTH_MIN, radius * 0.25);
+          ctx.beginPath();
+          ctx.arc(node.x, node.y, radius + HELD_RING_GAP, 0, Math.PI * 2);
+          ctx.strokeStyle = HELD_RING_COLOR;
+          ctx.lineWidth = ringWidth / viewState.scale;
+          ctx.stroke();
+        }
+
+        // ─── Watchlist marker: small star in the top-right quadrant ───
+        if (watchlistedMarketIds && watchlistedMarketIds.has(node.id)) {
+          const offsetAngle = -Math.PI / 4; // top-right
+          const offsetR = radius + HELD_RING_GAP + 2;
+          const cx = node.x + Math.cos(offsetAngle) * offsetR;
+          const cy = node.y + Math.sin(offsetAngle) * offsetR;
+          const size = WATCHLIST_MARKER_SIZE / viewState.scale;
+
+          // 5-point star
+          ctx.beginPath();
+          for (let i = 0; i < 10; i++) {
+            const r = i % 2 === 0 ? size : size * 0.45;
+            const a = (Math.PI / 5) * i - Math.PI / 2;
+            const px = cx + Math.cos(a) * r;
+            const py = cy + Math.sin(a) * r;
+            if (i === 0) ctx.moveTo(px, py);
+            else ctx.lineTo(px, py);
+          }
+          ctx.closePath();
+          ctx.fillStyle = WATCHLIST_MARKER_COLOR;
+          ctx.globalAlpha = 0.85;
+          ctx.fill();
+          ctx.globalAlpha = 1;
         }
 
         // Labels — only on larger bubbles to avoid clutter
