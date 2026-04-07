@@ -2,8 +2,8 @@
 
 import { useState, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, TrendingUp, TrendingDown, DollarSign, Clock, Droplets, Users } from 'lucide-react';
-import type { MapNode, MapGraph, ConnectedMarket } from './mapTypes';
+import { X, TrendingUp, TrendingDown, DollarSign, Clock, Droplets, Users, Star } from 'lucide-react';
+import type { MapNode, MapGraph, ConnectedMarket, UserPosition } from './mapTypes';
 import { CATEGORY_COLORS, CATEGORY_LABELS } from './mapConstants';
 
 interface MapSidebarProps {
@@ -11,6 +11,14 @@ interface MapSidebarProps {
   graph: MapGraph;
   onClose: () => void;
   onSelectNode: (node: MapNode | null) => void;
+  /** Present iff the signed-in user holds this market across any linked wallet. */
+  userPosition?: UserPosition;
+  /** True iff the signed-in user has watchlisted this market. */
+  isWatchlisted?: boolean;
+  /** Toggles the watchlist state for the currently selected market. */
+  onToggleWatchlist?: (marketId: string) => void;
+  /** Hides the star button when the user is signed out or not subscribed. */
+  canWatchlist?: boolean;
 }
 
 type Tab = 'connected' | 'stats';
@@ -45,7 +53,30 @@ function getConnected(nodeId: string, graph: MapGraph): ConnectedMarket[] {
   return connected.sort((a, b) => b.overlapStrength - a.overlapStrength).slice(0, 15);
 }
 
-export function MapSidebar({ node, graph, onClose, onSelectNode }: MapSidebarProps) {
+function formatMoney(n: number): string {
+  const sign = n < 0 ? '-' : '';
+  const abs = Math.abs(n);
+  if (abs >= 1e6) return `${sign}$${(abs / 1e6).toFixed(2)}M`;
+  if (abs >= 1e3) return `${sign}$${(abs / 1e3).toFixed(1)}k`;
+  return `${sign}$${abs.toFixed(abs < 10 ? 2 : 0)}`;
+}
+
+function formatSignedMoney(n: number): string {
+  if (n === 0) return '$0';
+  const sign = n > 0 ? '+' : '-';
+  return `${sign}${formatMoney(Math.abs(n)).replace(/^-/, '')}`;
+}
+
+export function MapSidebar({
+  node,
+  graph,
+  onClose,
+  onSelectNode,
+  userPosition,
+  isWatchlisted,
+  onToggleWatchlist,
+  canWatchlist,
+}: MapSidebarProps) {
   const [tab, setTab] = useState<Tab>('connected');
 
   const connected = useMemo(() => (node ? getConnected(node.id, graph) : []), [node, graph]);
@@ -59,7 +90,7 @@ export function MapSidebar({ node, graph, onClose, onSelectNode }: MapSidebarPro
           animate={{ x: 0 }}
           exit={{ x: 320 }}
           transition={{ type: 'spring', damping: 28, stiffness: 320 }}
-          className="fixed top-12 right-0 bottom-9 z-20 w-[320px] bg-[#04040B]/90 backdrop-blur-2xl border-l border-white/[0.06] flex flex-col"
+          className="fixed top-16 right-0 bottom-9 z-20 w-[320px] bg-[#04040B]/90 backdrop-blur-2xl border-l border-white/[0.06] flex flex-col"
         >
           {/* Header */}
           <div className="px-5 pt-5 pb-4 shrink-0">
@@ -73,12 +104,28 @@ export function MapSidebar({ node, graph, onClose, onSelectNode }: MapSidebarPro
                   {CATEGORY_LABELS[node.category]}
                 </span>
               </div>
-              <button
-                onClick={onClose}
-                className="h-7 w-7 flex items-center justify-center rounded-lg text-[#475569] hover:text-white hover:bg-white/[0.06] transition-colors"
-              >
-                <X className="h-4 w-4" />
-              </button>
+              <div className="flex items-center gap-1">
+                {canWatchlist && onToggleWatchlist && (
+                  <button
+                    onClick={() => onToggleWatchlist(node.id)}
+                    className={`h-7 w-7 flex items-center justify-center rounded-lg transition-colors ${
+                      isWatchlisted
+                        ? 'text-[#FBBF24] hover:text-[#FBBF24]/80 hover:bg-[#FBBF24]/10'
+                        : 'text-[#475569] hover:text-[#FBBF24] hover:bg-white/[0.06]'
+                    }`}
+                    aria-label={isWatchlisted ? 'Remove from watchlist' : 'Add to watchlist'}
+                    title={isWatchlisted ? 'Remove from watchlist' : 'Add to watchlist'}
+                  >
+                    <Star className={`h-4 w-4 ${isWatchlisted ? 'fill-current' : ''}`} />
+                  </button>
+                )}
+                <button
+                  onClick={onClose}
+                  className="h-7 w-7 flex items-center justify-center rounded-lg text-[#475569] hover:text-white hover:bg-white/[0.06] transition-colors"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
             </div>
 
             <p className="text-[15px] font-medium text-white leading-[1.4] mt-3 line-clamp-3">
@@ -116,6 +163,9 @@ export function MapSidebar({ node, graph, onClose, onSelectNode }: MapSidebarPro
               <Stat icon={<Clock className="h-3 w-3 text-[#475569]" />} label="Ends" value={formatDate(node.endDate)} />
             )}
           </div>
+
+          {/* Your Position — only when the signed-in user holds this market */}
+          {userPosition && <YourPositionBlock position={userPosition} />}
 
           {/* Tabs */}
           <div className="px-5 pt-3.5 shrink-0">
@@ -206,6 +256,69 @@ function StatCell({ label, value }: { label: string; value: string }) {
     <div>
       <div className="text-[8px] tracking-[0.18em] uppercase text-[#374151] mb-1">{label}</div>
       <div className="text-[14px] text-[#E2E8F0] font-mono">{value}</div>
+    </div>
+  );
+}
+
+function YourPositionBlock({ position }: { position: UserPosition }) {
+  const pnl = position.unrealizedPnl;
+  const pnlPct = position.unrealizedPnlPct;
+  const isUp = pnl >= 0;
+  const color = isUp ? '#10B981' : '#EF4444';
+  const sideColor = position.side === 'BUY' ? '#10B981' : '#EF4444';
+
+  return (
+    <div className="px-5 py-3.5 border-b border-white/[0.04] shrink-0 bg-[#10B981]/[0.03]">
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center gap-1.5">
+          <span
+            className="w-1.5 h-1.5 rounded-full"
+            style={{ backgroundColor: '#10B981' }}
+          />
+          <span className="text-[9px] tracking-[0.16em] uppercase text-[#10B981] font-medium">
+            Your Position
+          </span>
+        </div>
+        <span
+          className="text-[9px] tracking-[0.14em] uppercase font-mono font-semibold"
+          style={{ color: sideColor }}
+        >
+          {position.side}
+        </span>
+      </div>
+
+      <div className="flex items-baseline justify-between mb-1.5">
+        <span className="text-[18px] font-semibold text-white font-mono tracking-tight">
+          {formatMoney(position.invested)}
+        </span>
+        <span className="text-[10px] text-[#64748b] font-mono">
+          @ {position.avgPrice.toFixed(2)}
+        </span>
+      </div>
+
+      <div className="flex items-center justify-between">
+        <span className="text-[10px] text-[#475569] font-mono">
+          Now {position.currentPrice.toFixed(2)} → {formatMoney(position.currentValue)}
+        </span>
+        <span
+          className="text-[11px] font-mono font-semibold flex items-center gap-0.5"
+          style={{ color }}
+        >
+          {isUp ? (
+            <TrendingUp className="h-3 w-3" />
+          ) : (
+            <TrendingDown className="h-3 w-3" />
+          )}
+          {formatSignedMoney(pnl)} ({isUp ? '+' : ''}
+          {pnlPct.toFixed(1)}%)
+        </span>
+      </div>
+
+      {position.wallets.length > 1 && (
+        <div className="text-[9px] text-[#374151] font-mono mt-1.5">
+          across {position.wallets.length} wallets • {position.trades} trades
+        </div>
+      )}
     </div>
   );
 }

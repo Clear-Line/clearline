@@ -79,6 +79,16 @@ export const INTERACTION = {
 
 export const BG_COLOR = '#04040B';
 
+// ─── Personal portfolio overlay ───
+/** Green ring drawn around nodes the signed-in user holds. */
+export const HELD_RING_COLOR = '#10B981';
+export const HELD_RING_WIDTH_MIN = 2;
+export const HELD_RING_GAP = 4;
+
+/** Star marker drawn on nodes the signed-in user has watchlisted. */
+export const WATCHLIST_MARKER_COLOR = '#FBBF24';
+export const WATCHLIST_MARKER_SIZE = 7;
+
 /** Hexagonal cluster target positions (fraction of canvas, centered at 0.5) */
 export const CLUSTER_POSITIONS: Record<Category, { x: number; y: number }> = {
   politics: { x: 0.18, y: 0.18 },
