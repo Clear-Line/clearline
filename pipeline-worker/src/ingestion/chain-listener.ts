@@ -23,6 +23,7 @@ const ALLOWED_CATEGORIES = new Set(['politics', 'geopolitics', 'economics', 'cry
 const POLL_INTERVAL_MS = 900_000; // 15 minutes (reduced from 5min to cut costs)
 const BACKFILL_BATCH_SIZE = 9n; // blocks per getLogs call (Alchemy free tier: max 10 blocks)
 const USDC_DECIMALS = 1e6;
+const ETH_ADDR_RE = /^0x[a-f0-9]{40}$/;
 
 // ─── State ───
 
@@ -209,6 +210,7 @@ function handleOrderFilled(log: {
 
   if (!tokenMapping) return 'unknown';
   if (!ALLOWED_CATEGORIES.has(tokenMapping.category)) return 'category';
+  if (!ETH_ADDR_RE.test(walletAddress)) return 'unknown'; // defensive: never accept malformed addrs
 
   // Compute price and amounts
   const usdcValue = Number(usdcAmount) / USDC_DECIMALS;
