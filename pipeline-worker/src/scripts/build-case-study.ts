@@ -185,7 +185,7 @@ async function buildStudy(params: BuildParams): Promise<void> {
     });
   }
 
-  const ranked = rankAffected(affected, 20);
+  const ranked = rankAffected(affected, 60);
   const triggerRow = affected.find((a) => a.role === 'trigger');
   const finalMarkets = triggerRow ? [triggerRow, ...ranked] : ranked;
 
