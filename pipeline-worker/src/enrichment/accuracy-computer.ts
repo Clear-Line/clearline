@@ -125,38 +125,63 @@ export async function backfillLegacyWallets(): Promise<{ reset: number; errors: 
   const walletDeltas = new Map<string, { winDelta: number; lossDelta: number; pnlDelta: number }>();
   let marketsProcessed = 0;
 
-  for (const market of resolvedMarkets) {
-    try {
-      const { data: positions } = await bq
-        .from('wallet_trade_positions')
-        .select('wallet_address, outcome, buy_volume, sell_volume, avg_buy_price, buy_count, sell_count')
-        .eq('market_id', market.condition_id);
+  // BIGQUERY COST DISCIPLINE: batched fetch instead of one query per market.
+  // Build resolution_outcome lookup so we can score in memory.
+  const outcomeByMarket = new Map<string, string>();
+  for (const m of resolvedMarkets) {
+    if (m.resolution_outcome) outcomeByMarket.set(m.condition_id, m.resolution_outcome);
+  }
+  const resolvedIds = [...outcomeByMarket.keys()];
 
-      if (!positions || positions.length === 0) continue;
-      marketsProcessed++;
+  const ID_CHUNK = 1000;
+  for (let i = 0; i < resolvedIds.length; i += ID_CHUNK) {
+    const chunk = resolvedIds.slice(i, i + ID_CHUNK);
+    const { data: positions, error: posErr } = await bq.rawQuery<{
+      market_id: string;
+      wallet_address: string;
+      outcome: string;
+      buy_volume: number;
+      sell_volume: number;
+      avg_buy_price: number;
+    }>(
+      `SELECT market_id, wallet_address, outcome, buy_volume, sell_volume, avg_buy_price
+       FROM \`${dataset}.wallet_trade_positions\`
+       WHERE market_id IN UNNEST(@market_ids)`,
+      { market_ids: chunk },
+    );
 
-      for (const pos of positions) {
-        const isNetBuyer = (pos.buy_volume || 0) > (pos.sell_volume || 0);
-        const bettedOnWinner = pos.outcome === market.resolution_outcome;
-        const isCorrect = (isNetBuyer && bettedOnWinner) || (!isNetBuyer && !bettedOnWinner);
+    if (posErr) {
+      errors.push(`Backfill positions batch ${i}: ${posErr.message}`);
+      continue;
+    }
 
-        let pnl = 0;
-        if (isNetBuyer && pos.avg_buy_price > 0) {
-          const netInvested = (pos.buy_volume || 0) - (pos.sell_volume || 0);
-          pnl = bettedOnWinner ? netInvested * (1 / pos.avg_buy_price - 1) : -netInvested;
-        } else if (!isNetBuyer) {
-          const netSold = (pos.sell_volume || 0) - (pos.buy_volume || 0);
-          pnl = bettedOnWinner ? -netSold : netSold * 0.5; // conservative estimate for sellers
-        }
-
-        const existing = walletDeltas.get(pos.wallet_address) ?? { winDelta: 0, lossDelta: 0, pnlDelta: 0 };
-        if (isCorrect) existing.winDelta++;
-        else existing.lossDelta++;
-        existing.pnlDelta += pnl;
-        walletDeltas.set(pos.wallet_address, existing);
+    const seenMarkets = new Set<string>();
+    for (const pos of positions ?? []) {
+      const winnerOutcome = outcomeByMarket.get(pos.market_id);
+      if (!winnerOutcome) continue;
+      if (!seenMarkets.has(pos.market_id)) {
+        seenMarkets.add(pos.market_id);
+        marketsProcessed++;
       }
-    } catch (err) {
-      errors.push(`Backfill market ${market.condition_id}: ${err}`);
+
+      const isNetBuyer = (pos.buy_volume || 0) > (pos.sell_volume || 0);
+      const bettedOnWinner = pos.outcome === winnerOutcome;
+      const isCorrect = (isNetBuyer && bettedOnWinner) || (!isNetBuyer && !bettedOnWinner);
+
+      let pnl = 0;
+      if (isNetBuyer && pos.avg_buy_price > 0) {
+        const netInvested = (pos.buy_volume || 0) - (pos.sell_volume || 0);
+        pnl = bettedOnWinner ? netInvested * (1 / pos.avg_buy_price - 1) : -netInvested;
+      } else if (!isNetBuyer) {
+        const netSold = (pos.sell_volume || 0) - (pos.buy_volume || 0);
+        pnl = bettedOnWinner ? -netSold : netSold * 0.5; // conservative estimate for sellers
+      }
+
+      const existing = walletDeltas.get(pos.wallet_address) ?? { winDelta: 0, lossDelta: 0, pnlDelta: 0 };
+      if (isCorrect) existing.winDelta++;
+      else existing.lossDelta++;
+      existing.pnlDelta += pnl;
+      walletDeltas.set(pos.wallet_address, existing);
     }
   }
 
@@ -208,6 +233,7 @@ export async function computeAccuracy(): Promise<{
   const errors: string[] = [];
   let resolved = 0;
   let walletsUpdated = 0;
+  const dataset = `${process.env.GCP_PROJECT_ID}.${process.env.BQ_DATASET || 'polymarket'}`;
 
   // ─── Step 1: Find unresolved markets in our DB ───
   const unresolvedIds = new Set<string>();
@@ -304,6 +330,12 @@ export async function computeAccuracy(): Promise<{
   // ─── Step 4: Incrementally score wallets for NEWLY resolved markets only ───
   // Key difference: fetch trades from Polymarket API (has full market history),
   // NOT from our 3-day BQ trades table.
+  //
+  // BIGQUERY COST DISCIPLINE: previously this loop ran one
+  // `SELECT ... WHERE market_id = @id` per resolved market, which scanned ~30 MB
+  // each (BQ minimum scan size). With 80k+ markets that's $5–10/day for nothing.
+  // Now we issue ONE batched query for all newly-resolved markets and group in
+  // memory. Same logic, ~10,000× cheaper.
 
   if (newlyResolved.length === 0) {
     return { resolved, walletsUpdated: 0, errors };
@@ -314,13 +346,56 @@ export async function computeAccuracy(): Promise<{
   let localHits = 0;
   let apiFallbacks = 0;
 
+  // ── 4a: One batched query for all newly-resolved markets ──
+  const newlyResolvedIds = newlyResolved.map((m) => m.conditionId);
+  const positionsByMarket = new Map<string, Array<{
+    wallet_address: string;
+    outcome: string;
+    buy_volume: number;
+    sell_volume: number;
+    avg_buy_price: number;
+    buy_count: number;
+    sell_count: number;
+  }>>();
+
+  // Chunk the IN UNNEST list to avoid query parameter size limits
+  const ID_CHUNK = 1000;
+  for (let i = 0; i < newlyResolvedIds.length; i += ID_CHUNK) {
+    const chunk = newlyResolvedIds.slice(i, i + ID_CHUNK);
+    const { data: rows, error: posErr } = await bq.rawQuery<{
+      market_id: string;
+      wallet_address: string;
+      outcome: string;
+      buy_volume: number;
+      sell_volume: number;
+      avg_buy_price: number;
+      buy_count: number;
+      sell_count: number;
+    }>(
+      `SELECT market_id, wallet_address, outcome, buy_volume, sell_volume,
+              avg_buy_price, buy_count, sell_count
+       FROM \`${dataset}.wallet_trade_positions\`
+       WHERE market_id IN UNNEST(@market_ids)`,
+      { market_ids: chunk },
+    );
+
+    if (posErr) {
+      errors.push(`Positions batch ${i}: ${posErr.message}`);
+      continue;
+    }
+    for (const row of rows ?? []) {
+      const arr = positionsByMarket.get(row.market_id) ?? [];
+      arr.push(row);
+      positionsByMarket.set(row.market_id, arr);
+    }
+  }
+
+  // ── 4b: Score each market (in memory now — no per-market BQ calls) ──
+  const marketsWithLocalPositions: string[] = [];
+
   for (const market of newlyResolved) {
     try {
-      // Phase 1: Check our own blockchain-sourced position data first
-      const { data: localPositions } = await bq
-        .from('wallet_trade_positions')
-        .select('wallet_address, outcome, buy_volume, sell_volume, avg_buy_price, buy_count, sell_count')
-        .eq('market_id', market.conditionId);
+      const localPositions = positionsByMarket.get(market.conditionId) ?? [];
 
       const walletPositions = new Map<string, {
         buyVolume: number;
@@ -330,7 +405,7 @@ export async function computeAccuracy(): Promise<{
         buyCount: number;
       }>();
 
-      if (localPositions && localPositions.length > 0) {
+      if (localPositions.length > 0) {
         // Use blockchain-sourced positions — complete, uncapped data
         for (const pos of localPositions) {
           walletPositions.set(pos.wallet_address, {
@@ -342,6 +417,7 @@ export async function computeAccuracy(): Promise<{
           });
         }
         localHits++;
+        marketsWithLocalPositions.push(market.conditionId);
       } else {
         // Phase 2: Fall back to Polymarket API (capped at 1,000 trades)
         const { trades } = await fetchMarketTradesPaginated(market.conditionId, {
@@ -398,82 +474,89 @@ export async function computeAccuracy(): Promise<{
         existing.pnlDelta += pnl;
         walletDeltas.set(address, existing);
       }
-
-      // Clean up local positions after scoring (data consumed into wallets table)
-      if (localPositions && localPositions.length > 0) {
-        await bq.from('wallet_trade_positions').delete().eq('market_id', market.conditionId);
-      }
     } catch (err) {
       errors.push(`Score market ${market.conditionId}: ${err}`);
     }
   }
 
-  console.log(`[Accuracy] Scoring sources: ${localHits} local, ${apiFallbacks} API fallback`);
-
-  // ─── Step 5: Read existing wallet rows and increment ───
-  const walletAddresses = [...walletDeltas.keys()];
-  const existingWallets = new Map<string, {
-    wins: number; losses: number; total_pnl_usdc: number;
-    username: string | null; pseudonym: string | null;
-  }>();
-
-  const ADDR_BATCH = 200;
-  for (let i = 0; i < walletAddresses.length; i += ADDR_BATCH) {
-    const batch = walletAddresses.slice(i, i + ADDR_BATCH);
-    const { data } = await bq
-      .from('wallets')
-      .select('address, wins, losses, total_pnl_usdc, username, pseudonym')
-      .in('address', batch);
-
-    if (data) {
-      for (const row of data) {
-        existingWallets.set(row.address, {
-          wins: row.wins ?? 0,
-          losses: row.losses ?? 0,
-          total_pnl_usdc: row.total_pnl_usdc ?? 0,
-          username: row.username,
-          pseudonym: row.pseudonym,
-        });
+  // ── 4c: Single batched DELETE of consumed positions (was N per-market deletes) ──
+  if (marketsWithLocalPositions.length > 0) {
+    for (let i = 0; i < marketsWithLocalPositions.length; i += ID_CHUNK) {
+      const chunk = marketsWithLocalPositions.slice(i, i + ID_CHUNK);
+      try {
+        await bq.rawQuery(
+          `DELETE FROM \`${dataset}.wallet_trade_positions\`
+           WHERE market_id IN UNNEST(@market_ids)`,
+          { market_ids: chunk },
+        );
+      } catch (err) {
+        errors.push(`Cleanup batch ${i}: ${err instanceof Error ? err.message : err}`);
       }
     }
   }
 
-  // Build upsert rows with incremented values
-  const upsertRows = [];
-  for (const [address, delta] of walletDeltas) {
-    const existing = existingWallets.get(address) ?? {
-      wins: 0, losses: 0, total_pnl_usdc: 0, username: null, pseudonym: null,
-    };
+  console.log(`[Accuracy] Scoring sources: ${localHits} local, ${apiFallbacks} API fallback`);
 
-    const newWins = existing.wins + delta.winDelta;
-    const newLosses = existing.losses + delta.lossDelta;
-    const newSampleSize = newWins + newLosses;
-    const newAccuracy = newSampleSize > 0 ? newWins / newSampleSize : 0;
-    const newPnl = existing.total_pnl_usdc + delta.pnlDelta;
+  // ─── Step 5: Single additive MERGE — increment wins/losses/pnl in BigQuery ───
+  // BIGQUERY COST DISCIPLINE: previously this was a fetch-existing-then-upsert
+  // loop that scanned ~25 MB per 200-wallet batch. Now we MERGE deltas directly
+  // and let BigQuery do the addition server-side. The accuracy_score is
+  // computed in the UPDATE clause from the new wins/losses totals.
+  const nowIso = new Date().toISOString();
+  const deltaRows = [...walletDeltas.entries()].map(([address, delta]) => ({
+    address,
+    win_delta: delta.winDelta,
+    loss_delta: delta.lossDelta,
+    pnl_delta: Math.round(delta.pnlDelta * 100) / 100,
+  }));
 
-    upsertRows.push({
-      address,
-      wins: newWins,
-      losses: newLosses,
-      accuracy_score: Math.round(newAccuracy * 10000) / 10000,
-      accuracy_sample_size: newSampleSize,
-      total_pnl_usdc: Math.round(newPnl * 100) / 100,
-      last_accuracy_update: new Date().toISOString(),
-    });
-  }
+  if (deltaRows.length > 0) {
+    const MERGE_BATCH = 500;
+    for (let i = 0; i < deltaRows.length; i += MERGE_BATCH) {
+      const chunk = deltaRows.slice(i, i + MERGE_BATCH);
+      const sourceRows = chunk
+        .map((d) => {
+          const escaped = d.address.replace(/'/g, "\\'");
+          return `SELECT '${escaped}' AS address, ${d.win_delta} AS win_delta, ${d.loss_delta} AS loss_delta, ${d.pnl_delta} AS pnl_delta`;
+        })
+        .join('\nUNION ALL\n');
 
-  // Batch upsert
-  const UPSERT_BATCH = 500;
-  for (let i = 0; i < upsertRows.length; i += UPSERT_BATCH) {
-    const chunk = upsertRows.slice(i, i + UPSERT_BATCH);
-    const { error } = await bq
-      .from('wallets')
-      .upsert(chunk, { onConflict: 'address' });
+      const mergeSQL = `
+        MERGE \`${dataset}.wallets\` AS target
+        USING (${sourceRows}) AS source
+        ON target.address = source.address
+        WHEN MATCHED THEN UPDATE SET
+          wins = COALESCE(target.wins, 0) + source.win_delta,
+          losses = COALESCE(target.losses, 0) + source.loss_delta,
+          accuracy_sample_size =
+            COALESCE(target.wins, 0) + source.win_delta +
+            COALESCE(target.losses, 0) + source.loss_delta,
+          accuracy_score = SAFE_DIVIDE(
+            COALESCE(target.wins, 0) + source.win_delta,
+            COALESCE(target.wins, 0) + source.win_delta +
+              COALESCE(target.losses, 0) + source.loss_delta
+          ),
+          total_pnl_usdc = ROUND(COALESCE(target.total_pnl_usdc, 0) + source.pnl_delta, 2),
+          last_accuracy_update = TIMESTAMP('${nowIso}')
+        WHEN NOT MATCHED THEN
+          INSERT (address, wins, losses, accuracy_sample_size, accuracy_score, total_pnl_usdc, last_accuracy_update)
+          VALUES (
+            source.address,
+            source.win_delta,
+            source.loss_delta,
+            source.win_delta + source.loss_delta,
+            SAFE_DIVIDE(source.win_delta, source.win_delta + source.loss_delta),
+            ROUND(source.pnl_delta, 2),
+            TIMESTAMP('${nowIso}')
+          )
+      `;
 
-    if (error) {
-      errors.push(`Wallet accuracy batch ${i}: ${error.message}`);
-    } else {
-      walletsUpdated += chunk.length;
+      try {
+        await bq.rawQuery(mergeSQL);
+        walletsUpdated += chunk.length;
+      } catch (err) {
+        errors.push(`Wallet accuracy merge batch ${i}: ${err instanceof Error ? err.message : err}`);
+      }
     }
   }
 
