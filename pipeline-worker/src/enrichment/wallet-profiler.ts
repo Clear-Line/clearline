@@ -215,74 +215,50 @@ async function incrementalProfileWallets(): Promise<{ updated: number; errors: s
     walletNewData.set(t.wallet_address, existing);
   }
 
-  // Fetch existing wallet rows to read current totals
-  const addresses = [...walletNewData.keys()];
-  const existingMap = new Map<string, {
-    total_trades: number;
-    total_volume_usdc: number;
-    total_markets_traded: number;
-    first_seen_polymarket: string | null;
-  }>();
-
-  const ADDR_BATCH = 200;
-  for (let i = 0; i < addresses.length; i += ADDR_BATCH) {
-    const batch = addresses.slice(i, i + ADDR_BATCH);
-    const { data } = await bq
-      .from('wallets')
-      .select('address, total_trades, total_volume_usdc, total_markets_traded, first_seen_polymarket')
-      .in('address', batch);
-
-    if (data) {
-      for (const row of data) {
-        existingMap.set(row.address, {
-          total_trades: row.total_trades ?? 0,
-          total_volume_usdc: row.total_volume_usdc ?? 0,
-          total_markets_traded: row.total_markets_traded ?? 0,
-          first_seen_polymarket: row.first_seen_polymarket ?? null,
-        });
-      }
-    }
-  }
-
-  // Build incremental upsert rows
-  const upsertRows = [];
+  // BIGQUERY COST DISCIPLINE: previously this read every wallet's existing row
+  // (one query per 200-wallet batch, ~25 MB scan each — that's $1.40/week alone)
+  // and then upserted the recomputed totals. Now we issue a single additive
+  // MERGE that increments target.total_trades / target.total_volume_usdc
+  // server-side. No reads, no fetch-then-write loop.
+  const dataset = `${process.env.GCP_PROJECT_ID}.${process.env.BQ_DATASET || 'polymarket'}`;
   const now = new Date().toISOString();
 
-  for (const [address, newData] of walletNewData) {
-    const existing = existingMap.get(address) ?? {
-      total_trades: 0, total_volume_usdc: 0,
-      total_markets_traded: 0, first_seen_polymarket: null,
-    };
+  const deltaRows = [...walletNewData.entries()].map(([address, newData]) => ({
+    address,
+    new_trades: newData.newTrades,
+    new_volume: Math.round(newData.newVolume * 100) / 100,
+    earliest_ts: newData.earliestTimestamp,
+  }));
 
-    const row: Record<string, unknown> = {
-      address,
-      total_trades: existing.total_trades + newData.newTrades,
-      total_volume_usdc: Math.round((existing.total_volume_usdc + newData.newVolume) * 100) / 100,
-      // Note: total_markets_traded is NOT incremented here — it's recomputed
-      // in the backfill phase from wallet_trade_positions to avoid double-counting
-      last_updated: now,
-    };
+  const MERGE_BATCH = 500;
+  for (let i = 0; i < deltaRows.length; i += MERGE_BATCH) {
+    const chunk = deltaRows.slice(i, i + MERGE_BATCH);
+    const sourceRows = chunk
+      .map((d) => {
+        const escaped = d.address.replace(/'/g, "\\'");
+        return `SELECT '${escaped}' AS address, ${d.new_trades} AS new_trades, ${d.new_volume} AS new_volume, TIMESTAMP('${d.earliest_ts}') AS earliest_ts`;
+      })
+      .join('\nUNION ALL\n');
 
-    // Only set first_seen if not already set
-    if (!existing.first_seen_polymarket) {
-      row.first_seen_polymarket = newData.earliestTimestamp;
-    }
+    const mergeSQL = `
+      MERGE \`${dataset}.wallets\` AS target
+      USING (${sourceRows}) AS source
+      ON target.address = source.address
+      WHEN MATCHED THEN UPDATE SET
+        total_trades = COALESCE(target.total_trades, 0) + source.new_trades,
+        total_volume_usdc = ROUND(COALESCE(target.total_volume_usdc, 0) + source.new_volume, 2),
+        first_seen_polymarket = COALESCE(target.first_seen_polymarket, source.earliest_ts),
+        last_updated = TIMESTAMP('${now}')
+      WHEN NOT MATCHED THEN
+        INSERT (address, total_trades, total_volume_usdc, first_seen_polymarket, last_updated)
+        VALUES (source.address, source.new_trades, source.new_volume, source.earliest_ts, TIMESTAMP('${now}'))
+    `;
 
-    upsertRows.push(row);
-  }
-
-  // Batch upsert
-  const BATCH = 500;
-  for (let i = 0; i < upsertRows.length; i += BATCH) {
-    const chunk = upsertRows.slice(i, i + BATCH);
-    const { error } = await bq
-      .from('wallets')
-      .upsert(chunk, { onConflict: 'address' });
-
-    if (error) {
-      errors.push(`Profile batch ${i}: ${error.message}`);
-    } else {
+    try {
+      await bq.rawQuery(mergeSQL);
       updated += chunk.length;
+    } catch (err) {
+      errors.push(`Profile merge batch ${i}: ${err instanceof Error ? err.message : err}`);
     }
   }
 
