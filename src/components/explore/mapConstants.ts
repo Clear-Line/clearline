@@ -25,17 +25,20 @@ export const ALL_CATEGORIES: Category[] = [
 ];
 
 export const PHYSICS = {
-  chargeStrength: -350,
+  chargeStrength: -480,
   chargeDistanceMax: 700,
-  linkDistance: 150,
-  linkStrengthMultiplier: 0.3,
+  linkDistance: 130,
+  linkStrengthMultiplier: 0.22,
   centerStrength: 0.012,
   collisionPadding: 18,
   alphaDecay: 0.018,
   alphaMin: 0.001,
   velocityDecay: 0.35,
   reheatAlpha: 0.3,
-  clusterStrength: 0.09,
+  clusterStrength: 0.18,
+  // Per-category centroid repulsion (custom force in useForceSimulation.ts).
+  // d3 gives us cluster *attraction* but no cluster *repulsion* — this is the missing piece.
+  categorySeparationStrength: 0.6,
 };
 
 export const RENDER = {
@@ -88,11 +91,11 @@ export const WATCHLIST_MARKER_SIZE = 7;
 
 /** Hexagonal cluster target positions (fraction of canvas, centered at 0.5) */
 export const CLUSTER_POSITIONS: Record<Category, { x: number; y: number }> = {
-  politics: { x: 0.22, y: 0.22 },
-  crypto: { x: 0.78, y: 0.22 },
-  economics: { x: 0.5, y: 0.5 },
-  geopolitics: { x: 0.22, y: 0.78 },
-  culture: { x: 0.78, y: 0.78 },
+  politics: { x: 0.15, y: 0.18 },
+  crypto: { x: 0.85, y: 0.18 },
+  economics: { x: 0.50, y: 0.55 },
+  geopolitics: { x: 0.18, y: 0.85 },
+  culture: { x: 0.82, y: 0.85 },
 };
 
 export function computeRadius(totalVolume: number): number {

@@ -49,6 +49,45 @@ export function useForceSimulation({
       weight: e.weight,
     }));
 
+    // Custom force: every tick, compute the centroid of each category and push
+    // each node away from foreign centroids. This is the missing repulsion piece —
+    // d3 gives us cluster *attraction* via clusterX/Y but no cluster *repulsion*,
+    // which is why politics + geopolitics were drifting into the same blob.
+    const sepMaxDistance = Math.min(width, height) * 0.6;
+    const categorySeparationForce = (alpha: number) => {
+      const centroids = new Map<Category, { x: number; y: number; n: number }>();
+      for (const node of nodes) {
+        if (node.x == null || node.y == null) continue;
+        const c = centroids.get(node.category) ?? { x: 0, y: 0, n: 0 };
+        c.x += node.x;
+        c.y += node.y;
+        c.n += 1;
+        centroids.set(node.category, c);
+      }
+      for (const c of centroids.values()) {
+        if (c.n > 0) {
+          c.x /= c.n;
+          c.y /= c.n;
+        }
+      }
+
+      for (const node of nodes) {
+        if (node.x == null || node.y == null) continue;
+        for (const [cat, centroid] of centroids) {
+          if (cat === node.category) continue;
+          const dx = node.x - centroid.x;
+          const dy = node.y - centroid.y;
+          const dist = Math.sqrt(dx * dx + dy * dy) + 1;
+          if (dist > sepMaxDistance) continue; // only nearby centroids push
+          // 1/dist falloff (softer than gravity-style 1/dist²) so clusters can
+          // touch at their edges without being hard-walled apart.
+          const push = (PHYSICS.categorySeparationStrength * alpha * 100) / dist;
+          node.vx = (node.vx ?? 0) + (dx / dist) * push;
+          node.vy = (node.vy ?? 0) + (dy / dist) * push;
+        }
+      }
+    };
+
     const sim = forceSimulation<MapNode, SimLink>(nodes)
       .force(
         'charge',
@@ -80,6 +119,7 @@ export function useForceSimulation({
           .y((d) => CLUSTER_POSITIONS[d.category].y * height)
           .strength(PHYSICS.clusterStrength),
       )
+      .force('categorySeparation', categorySeparationForce)
       .alphaDecay(PHYSICS.alphaDecay)
       .alphaMin(PHYSICS.alphaMin)
       .velocityDecay(PHYSICS.velocityDecay)
