@@ -157,8 +157,8 @@ export function MapSidebar({
           <div className="flex gap-5 px-5 py-3.5 border-y border-white/[0.04] shrink-0">
             <Stat icon={<DollarSign className="h-3 w-3 text-[#475569]" />} label="Volume" value={formatVolume(node.volume24h)} />
             <Stat icon={<Droplets className="h-3 w-3 text-[#475569]" />} label="Liquidity" value={formatVolume(node.liquidity)} />
-            {node.smartWalletCount > 0 ? (
-              <Stat icon={<Users className="h-3 w-3 text-[#475569]" />} label="Smart Wallets" value={String(node.smartWalletCount)} />
+            {node.insiderCount > 0 ? (
+              <Stat icon={<Users className="h-3 w-3 text-[#475569]" />} label="Insider Wallets" value={String(node.insiderCount)} />
             ) : (
               <Stat icon={<Clock className="h-3 w-3 text-[#475569]" />} label="Ends" value={formatDate(node.endDate)} />
             )}

@@ -23,6 +23,7 @@ import { profileWallets } from './enrichment/wallet-profiler.js';
 import { scanSmartMoney } from './intelligence/smart-money-scanner.js';
 import { computeEdges } from './intelligence/edge-computer.js';
 import { runWatchlistAlerts } from './intelligence/watchlist-alerts.js';
+import { runInsiderDetector } from './intelligence/insider-detector.js';
 
 // ─── Maintenance ───
 import { ensureTables } from './core/ensure-tables.js';
@@ -82,6 +83,16 @@ registerJob('smart-money-scanner', '0 */6 * * *', async () => {
   console.log(`  -> Cards: ${result.cards}, signals: ${t.marketsWithSignal}, wallets: ${t.smartWalletsUsed}`);
   if (t.divergencesDetected > 0) console.log(`  -> Volume divergences: ${t.divergencesDetected}`);
   if (t.vacuumsDetected > 0) console.log(`  -> Liquidity vacuums: ${t.vacuumsDetected}`);
+  if (result.errors.length > 0) console.log(`  -> Errors: ${result.errors.slice(0, 3).join('; ')}`);
+});
+
+// Insider detection: every 3 hours — behavioral filter on wallet_trade_positions
+// to surface "purpose-built" wallets (concentrated, focused, directional). One
+// big batched query + a small MERGE; ~80 MB scan/run, ~640 MB/day.
+// Replaces the historical-accuracy "smart wallet" signal in user-facing surfaces.
+registerJob('insider-detector', '0 */3 * * *', async () => {
+  const result = await runInsiderDetector();
+  console.log(`  -> Markets with insiders: ${result.marketsWithInsiders} / ${result.marketsScanned} scanned (${result.insidersFound} insider-positions, ${result.duration_ms}ms)`);
   if (result.errors.length > 0) console.log(`  -> Errors: ${result.errors.slice(0, 3).join('; ')}`);
 });
 

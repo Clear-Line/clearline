@@ -22,4 +22,13 @@ export interface Market {
   smartSellVolume: number;
   smartWalletCount: number;
   topSmartWallets: { address: string; accuracy: number; side: string; volume: number }[];
+  // Insider signal (replaces smart-wallet count in user-facing surfaces)
+  insiderCount: number;
+  topInsiders: {
+    address: string;
+    side: 'BUY' | 'SELL';
+    position: number;
+    concentration: number;
+    marketsTraded: number;
+  }[];
 }

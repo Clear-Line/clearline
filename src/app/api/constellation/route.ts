@@ -16,6 +16,7 @@ interface NodeRow {
   end_date: string | null;
   price_change: number | null;
   smart_wallet_count: number | null;
+  insider_count: number | null;
   signal: string | null;
 }
 
@@ -49,6 +50,7 @@ export async function GET() {
         s.liquidity,
         c.price_change,
         c.smart_wallet_count,
+        i.insider_count,
         c.signal
       FROM ${fq('markets')} m
       INNER JOIN (
@@ -62,6 +64,7 @@ export async function GET() {
           ROW_NUMBER() OVER (PARTITION BY market_id ORDER BY computed_at DESC) AS rn
         FROM ${fq('market_cards')}
       ) c ON c.market_id = m.condition_id AND c.rn = 1
+      LEFT JOIN ${fq('market_insiders')} i ON i.market_id = m.condition_id
       WHERE m.is_active = true
         AND m.is_resolved = false
         AND m.category IN ('politics', 'crypto', 'economics', 'geopolitics', 'culture')
@@ -92,6 +95,7 @@ export async function GET() {
     endDate: n.end_date ?? null,
     priceChange: n.price_change ?? 0,
     smartWalletCount: n.smart_wallet_count ?? 0,
+    insiderCount: n.insider_count ?? 0,
     signal: n.signal ?? 'NEUTRAL',
   }));
 

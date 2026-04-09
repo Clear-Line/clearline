@@ -106,14 +106,14 @@ export function MarketCard({ market }: MarketCardProps) {
               </div>
             </div>
 
-            {/* Smart money info */}
-            {market.smartWalletCount > 0 && (
+            {/* Insider wallets info */}
+            {market.insiderCount > 0 && (
               <div className="text-right">
                 <div className={`text-lg font-bold ${signalInfo.color}`}>
-                  {market.smartWalletCount}
+                  {market.insiderCount}
                 </div>
                 <div className="text-[9px] text-[#475569] tracking-wider uppercase">
-                  Smart Wallets
+                  Insider Wallets
                 </div>
                 {market.signalConfidence > 0 && (
                   <div className="text-[9px] text-[#64748b] mt-0.5">

@@ -21,8 +21,8 @@ export async function GET(
   const ds = process.env.BQ_DATASET || 'polymarket';
   const fq = (table: string) => `\`${projectId}.${ds}.${table}\``;
 
-  // Fetch market metadata + market card + snapshots + trades + connected markets in parallel
-  const [marketRes, cardRes, snapshotsRes, tradesRes, edgesRes] = await Promise.all([
+  // Fetch market metadata + market card + insiders + snapshots + trades + connected markets in parallel
+  const [marketRes, cardRes, insidersRes, snapshotsRes, tradesRes, edgesRes] = await Promise.all([
     bq
       .from('markets')
       .select('condition_id, question, category, outcomes, start_date, end_date, is_active, updated_at')
@@ -30,6 +30,10 @@ export async function GET(
       .single(),
     bq.from('market_cards')
       .select('*')
+      .eq('market_id', id)
+      .limit(1),
+    bq.from('market_insiders')
+      .select('insider_count, top_insiders, computed_at')
       .eq('market_id', id)
       .limit(1),
     bq.from('market_snapshots')
@@ -154,11 +158,19 @@ export async function GET(
     );
   }
 
-  // Smart money signal from pre-computed card
+  // Smart money signal from pre-computed card (legacy historical-accuracy signal)
   let topSmartWallets: unknown[] = [];
   try {
     if (card?.top_smart_wallets) topSmartWallets = JSON.parse(card.top_smart_wallets);
   } catch { /* ignore */ }
+
+  // Insider signal from market_insiders (behavioral, written by insider-detector)
+  const insiderRow = (insidersRes.data ?? [])[0] ?? null;
+  let topInsiders: unknown[] = [];
+  try {
+    if (insiderRow?.top_insiders) topInsiders = JSON.parse(insiderRow.top_insiders);
+  } catch { /* ignore */ }
+  const insiderCount = Number(insiderRow?.insider_count) || 0;
 
   const section = market.category === 'politics' ? 'political'
     : market.category === 'geopolitics' ? 'geopolitics'
@@ -202,6 +214,8 @@ export async function GET(
     smartSellVolume: Number(card?.smart_sell_volume) || 0,
     smartWalletCount: Number(card?.smart_wallet_count) || 0,
     topSmartWallets,
+    insiderCount,
+    topInsiders,
     // Connected markets from constellation map edges
     connectedMarkets: connectedEdges.map((e) => {
       const meta = connectedTitleMap.get(e.connected_id);
