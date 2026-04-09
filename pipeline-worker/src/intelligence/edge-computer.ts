@@ -43,11 +43,11 @@ interface MarketEdge {
 
 // ─── Constants ───
 
-const MIN_SHARED_WALLETS = 2;
-const MIN_CORR_SAMPLES = 7;
-const MIN_COMBINED_WEIGHT = 0.03;
-const WALLET_WEIGHT = 0.6;
-const CORRELATION_WEIGHT = 0.4;
+const MIN_SHARED_WALLETS = 4;
+const MIN_CORR_SAMPLES = 10;
+const MIN_COMBINED_WEIGHT = 0.15;
+const WALLET_WEIGHT = 0.4;
+const CORRELATION_WEIGHT = 0.6;
 const BATCH_SIZE = 500;
 
 // ─── Main ───
@@ -85,6 +85,7 @@ export async function computeEdges(): Promise<{
         JOIN \`${dataset}.markets\` m
           ON m.condition_id = wtp.market_id
         WHERE m.is_active = true AND m.is_resolved = false
+          AND m.category IN ('politics', 'crypto', 'economics', 'geopolitics', 'culture')
       ),
       market_count AS (
         SELECT COUNT(DISTINCT market_id) AS cnt FROM active_positions
@@ -241,8 +242,11 @@ export async function computeEdges(): Promise<{
     seenPairs.add(key);
 
     const corr = corrMap.get(key);
+    // Require both signals — drop wallet-only edges (chance overlaps with no price relationship).
+    if (!corr) continue;
+
     const walletScore = row.wallet_overlap;
-    const corrScore = corr ? Math.abs(corr.price_corr) : 0;
+    const corrScore = Math.abs(corr.price_corr);
     const combined = WALLET_WEIGHT * walletScore + CORRELATION_WEIGHT * corrScore;
 
     if (combined >= MIN_COMBINED_WEIGHT) {
@@ -251,8 +255,8 @@ export async function computeEdges(): Promise<{
         market_b: row.market_b,
         wallet_overlap: row.wallet_overlap,
         shared_wallets: row.shared_wallets,
-        price_corr: corr?.price_corr ?? null,
-        corr_samples: corr?.corr_samples ?? null,
+        price_corr: corr.price_corr,
+        corr_samples: corr.corr_samples,
         combined_weight: Math.round(combined * 1000) / 1000,
         updated_at: now,
       });

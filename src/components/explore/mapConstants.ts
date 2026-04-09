@@ -5,7 +5,6 @@ export const CATEGORY_COLORS: Record<Category, string> = {
   crypto: '#A855F7',
   economics: '#F59E0B',
   geopolitics: '#EF4444',
-  sports: '#10B981',
   culture: '#EC4899',
 };
 
@@ -14,7 +13,6 @@ export const CATEGORY_LABELS: Record<Category, string> = {
   crypto: 'Crypto',
   economics: 'Economics',
   geopolitics: 'Geopolitics',
-  sports: 'Sports',
   culture: 'Culture',
 };
 
@@ -23,7 +21,6 @@ export const ALL_CATEGORIES: Category[] = [
   'crypto',
   'economics',
   'geopolitics',
-  'sports',
   'culture',
 ];
 
@@ -91,12 +88,11 @@ export const WATCHLIST_MARKER_SIZE = 7;
 
 /** Hexagonal cluster target positions (fraction of canvas, centered at 0.5) */
 export const CLUSTER_POSITIONS: Record<Category, { x: number; y: number }> = {
-  politics: { x: 0.18, y: 0.18 },
-  crypto: { x: 0.82, y: 0.18 },
+  politics: { x: 0.22, y: 0.22 },
+  crypto: { x: 0.78, y: 0.22 },
   economics: { x: 0.5, y: 0.5 },
-  geopolitics: { x: 0.15, y: 0.82 },
-  sports: { x: 0.85, y: 0.82 },
-  culture: { x: 0.92, y: 0.48 },
+  geopolitics: { x: 0.22, y: 0.78 },
+  culture: { x: 0.78, y: 0.78 },
 };
 
 export function computeRadius(totalVolume: number): number {
