@@ -122,33 +122,6 @@ const MARKET_QUESTIONS: Record<Category, string[]> = {
     'Will a Middle East peace summit occur?',
     'Will the US-China trade war de-escalate?',
   ],
-  sports: [
-    'Will the Lakers win the NBA Championship?',
-    'Will Ohtani win MVP again?',
-    'Will Manchester City win the Premier League?',
-    'Will the US win the most Olympic golds?',
-    'Will a triple crown winner emerge in 2026?',
-    'Will the Chiefs three-peat the Super Bowl?',
-    'Will Messi retire in 2026?',
-    'Will the FIFA World Cup 2026 set viewership records?',
-    'Will a sub-2hr marathon be run officially?',
-    'Will LeBron James retire?',
-    'Will the Yankees win the World Series?',
-    'Will Djokovic win another Grand Slam?',
-    'Will F1 have a new champion in 2026?',
-    'Will the Olympics stay on budget?',
-    'Will a new NFL passing record be set?',
-    'Will PSG win the Champions League?',
-    'Will the NHL expand to a new city?',
-    'Will Tiger Woods make a major cut?',
-    'Will esports viewership surpass the NBA Finals?',
-    'Will the Ryder Cup be held without controversy?',
-    'Will a woman break a men\'s sports record?',
-    'Will the Super Bowl be the most-watched US event?',
-    'Will college athletes form a union?',
-    'Will a combat sports mega-fight gross $1B?',
-    'Will the 2026 World Cup final be played in NYC?',
-  ],
   culture: [
     'Will an AI-generated film win an Oscar?',
     'Will Taylor Swift announce a retirement?',
@@ -180,7 +153,7 @@ const MARKET_QUESTIONS: Record<Category, string[]> = {
 
 function generateNodes(): MapNode[] {
   const nodes: MapNode[] = [];
-  const categories: Category[] = ['politics', 'crypto', 'economics', 'geopolitics', 'sports', 'culture'];
+  const categories: Category[] = ['politics', 'crypto', 'economics', 'geopolitics', 'culture'];
 
   for (const cat of categories) {
     const questions = MARKET_QUESTIONS[cat];

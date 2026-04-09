@@ -3,7 +3,6 @@ export type Category =
   | 'crypto'
   | 'economics'
   | 'geopolitics'
-  | 'sports'
   | 'culture';
 
 export interface MapNode {

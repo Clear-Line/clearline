@@ -64,7 +64,7 @@ export async function GET() {
       ) c ON c.market_id = m.condition_id AND c.rn = 1
       WHERE m.is_active = true
         AND m.is_resolved = false
-        AND m.category IN ('politics', 'crypto', 'economics', 'geopolitics', 'sports', 'culture')
+        AND m.category IN ('politics', 'crypto', 'economics', 'geopolitics', 'culture')
         AND s.volume_24h > 0
         AND s.yes_price > 0.01 AND s.yes_price < 0.99
       ORDER BY s.volume_24h DESC
@@ -72,7 +72,7 @@ export async function GET() {
     `),
     bq.from('market_edges')
       .select('market_a, market_b, wallet_overlap, shared_wallets, price_corr, corr_samples, combined_weight')
-      .gt('combined_weight', 0.03),
+      .gt('combined_weight', 0.15),
   ]);
 
   if (nodesResult.error) {
