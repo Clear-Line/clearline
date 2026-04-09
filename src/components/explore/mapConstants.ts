@@ -42,12 +42,25 @@ export const PHYSICS = {
 };
 
 export const RENDER = {
-  minNodeRadius: 6,
-  maxNodeRadius: 50,
+  minNodeRadius: 5,
+  maxNodeRadius: 90,
   nodeGlowMultiplier: 2.5,
   nodeFillAlpha: 0.88,
   nodeGlowAlpha: 0.18,
   hoverGlowMultiplier: 3.5,
+  // Conviction-driven fill saturation. At 50/50 the fill is mostly neutral grey
+  // (mix = convictionMixFloor); at 0% or 100% it's the full category color
+  // (mix = convictionMixCeiling). "Decided vs contested" readable at a glance.
+  convictionMixFloor: 0.4,
+  convictionMixCeiling: 1.0,
+  neutralGrey: 90,
+  // Activity ring — encodes |change24h|. Markets that just moved get a thick
+  // bright ring; quiet markets get nothing. Drawn as the same shape primitive
+  // as the node body, inflated by activityRingGap.
+  activityRingMaxWidth: 3.5,
+  activityRingAlphaFloor: 0.15,
+  activityRingChangeAtMax: 0.08,
+  activityRingGap: 2,
   edgeIntraCategoryAlpha: 0.25,
   edgeCrossCategoryAlpha: 0.15,
   edgeHighlightAlpha: 0.6,
@@ -98,9 +111,38 @@ export const CLUSTER_POSITIONS: Record<Category, { x: number; y: number }> = {
   culture: { x: 0.82, y: 0.85 },
 };
 
+// ─── Per-category shape primitives ───
+// Each category renders as a distinct geometric form so the map breaks the
+// "every node is a circle" monotony. Shape is redundant with color (accessibility
+// win) and at zoomed-out scales each cluster has a recognizable silhouette.
+
+export type NodeShape = 'circle' | 'hexagon' | 'diamond' | 'triangle' | 'pentagon';
+
+export const CATEGORY_SHAPES: Record<Category, NodeShape> = {
+  politics: 'circle',
+  crypto: 'hexagon',
+  economics: 'diamond',
+  geopolitics: 'triangle',
+  culture: 'pentagon',
+};
+
+// Multiply node.radius by this when drawing a polygon so the polygon's area
+// equals the equivalent circle's area (π·r²). Keeps cross-category size
+// comparisons honest — a triangle with the same "radius" as a circle would
+// otherwise have ~36% less area and look smaller than its volume warrants.
+export const SHAPE_AREA_SCALE: Record<NodeShape, number> = {
+  circle: 1.0,
+  hexagon: 1.099, // sqrt(π / ((6/2)·sin(60°)))
+  diamond: 1.253, // sqrt(π / 2)
+  pentagon: 1.149, // sqrt(π / ((5/2)·sin(72°)))
+  triangle: 1.555, // sqrt(π / ((3/2)·sin(120°)))
+};
+
+// Sqrt-family scale: a node with 4× the volume looks 2× as wide. Anchored so
+// $2K ≈ 5px and $50M ≈ 90px (capped). The previous log scale compressed the
+// $500K vs $50M difference into nothing — Iran-tier markets now visibly dominate.
 export function computeRadius(totalVolume: number): number {
-  return Math.max(
-    RENDER.minNodeRadius,
-    Math.min(RENDER.maxNodeRadius, 5.5 * Math.log2(totalVolume / 2000 + 1)),
-  );
+  const v = Math.max(0, totalVolume);
+  const r = 4 + 0.024 * Math.sqrt(v);
+  return Math.max(RENDER.minNodeRadius, Math.min(RENDER.maxNodeRadius, r));
 }
