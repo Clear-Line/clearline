@@ -2,6 +2,8 @@ import { useCallback, useRef } from 'react';
 import type { MapNode, MapEdge, Category, MapViewState } from './mapTypes';
 import {
   CATEGORY_COLORS,
+  CATEGORY_SHAPES,
+  SHAPE_AREA_SCALE,
   RENDER,
   HELD_RING_COLOR,
   HELD_RING_WIDTH_MIN,
@@ -13,6 +15,47 @@ import {
 function hexToRgb(hex: string): [number, number, number] {
   const n = parseInt(hex.slice(1), 16);
   return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+
+/**
+ * Trace a category-specific shape on the canvas around (cx, cy) with an
+ * area-equivalent radius. Caller is responsible for fill/stroke after.
+ *
+ * The polygon's bounding radius is scaled up by SHAPE_AREA_SCALE so that
+ * a triangle and a circle with the same `r` argument cover the same area —
+ * keeps cross-category size comparisons honest.
+ */
+function drawCategoryShape(
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  r: number,
+  category: Category,
+) {
+  const shape = CATEGORY_SHAPES[category];
+  const R = r * SHAPE_AREA_SCALE[shape];
+  ctx.beginPath();
+  if (shape === 'circle') {
+    ctx.arc(cx, cy, R, 0, Math.PI * 2);
+    return;
+  }
+  const sides = shape === 'triangle' ? 3
+              : shape === 'diamond' ? 4
+              : shape === 'pentagon' ? 5
+              : 6; // hexagon
+  // rotate so triangles/pentagons point up, diamonds sit on a vertex,
+  // hexagons are flat-top
+  const rot = shape === 'hexagon' ? 0
+            : shape === 'diamond' ? Math.PI / 4
+            : -Math.PI / 2;
+  for (let i = 0; i < sides; i++) {
+    const a = rot + (i * 2 * Math.PI) / sides;
+    const px = cx + Math.cos(a) * R;
+    const py = cy + Math.sin(a) * R;
+    if (i === 0) ctx.moveTo(px, py);
+    else ctx.lineTo(px, py);
+  }
+  ctx.closePath();
 }
 
 interface RendererOpts {
@@ -162,13 +205,47 @@ export function useMapRenderer() {
           ctx.fill();
         }
 
-        // Fill circle
-        ctx.beginPath();
-        ctx.arc(node.x, node.y, radius, 0, Math.PI * 2);
-        ctx.fillStyle = `rgba(${r},${g},${b},${baseAlpha})`;
+        // Conviction-driven fill: at 50/50 the node is mostly neutral grey;
+        // at 0% or 100% it's the full category color. "Decided vs contested"
+        // is readable at a glance without text.
+        const conviction = Math.min(1, Math.abs(node.probability - 0.5) * 2);
+        const mix = RENDER.convictionMixFloor +
+          (RENDER.convictionMixCeiling - RENDER.convictionMixFloor) * conviction;
+        const NEUTRAL = RENDER.neutralGrey;
+        const fr = Math.round(r * mix + NEUTRAL * (1 - mix));
+        const fg = Math.round(g * mix + NEUTRAL * (1 - mix));
+        const fb = Math.round(b * mix + NEUTRAL * (1 - mix));
+
+        // Fill body — category-specific shape primitive
+        drawCategoryShape(ctx, node.x, node.y, radius, node.category);
+        ctx.fillStyle = `rgba(${fr},${fg},${fb},${baseAlpha})`;
         ctx.fill();
 
-        // Selected ring
+        // Activity ring — encodes |change24h|. Hot markets get a thick bright
+        // ring; quiet markets get nothing. Drawn as the same shape, inflated
+        // by activityRingGap, so it reads as part of the node not as overlay.
+        const movement = Math.min(
+          1,
+          Math.abs(node.change24h) / RENDER.activityRingChangeAtMax,
+        );
+        if (movement > 0.05 && active && baseAlpha > 0.15) {
+          const ringW = RENDER.activityRingMaxWidth * movement;
+          const ringA =
+            RENDER.activityRingAlphaFloor +
+            (1 - RENDER.activityRingAlphaFloor) * movement;
+          drawCategoryShape(
+            ctx,
+            node.x,
+            node.y,
+            radius + RENDER.activityRingGap,
+            node.category,
+          );
+          ctx.strokeStyle = `rgba(${r},${g},${b},${ringA * baseAlpha})`;
+          ctx.lineWidth = ringW / viewState.scale;
+          ctx.stroke();
+        }
+
+        // Selected ring (always a circle — reads as UI overlay, not body)
         if (isSelected) {
           ctx.beginPath();
           ctx.arc(node.x, node.y, radius + 3, 0, Math.PI * 2);
