@@ -44,6 +44,8 @@ interface MarketEdge {
 // ─── Constants ───
 
 const MIN_SHARED_WALLETS = 4;
+const MIN_STRONG_WALLETS = 8;        // wallet-only edges qualify above this — saves crypto / sparse-corr categories
+const MIN_STRONG_WALLET_OVERLAP = 0.05; // Jaccard floor on the wallet-only path — kills chance overlaps in popular markets
 const MIN_CORR_SAMPLES = 10;
 const MIN_COMBINED_WEIGHT = 0.15;
 const WALLET_WEIGHT = 0.4;
@@ -236,18 +238,30 @@ export async function computeEdges(): Promise<{
   const edges: MarketEdge[] = [];
   const seenPairs = new Set<string>();
 
-  // Start with all overlap pairs
+  // Start with all overlap pairs.
+  // Two qualifying paths:
+  //   (a) Both signals present — original backbone (good for politics/economics)
+  //   (b) Strong wallet-only — saves crypto and other categories where Pearson
+  //       correlation rarely qualifies because prices are bimodal/sticky
   for (const row of overlapRows) {
     const key = `${row.market_a}|${row.market_b}`;
     seenPairs.add(key);
 
     const corr = corrMap.get(key);
-    // Require both signals — drop wallet-only edges (chance overlaps with no price relationship).
-    if (!corr) continue;
-
     const walletScore = row.wallet_overlap;
-    const corrScore = Math.abs(corr.price_corr);
-    const combined = WALLET_WEIGHT * walletScore + CORRELATION_WEIGHT * corrScore;
+    const corrScore = corr ? Math.abs(corr.price_corr) : 0;
+
+    const hasBothSignals = !!corr;
+    const hasStrongWallet =
+      row.shared_wallets >= MIN_STRONG_WALLETS && walletScore >= MIN_STRONG_WALLET_OVERLAP;
+
+    if (!hasBothSignals && !hasStrongWallet) continue;
+
+    // When both signals are present, blend them. When wallet-only, use a wallet-derived
+    // weight that's guaranteed to clear MIN_COMBINED_WEIGHT so the edge actually ships.
+    const combined = hasBothSignals
+      ? WALLET_WEIGHT * walletScore + CORRELATION_WEIGHT * corrScore
+      : Math.max(MIN_COMBINED_WEIGHT, walletScore * 0.8);
 
     if (combined >= MIN_COMBINED_WEIGHT) {
       edges.push({
@@ -255,8 +269,8 @@ export async function computeEdges(): Promise<{
         market_b: row.market_b,
         wallet_overlap: row.wallet_overlap,
         shared_wallets: row.shared_wallets,
-        price_corr: corr.price_corr,
-        corr_samples: corr.corr_samples,
+        price_corr: corr?.price_corr ?? null,
+        corr_samples: corr?.corr_samples ?? null,
         combined_weight: Math.round(combined * 1000) / 1000,
         updated_at: now,
       });
