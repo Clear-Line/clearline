@@ -71,6 +71,15 @@ interface MarketDetail {
   smartSellVolume: number;
   smartWalletCount: number;
   topSmartWallets: { address: string; accuracy: number; side: string; volume: number }[];
+  // Insider signal (replaces smart-wallet historical accuracy)
+  insiderCount: number;
+  topInsiders: {
+    address: string;
+    side: 'BUY' | 'SELL';
+    position: number;
+    concentration: number;
+    marketsTraded: number;
+  }[];
 }
 
 // ─── Formatters ───
@@ -244,47 +253,53 @@ export default function MarketDetailPage() {
           </div>
         </div>
 
-        {/* Smart Money Panel */}
-        {market.smartWalletCount > 0 && (
+        {/* Insider Wallets Panel — behavioral, replaces historical smart-money */}
+        {market.insiderCount > 0 && (
           <div className="bg-[#0d1117] border border-[rgba(255,255,255,0.06)] rounded-lg p-4 mb-3">
-            <SectionHeader icon={Activity} title="Smart Money Activity" />
+            <SectionHeader icon={Activity} title="Insider Wallet Activity" />
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
               <div>
-                <div className="text-[9px] text-[#64748b] tracking-[0.15em] uppercase mb-1">Smart Wallets</div>
-                <div className="text-2xl font-bold text-white font-mono">{market.smartWalletCount}</div>
+                <div className="text-[9px] text-[#64748b] tracking-[0.15em] uppercase mb-1">Insider Wallets</div>
+                <div className="text-2xl font-bold text-white font-mono">{market.insiderCount}</div>
               </div>
               <div>
-                <div className="text-[9px] text-[#64748b] tracking-[0.15em] uppercase mb-1">Buy Volume</div>
-                <div className="text-2xl font-bold text-[#10b981] font-mono">{formatVol(market.smartBuyVolume)}</div>
+                <div className="text-[9px] text-[#64748b] tracking-[0.15em] uppercase mb-1">Top Position</div>
+                <div className="text-2xl font-bold text-white font-mono">
+                  {market.topInsiders[0] ? formatVol(market.topInsiders[0].position) : '—'}
+                </div>
               </div>
               <div>
-                <div className="text-[9px] text-[#64748b] tracking-[0.15em] uppercase mb-1">Sell Volume</div>
-                <div className="text-2xl font-bold text-[#ef4444] font-mono">{formatVol(market.smartSellVolume)}</div>
+                <div className="text-[9px] text-[#64748b] tracking-[0.15em] uppercase mb-1">Top Concentration</div>
+                <div className="text-2xl font-bold text-[#f59e0b] font-mono">
+                  {market.topInsiders[0] ? `${market.topInsiders[0].concentration}%` : '—'}
+                </div>
               </div>
               <div>
-                <div className="text-[9px] text-[#64748b] tracking-[0.15em] uppercase mb-1">Confidence</div>
-                <div className="text-2xl font-bold text-white font-mono">{Math.round(market.signalConfidence * 100)}%</div>
+                <div className="text-[9px] text-[#64748b] tracking-[0.15em] uppercase mb-1">Markets Traded</div>
+                <div className="text-2xl font-bold text-white font-mono">
+                  {market.topInsiders[0] ? market.topInsiders[0].marketsTraded : '—'}
+                </div>
               </div>
             </div>
 
-            {/* Top Smart Wallets Table */}
-            {market.topSmartWallets.length > 0 && (
+            {/* Top Insider Wallets Table */}
+            {market.topInsiders.length > 0 && (
               <div>
                 <div className="flex items-center gap-2 text-[9px] text-[#475569] tracking-wider uppercase px-1 pb-2 border-b border-[rgba(255,255,255,0.04)]">
-                  <span className="w-24">Wallet</span>
-                  <span className="w-14 text-right">Accuracy</span>
-                  <span className="flex-1 text-right">Volume</span>
+                  <span className="w-28">Wallet</span>
+                  <span className="w-20 text-right">Position</span>
+                  <span className="flex-1 text-right">Concentration</span>
+                  <span className="w-20 text-right">Markets</span>
                   <span className="w-16 text-right">Side</span>
                 </div>
-                {market.topSmartWallets.map((w, i) => (
+                {market.topInsiders.map((w, i) => (
                   <div key={i} className="flex items-center gap-2 text-[11px] font-mono px-1 py-1.5 border-b border-[rgba(255,255,255,0.02)] hover:bg-[rgba(255,255,255,0.02)]">
-                    <span className="text-[#94a3b8] w-24 truncate">{w.address}</span>
-                    <span className={`w-14 text-right ${w.accuracy >= 70 ? "text-[#10b981]" : "text-[#f59e0b]"}`}>
-                      {w.accuracy}%
-                    </span>
-                    <span className="text-white flex-1 text-right">{formatVol(w.volume)}</span>
-                    <span className={`w-16 text-right font-bold ${w.side === "BUY" || w.side === "buy" ? "text-[#10b981]" : "text-[#ef4444]"}`}>
-                      {w.side === "BUY" || w.side === "buy" ? (
+                    <span className="text-[#94a3b8] w-28 truncate">{w.address}</span>
+                    <span className="text-white w-20 text-right">{formatVol(w.position)}</span>
+                    <span className="text-[#f59e0b] flex-1 text-right">{w.concentration}% of wallet</span>
+                    <span className="text-[#94a3b8] w-20 text-right">{w.marketsTraded} mkts</span>
+                    <span className={`w-16 text-right font-bold ${w.side === "BUY" ? "text-[#10b981]" : "text-[#ef4444]"}`}>
+                      {w.side === "BUY" ? (
                         <span className="flex items-center justify-end gap-0.5"><ArrowUpRight className="h-3 w-3" />BUY</span>
                       ) : (
                         <span className="flex items-center justify-end gap-0.5"><ArrowDownRight className="h-3 w-3" />SELL</span>

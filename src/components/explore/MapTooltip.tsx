@@ -75,7 +75,7 @@ export function MapTooltip({ hovered }: MapTooltipProps) {
           Vol {formatVolume(node.totalVolume)}
         </span>
         <span className="text-[10px] font-mono text-[#475569]">
-          {node.smartWalletCount} wallets
+          {node.insiderCount} insiders
         </span>
       </div>
     </div>

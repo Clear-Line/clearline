@@ -108,12 +108,20 @@ export async function backfillLegacyWallets(): Promise<{ reset: number; errors: 
   }
 
   // Now re-score these wallets from already-resolved markets
-  // by finding their positions in wallet_trade_positions for resolved markets
-  const { data: resolvedMarkets, error: rmErr } = await bq
-    .from('markets')
-    .select('condition_id, resolution_outcome')
-    .eq('is_resolved', true)
-    .not('resolution_outcome', 'is', null);
+  // by finding their positions in wallet_trade_positions for resolved markets.
+  // Sports markets are excluded — see the sports-filter rationale in
+  // computeAccuracy() below. The bq query builder doesn't support `!=` so we
+  // drop into rawQuery for this one.
+  const { data: resolvedMarkets, error: rmErr } = await bq.rawQuery<{
+    condition_id: string;
+    resolution_outcome: string;
+  }>(`
+    SELECT condition_id, resolution_outcome
+    FROM \`${dataset}.markets\`
+    WHERE is_resolved = TRUE
+      AND resolution_outcome IS NOT NULL
+      AND (category IS NULL OR category != 'sports')
+  `);
 
   if (rmErr || !resolvedMarkets || resolvedMarkets.length === 0) {
     console.log('[Accuracy] No resolved markets to backfill from');
@@ -341,13 +349,44 @@ export async function computeAccuracy(): Promise<{
     return { resolved, walletsUpdated: 0, errors };
   }
 
+  // ── Sports filter: skip scoring for sports markets ──
+  // Sports markets resolve fast and frequently — without this filter, sports
+  // bettors accumulate ≥3-resolution sample sizes in days while geopolitics /
+  // economics specialists take months. The smart-money pool then becomes
+  // dominated by NBA/NFL bettors whose accuracy is meaningless in unrelated
+  // categories. We still mark sports markets as resolved (Step 3 above) — we
+  // just don't increment wins/losses from them.
+  const idsToCheck = newlyResolved.map((m) => m.conditionId);
+  const sportsIds = new Set<string>();
+  const CAT_CHUNK = 1000;
+  for (let i = 0; i < idsToCheck.length; i += CAT_CHUNK) {
+    const chunk = idsToCheck.slice(i, i + CAT_CHUNK);
+    const { data: cats, error: catErr } = await bq
+      .from('markets')
+      .select('condition_id, category')
+      .in('condition_id', chunk);
+    if (catErr) {
+      errors.push(`Sports filter category lookup batch ${i}: ${catErr.message}`);
+      continue;
+    }
+    for (const m of cats ?? []) {
+      if (m.category === 'sports') sportsIds.add(m.condition_id);
+    }
+  }
+  const newlyResolvedScorable = newlyResolved.filter((m) => !sportsIds.has(m.conditionId));
+  console.log(`[Accuracy] Excluding ${sportsIds.size} sports markets from scoring (${newlyResolvedScorable.length} scorable)`);
+
+  if (newlyResolvedScorable.length === 0) {
+    return { resolved, walletsUpdated: 0, errors };
+  }
+
   // Collect per-wallet results across all newly resolved markets
   const walletDeltas = new Map<string, { winDelta: number; lossDelta: number; pnlDelta: number }>();
   let localHits = 0;
   let apiFallbacks = 0;
 
   // ── 4a: One batched query for all newly-resolved markets ──
-  const newlyResolvedIds = newlyResolved.map((m) => m.conditionId);
+  const newlyResolvedIds = newlyResolvedScorable.map((m) => m.conditionId);
   const positionsByMarket = new Map<string, Array<{
     wallet_address: string;
     outcome: string;
@@ -393,7 +432,7 @@ export async function computeAccuracy(): Promise<{
   // ── 4b: Score each market (in memory now — no per-market BQ calls) ──
   const marketsWithLocalPositions: string[] = [];
 
-  for (const market of newlyResolved) {
+  for (const market of newlyResolvedScorable) {
     try {
       const localPositions = positionsByMarket.get(market.conditionId) ?? [];
 

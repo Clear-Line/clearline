@@ -25,6 +25,14 @@ interface SmartMoneyAlert {
   smart_buy_volume: number;
   smart_sell_volume: number;
   smart_wallet_count: number;
+  insider_count: number;
+  top_insiders: {
+    address: string;
+    side: 'BUY' | 'SELL';
+    position: number;
+    concentration: number;
+    marketsTraded: number;
+  }[];
   current_price: number;
   price_change: number;
   volume_24h: number;
@@ -121,8 +129,8 @@ function AlertCard({ alert }: { alert: SmartMoneyAlert }) {
             <span className="text-[#64748b] text-[9px] tracking-[0.1em] uppercase mt-0.5">24h Change</span>
           </div>
           <div className="flex flex-col items-center px-3 py-1.5">
-            <span className="text-white font-bold font-mono text-sm">{alert.smart_wallet_count}</span>
-            <span className="text-[#64748b] text-[9px] tracking-[0.1em] uppercase mt-0.5">Smart Wallets</span>
+            <span className="text-white font-bold font-mono text-sm">{alert.insider_count}</span>
+            <span className="text-[#64748b] text-[9px] tracking-[0.1em] uppercase mt-0.5">Insider Wallets</span>
           </div>
           <div className="flex flex-col items-center px-3 py-1.5">
             <span className="text-[#10b981] font-bold font-mono text-sm">{formatVolume(alert.smart_buy_volume)}</span>

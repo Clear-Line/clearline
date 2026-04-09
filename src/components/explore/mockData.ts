@@ -178,6 +178,7 @@ function generateNodes(): MapNode[] {
         liquidity: Math.round(totalVolume * (rand() * 0.3 + 0.05)),
         change24h: Math.round(change * 10000) / 10000,
         smartWalletCount: Math.floor(rand() * 40 + 2),
+        insiderCount: Math.floor(rand() * 6),
         signal: rand() > 0.6 ? 'BUY' : rand() > 0.3 ? 'NEUTRAL' : 'SELL',
         endDate: new Date(Date.now() + rand() * 180 * 86400000).toISOString(),
         radius: computeRadius(totalVolume),

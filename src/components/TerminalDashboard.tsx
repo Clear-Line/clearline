@@ -92,6 +92,8 @@ export function TerminalDashboard() {
             smartSellVolume: (m.smartSellVolume as number) ?? 0,
             smartWalletCount: (m.smartWalletCount as number) ?? 0,
             topSmartWallets: (m.topSmartWallets as Market["topSmartWallets"]) ?? [],
+            insiderCount: (m.insiderCount as number) ?? 0,
+            topInsiders: (m.topInsiders as Market["topInsiders"]) ?? [],
           }));
           setMarkets(liveMarkets);
           setIsLive(true);
@@ -126,7 +128,7 @@ export function TerminalDashboard() {
           const aHasSignal = a.signal !== "NEUTRAL" ? 1 : 0;
           const bHasSignal = b.signal !== "NEUTRAL" ? 1 : 0;
           if (bHasSignal !== aHasSignal) return bHasSignal - aHasSignal;
-          return b.smartWalletCount - a.smartWalletCount;
+          return b.insiderCount - a.insiderCount;
         });
         break;
       case "highest-odds":

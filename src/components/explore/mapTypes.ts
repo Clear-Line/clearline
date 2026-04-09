@@ -16,6 +16,7 @@ export interface MapNode {
   liquidity: number;
   change24h: number;
   smartWalletCount: number;
+  insiderCount: number;
   signal: 'BUY' | 'SELL' | 'NEUTRAL';
   endDate: string | null;
   // d3-force mutable
