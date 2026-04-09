@@ -210,6 +210,23 @@ export async function ensureTables(): Promise<void> {
 
   console.log('[EnsureTables] Market edges table ready');
 
+  // ─── Market insiders (per-market behavioral insider count, written by insider-detector) ───
+  // One row per market, MERGE'd by insider-detector every few hours. Read paths
+  // LEFT JOIN this table; we keep it separate from market_cards because cards are
+  // append-only and would clobber freshly-computed insider data with NULLs on
+  // every smart-money-scanner run.
+  await bq.rawQuery(`
+    CREATE TABLE IF NOT EXISTS \`${dataset}.market_insiders\` (
+      market_id STRING NOT NULL,
+      insider_count INT64 NOT NULL,
+      top_insiders STRING,
+      computed_at TIMESTAMP NOT NULL
+    )
+    CLUSTER BY market_id
+  `);
+
+  console.log('[EnsureTables] Market insiders table ready');
+
   // ─── Case studies (permanent, frozen at creation — no purge) ───
   await bq.rawQuery(`
     CREATE TABLE IF NOT EXISTS \`${dataset}.case_studies\` (

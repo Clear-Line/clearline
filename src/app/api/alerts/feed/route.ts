@@ -15,11 +15,26 @@ export async function GET(req: NextRequest) {
 
   const start = Date.now();
 
-  const { data, error } = await bq
-    .from('market_cards')
-    .select('market_id, title, category, signal, signal_confidence, smart_buy_volume, smart_sell_volume, smart_wallet_count, top_smart_wallets, current_price, price_change, volume_24h, volume_divergence, spread_ratio, depth_ratio, liquidity_vacuum, computed_at')
-    .order('signal_confidence', { ascending: false })
-    .limit(50);
+  const projectId = process.env.GCP_PROJECT_ID!;
+  const ds = process.env.BQ_DATASET || 'polymarket';
+  const fq = (table: string) => `\`${projectId}.${ds}.${table}\``;
+
+  // LEFT JOIN market_insiders so each alert can surface the new behavioral
+  // insider count alongside the legacy smart-money signal. The join is on a
+  // tiny one-row-per-market table so it adds essentially no scan bytes.
+  const { data, error } = await bq.rawQuery<Record<string, unknown>>(`
+    SELECT
+      c.market_id, c.title, c.category, c.signal, c.signal_confidence,
+      c.smart_buy_volume, c.smart_sell_volume, c.smart_wallet_count, c.top_smart_wallets,
+      c.current_price, c.price_change, c.volume_24h,
+      c.volume_divergence, c.spread_ratio, c.depth_ratio, c.liquidity_vacuum,
+      c.computed_at,
+      i.insider_count, i.top_insiders
+    FROM ${fq('market_cards')} c
+    LEFT JOIN ${fq('market_insiders')} i ON i.market_id = c.market_id
+    ORDER BY c.signal_confidence DESC
+    LIMIT 50
+  `);
 
   if (error) {
     console.error('[/api/alerts/feed] BigQuery error:', error.message);
@@ -32,6 +47,11 @@ export async function GET(req: NextRequest) {
       let topWallets: unknown[] = [];
       try {
         if (row.top_smart_wallets) topWallets = JSON.parse(row.top_smart_wallets as string);
+      } catch { /* ignore */ }
+
+      let topInsiders: unknown[] = [];
+      try {
+        if (row.top_insiders) topInsiders = JSON.parse(row.top_insiders as string);
       } catch { /* ignore */ }
 
       const volumeDivergence = Number(row.volume_divergence) || null;
@@ -57,6 +77,8 @@ export async function GET(req: NextRequest) {
         smart_buy_volume: Number(row.smart_buy_volume) || 0,
         smart_sell_volume: Number(row.smart_sell_volume) || 0,
         smart_wallet_count: Number(row.smart_wallet_count) || 0,
+        insider_count: Number(row.insider_count) || 0,
+        top_insiders: topInsiders,
         current_price: Number(row.current_price) || 0,
         price_change: Number(row.price_change) || 0,
         volume_24h: Number(row.volume_24h) || 0,

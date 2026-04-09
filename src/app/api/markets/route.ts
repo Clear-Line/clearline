@@ -21,11 +21,20 @@ export async function GET(request: Request) {
     ? Math.max(1, Math.min(MAX_LIMIT, Math.floor(rawLimit)))
     : DEFAULT_LIMIT;
 
-  const { data, error } = await bq
-    .from('market_cards')
-    .select('*')
-    .order('volume_24h', { ascending: false })
-    .limit(limit);
+  const projectId = process.env.GCP_PROJECT_ID!;
+  const ds = process.env.BQ_DATASET || 'polymarket';
+  const fq = (table: string) => `\`${projectId}.${ds}.${table}\``;
+
+  // LEFT JOIN market_insiders to surface the new behavioral signal alongside
+  // the existing card payload. market_insiders is a tiny one-row-per-market
+  // table — the join adds essentially zero scan bytes.
+  const { data, error } = await bq.rawQuery<Record<string, unknown>>(`
+    SELECT c.*, i.insider_count, i.top_insiders
+    FROM ${fq('market_cards')} c
+    LEFT JOIN ${fq('market_insiders')} i ON i.market_id = c.market_id
+    ORDER BY c.volume_24h DESC
+    LIMIT ${limit}
+  `);
 
   if (error) {
     console.error('[/api/markets] BigQuery error:', error.message);
@@ -53,10 +62,16 @@ export async function GET(request: Request) {
       : category === 'crypto' ? 'crypto'
       : 'economics';
 
-    // Parse top smart wallets
+    // Parse top smart wallets (legacy historical-accuracy signal)
     let topSmartWallets: unknown[] = [];
     try {
       if (row.top_smart_wallets) topSmartWallets = JSON.parse(row.top_smart_wallets as string);
+    } catch { /* ignore */ }
+
+    // Parse top insiders (new behavioral signal from market_insiders join)
+    let topInsiders: unknown[] = [];
+    try {
+      if (row.top_insiders) topInsiders = JSON.parse(row.top_insiders as string);
     } catch { /* ignore */ }
 
     return {
@@ -80,6 +95,8 @@ export async function GET(request: Request) {
       smartSellVolume: Number(row.smart_sell_volume) || 0,
       smartWalletCount: Number(row.smart_wallet_count) || 0,
       topSmartWallets,
+      insiderCount: Number(row.insider_count) || 0,
+      topInsiders,
     };
   }).filter((m: { category: string }) => m.category !== 'sports');
 
