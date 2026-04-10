@@ -21,6 +21,8 @@ interface WalletOverlapRow {
   market_b: string;
   shared_wallets: number;
   wallet_overlap: number;
+  category_a: string;
+  category_b: string;
 }
 
 interface PriceCorrelationRow {
@@ -46,6 +48,8 @@ interface MarketEdge {
 const MIN_SHARED_WALLETS = 4;
 const MIN_STRONG_WALLETS = 8;        // wallet-only edges qualify above this — saves crypto / sparse-corr categories
 const MIN_STRONG_WALLET_OVERLAP = 0.05; // Jaccard floor on the wallet-only path — kills chance overlaps in popular markets
+const MIN_STRONG_WALLETS_CRYPTO = 4;        // crypto wallets are fragmented — relaxed vs the general 8
+const MIN_STRONG_WALLET_OVERLAP_CRYPTO = 0.03; // lower Jaccard floor for crypto-only pairs
 const MIN_CORR_SAMPLES = 10;
 const MIN_COMBINED_WEIGHT = 0.15;
 const WALLET_WEIGHT = 0.4;
@@ -82,7 +86,7 @@ export async function computeEdges(): Promise<{
       multi_wallet_count: number;
     }>(`
       WITH active_positions AS (
-        SELECT wtp.wallet_address, wtp.market_id
+        SELECT wtp.wallet_address, wtp.market_id, m.category
         FROM \`${dataset}.wallet_trade_positions\` wtp
         JOIN \`${dataset}.markets\` m
           ON m.condition_id = wtp.market_id
@@ -102,7 +106,7 @@ export async function computeEdges(): Promise<{
         SELECT COUNT(*) AS cnt FROM multi_wallets
       ),
       filtered AS (
-        SELECT ap.wallet_address, ap.market_id
+        SELECT ap.wallet_address, ap.market_id, ap.category
         FROM active_positions ap
         JOIN multi_wallets mw ON mw.wallet_address = ap.wallet_address
       ),
@@ -110,7 +114,9 @@ export async function computeEdges(): Promise<{
         SELECT
           a.market_id AS market_a,
           b.market_id AS market_b,
-          COUNT(DISTINCT a.wallet_address) AS shared_wallets
+          COUNT(DISTINCT a.wallet_address) AS shared_wallets,
+          ANY_VALUE(a.category) AS category_a,
+          ANY_VALUE(b.category) AS category_b
         FROM filtered a
         JOIN filtered b
           ON a.wallet_address = b.wallet_address
@@ -131,6 +137,8 @@ export async function computeEdges(): Promise<{
           pc.shared_wallets,
           (mwc_a.wallet_count + mwc_b.wallet_count - pc.shared_wallets)
         ) AS wallet_overlap,
+        pc.category_a,
+        pc.category_b,
         (SELECT cnt FROM market_count) AS active_market_count,
         (SELECT cnt FROM multi_wallet_count) AS multi_wallet_count
       FROM pair_counts pc
@@ -252,8 +260,11 @@ export async function computeEdges(): Promise<{
     const corrScore = corr ? Math.abs(corr.price_corr) : 0;
 
     const hasBothSignals = !!corr;
+    const isCryptoPair = row.category_a === 'crypto' && row.category_b === 'crypto';
+    const strongWalletThreshold = isCryptoPair ? MIN_STRONG_WALLETS_CRYPTO : MIN_STRONG_WALLETS;
+    const strongOverlapThreshold = isCryptoPair ? MIN_STRONG_WALLET_OVERLAP_CRYPTO : MIN_STRONG_WALLET_OVERLAP;
     const hasStrongWallet =
-      row.shared_wallets >= MIN_STRONG_WALLETS && walletScore >= MIN_STRONG_WALLET_OVERLAP;
+      row.shared_wallets >= strongWalletThreshold && walletScore >= strongOverlapThreshold;
 
     if (!hasBothSignals && !hasStrongWallet) continue;
 

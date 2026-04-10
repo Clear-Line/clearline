@@ -35,10 +35,13 @@ export const PHYSICS = {
   alphaMin: 0.001,
   velocityDecay: 0.35,
   reheatAlpha: 0.3,
-  clusterStrength: 0.18,
+  clusterStrength: 0.22,
   // Per-category centroid repulsion (custom force in useForceSimulation.ts).
   // d3 gives us cluster *attraction* but no cluster *repulsion* — this is the missing piece.
   categorySeparationStrength: 0.6,
+  // Cross-category edges pull ~3.6x weaker than intra-category — prevents
+  // politics/geopolitics from collapsing into one blob while still rendering.
+  crossCategoryLinkMultiplier: 0.06,
 };
 
 export const RENDER = {
@@ -102,13 +105,14 @@ export const HELD_RING_GAP = 4;
 export const WATCHLIST_MARKER_COLOR = '#FBBF24';
 export const WATCHLIST_MARKER_SIZE = 7;
 
-/** Hexagonal cluster target positions (fraction of canvas, centered at 0.5) */
+/** Cluster target positions (fraction of canvas). Politics upper-left,
+ *  geopolitics lower-right = maximum diagonal separation. See fix #7. */
 export const CLUSTER_POSITIONS: Record<Category, { x: number; y: number }> = {
-  politics: { x: 0.15, y: 0.18 },
-  crypto: { x: 0.85, y: 0.18 },
-  economics: { x: 0.50, y: 0.55 },
-  geopolitics: { x: 0.18, y: 0.85 },
-  culture: { x: 0.82, y: 0.85 },
+  politics:    { x: 0.15, y: 0.20 },
+  crypto:      { x: 0.85, y: 0.20 },
+  economics:   { x: 0.50, y: 0.50 },
+  geopolitics: { x: 0.85, y: 0.80 },
+  culture:     { x: 0.15, y: 0.80 },
 };
 
 // ─── Per-category shape primitives ───
