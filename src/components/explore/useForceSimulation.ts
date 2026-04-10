@@ -26,6 +26,7 @@ interface SimLink extends SimulationLinkDatum<MapNode> {
   source: string | MapNode;
   target: string | MapNode;
   weight: number;
+  crossCategory: boolean;
 }
 
 export function useForceSimulation({
@@ -43,11 +44,17 @@ export function useForceSimulation({
   useEffect(() => {
     if (width === 0 || height === 0) return;
 
-    const links: SimLink[] = edges.map((e) => ({
-      source: e.source,
-      target: e.target,
-      weight: e.weight,
-    }));
+    const nodeById = new Map(nodes.map((n) => [n.id, n]));
+    const links: SimLink[] = edges.map((e) => {
+      const src = nodeById.get(e.source);
+      const tgt = nodeById.get(e.target);
+      return {
+        source: e.source,
+        target: e.target,
+        weight: e.weight,
+        crossCategory: !!(src && tgt && src.category !== tgt.category),
+      };
+    });
 
     // Custom force: every tick, compute the centroid of each category and push
     // each node away from foreign centroids. This is the missing repulsion piece —
@@ -100,7 +107,13 @@ export function useForceSimulation({
         forceLink<MapNode, SimLink>(links)
           .id((d) => d.id)
           .distance(PHYSICS.linkDistance)
-          .strength((l) => (l as SimLink).weight * PHYSICS.linkStrengthMultiplier),
+          .strength((l) => {
+            const link = l as SimLink;
+            const mult = link.crossCategory
+              ? PHYSICS.crossCategoryLinkMultiplier
+              : PHYSICS.linkStrengthMultiplier;
+            return link.weight * mult;
+          }),
       )
       .force('center', forceCenter(width / 2, height / 2).strength(PHYSICS.centerStrength))
       .force(

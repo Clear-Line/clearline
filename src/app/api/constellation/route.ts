@@ -102,8 +102,31 @@ export async function GET() {
   // Only include edges where both endpoints are in the visible node set
   const nodeIds = new Set(nodes.map((n) => n.id));
 
-  const edges = (edgesResult.data ?? [])
-    .filter((e) => nodeIds.has(e.market_a) && nodeIds.has(e.market_b))
+  const rawEdges = (edgesResult.data ?? [])
+    .filter((e) => nodeIds.has(e.market_a) && nodeIds.has(e.market_b));
+
+  // Per-node edge cap — prevents any single node from becoming a hub that
+  // pulls clusters into a hairball. Each node keeps its top-K strongest edges;
+  // an edge survives if either endpoint kept it. See CLAUDE.md fix #7.
+  const MAX_EDGES_PER_NODE = 8;
+  const nodeAdj = new Map<string, EdgeRow[]>();
+  for (const e of rawEdges) {
+    for (const id of [e.market_a, e.market_b]) {
+      const list = nodeAdj.get(id) ?? [];
+      list.push(e);
+      nodeAdj.set(id, list);
+    }
+  }
+  const kept = new Set<string>();
+  for (const [, edgeList] of nodeAdj) {
+    edgeList.sort((a, b) => b.combined_weight - a.combined_weight);
+    for (const e of edgeList.slice(0, MAX_EDGES_PER_NODE)) {
+      kept.add(`${e.market_a}|${e.market_b}`);
+    }
+  }
+
+  const edges = rawEdges
+    .filter((e) => kept.has(`${e.market_a}|${e.market_b}`))
     .map((e) => ({
       source: e.market_a,
       target: e.market_b,
