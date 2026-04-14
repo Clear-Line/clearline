@@ -7,7 +7,10 @@
     "dev": "tsx watch src/worker.ts",
     "start": "tsx src/worker.ts",
     "build": "tsc",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
     "@google-cloud/bigquery": "^7.9.1",
@@ -20,8 +23,10 @@
     "@types/node": "^22.0.0",
     "@types/node-cron": "^3.0.11",
     "@types/ws": "^8.5.13",
+    "@vitest/coverage-v8": "^4.1.4",
     "tsx": "^4.19.0",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.4"
   },
   "engines": {
     "node": ">=20"
