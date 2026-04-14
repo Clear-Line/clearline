@@ -1,9 +1,9 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Loader2, Wallet } from 'lucide-react';
 import { useUser } from '@clerk/nextjs';
-import type { Category, MapNode, MapEdge, MapGraph, HoveredNode, MapViewState } from './mapTypes';
+import type { Category, MapNode, MapEdge, MapGraph, HoveredNode, MapViewState, OrbitBubble } from './mapTypes';
 import { ALL_CATEGORIES, computeRadius } from './mapConstants';
 import { MapCanvas } from './MapCanvas';
 import { MapTopBar } from './MapTopBar';
@@ -14,6 +14,7 @@ import { PortfolioHud } from './PortfolioHud';
 import { LinkWalletModal } from './LinkWalletModal';
 import { useOwnedPositions } from './useOwnedPositions';
 import { useWatchlist } from './useWatchlist';
+import { MarketWallet, layoutWalletOrbits } from './lib/wallets';
 
 // ─── API response types ───
 
@@ -124,6 +125,43 @@ export function ConstellationMap() {
   const { watchlistedSet, toggle: toggleWatchlist } = useWatchlist();
   const [walletModalOpen, setWalletModalOpen] = useState(false);
 
+  // ─── Wallets for the selected market (drives sidebar rows + orbit bubbles) ───
+  const [marketWallets, setMarketWallets] = useState<MarketWallet[]>([]);
+  const [walletsLoading, setWalletsLoading] = useState(false);
+
+  useEffect(() => {
+    if (!selectedNode) {
+      setMarketWallets([]);
+      setWalletsLoading(false);
+      return;
+    }
+    const controller = new AbortController();
+    setWalletsLoading(true);
+    setMarketWallets([]);
+    fetch(`/api/markets/${encodeURIComponent(selectedNode.id)}/wallets`, {
+      signal: controller.signal,
+    })
+      .then((r) => (r.ok ? r.json() : { wallets: [] }))
+      .then((j: { wallets?: MarketWallet[] }) => {
+        setMarketWallets(j.wallets ?? []);
+        setWalletsLoading(false);
+      })
+      .catch((err) => {
+        if (err?.name !== 'AbortError') setWalletsLoading(false);
+      });
+    return () => controller.abort();
+  }, [selectedNode]);
+
+  const orbitBubbles: OrbitBubble[] = useMemo(() => {
+    if (!selectedNode || selectedNode.x == null || selectedNode.y == null) return [];
+    if (marketWallets.length === 0) return [];
+    return layoutWalletOrbits({
+      parent: { x: selectedNode.x, y: selectedNode.y },
+      parentRadius: selectedNode.radius,
+      wallets: marketWallets,
+    });
+  }, [selectedNode, marketWallets]);
+
   const fetchData = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -225,6 +263,7 @@ export function ConstellationMap() {
         selectedNodeId={selectedNode?.id ?? null}
         heldMarketIds={heldSet}
         watchlistedMarketIds={watchlistedSet}
+        orbitBubbles={orbitBubbles}
       />
 
       <MapTopBar
@@ -249,6 +288,8 @@ export function ConstellationMap() {
         isWatchlisted={selectedNode ? watchlistedSet.has(selectedNode.id) : false}
         onToggleWatchlist={toggleWatchlist}
         canWatchlist={Boolean(isSignedIn)}
+        wallets={marketWallets}
+        walletsLoading={walletsLoading}
       />
 
       {hasLinkedWallets ? (

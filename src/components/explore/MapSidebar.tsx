@@ -5,6 +5,11 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { X, TrendingUp, TrendingDown, DollarSign, Clock, Droplets, Users, Star } from 'lucide-react';
 import type { MapNode, MapGraph, ConnectedMarket, UserPosition } from './mapTypes';
 import { CATEGORY_COLORS, CATEGORY_LABELS } from './mapConstants';
+import {
+  MarketWallet,
+  formatAccuracy,
+  formatMarketsTraded,
+} from './lib/wallets';
 
 interface MapSidebarProps {
   node: MapNode | null;
@@ -19,9 +24,12 @@ interface MapSidebarProps {
   onToggleWatchlist?: (marketId: string) => void;
   /** Hides the star button when the user is signed out or not subscribed. */
   canWatchlist?: boolean;
+  /** Wallets active in the selected market. Loaded by the parent. */
+  wallets: MarketWallet[];
+  walletsLoading: boolean;
 }
 
-type Tab = 'connected' | 'stats';
+type Tab = 'wallets' | 'connected' | 'stats';
 
 function formatVolume(v: number): string {
   if (v >= 1e6) return `$${(v / 1e6).toFixed(1)}M`;
@@ -76,8 +84,10 @@ export function MapSidebar({
   isWatchlisted,
   onToggleWatchlist,
   canWatchlist,
+  wallets,
+  walletsLoading,
 }: MapSidebarProps) {
-  const [tab, setTab] = useState<Tab>('connected');
+  const [tab, setTab] = useState<Tab>('wallets');
 
   const connected = useMemo(() => (node ? getConnected(node.id, graph) : []), [node, graph]);
 
@@ -170,7 +180,7 @@ export function MapSidebar({
           {/* Tabs */}
           <div className="px-5 pt-3.5 shrink-0">
             <div className="flex gap-0.5 bg-white/[0.03] rounded-lg p-0.5">
-              {(['connected', 'stats'] as Tab[]).map((t) => (
+              {(['wallets', 'connected', 'stats'] as Tab[]).map((t) => (
                 <button
                   key={t}
                   onClick={() => setTab(t)}
@@ -180,7 +190,7 @@ export function MapSidebar({
                       : 'text-[#475569] hover:text-[#64748b]'
                   }`}
                 >
-                  {t === 'connected' ? 'Connected' : 'Stats'}
+                  {t === 'wallets' ? 'Wallets' : t === 'connected' ? 'Connected' : 'Stats'}
                 </button>
               ))}
             </div>
@@ -188,6 +198,10 @@ export function MapSidebar({
 
           {/* Tab content */}
           <div className="px-5 pt-3 pb-5 flex-1 overflow-y-auto min-h-0">
+            {tab === 'wallets' && (
+              <WalletsTab wallets={wallets} loading={walletsLoading} />
+            )}
+
             {tab === 'connected' && (
               <div>
                 {connected.length === 0 ? (
@@ -236,6 +250,53 @@ export function MapSidebar({
         </motion.div>
       )}
     </AnimatePresence>
+  );
+}
+
+function WalletsTab({ wallets, loading }: { wallets: MarketWallet[]; loading: boolean }) {
+  if (loading) {
+    return (
+      <div className="space-y-2 py-1">
+        {[0, 1, 2, 3].map((i) => (
+          <div key={i} className="h-10 rounded bg-white/[0.02] animate-pulse" />
+        ))}
+      </div>
+    );
+  }
+
+  if (wallets.length === 0) {
+    return <p className="text-[#475569] text-xs py-4 text-center">No wallet activity yet</p>;
+  }
+
+  return (
+    <div>
+      {wallets.map((w) => (
+        <div
+          key={w.address}
+          className="py-2.5 border-b border-white/[0.03] flex items-center justify-between gap-3"
+        >
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] font-mono text-[#94A3B8] truncate">
+                {w.username ?? w.addressShort}
+              </span>
+              <span
+                className="text-[8px] font-mono font-semibold tracking-[0.14em]"
+                style={{ color: w.side === 'BUY' ? '#10B981' : '#EF4444' }}
+              >
+                {w.side}
+              </span>
+            </div>
+            <div className="text-[9px] text-[#475569] font-mono mt-0.5">
+              {formatAccuracy(w.accuracyScore)} acc · {formatMarketsTraded(w.totalMarketsTraded)}
+            </div>
+          </div>
+          <div className="text-[11px] font-mono text-[#E2E8F0] shrink-0">
+            {formatVolume(w.volume)}
+          </div>
+        </div>
+      ))}
+    </div>
   );
 }
 
