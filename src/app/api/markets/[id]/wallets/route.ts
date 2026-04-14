@@ -32,6 +32,7 @@ export async function GET(
         wtp.wallet_address,
         wtp.buy_volume,
         wtp.sell_volume,
+        wtp.outcome,
         w.accuracy_score,
         w.total_markets_traded,
         w.username

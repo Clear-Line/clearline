@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server';
 import { bq } from '@/lib/bigquery';
-import { requireSubscription } from '@/lib/api-auth';
 
 export const runtime = 'nodejs';
 
@@ -21,15 +20,12 @@ interface PositionRow {
 /**
  * GET /api/constellation/wallet/[address] — returns all active market positions
  * for a wallet address, used for map highlighting.
- * Requires auth (Advisor mode).
+ * PUBLIC — backs the /explore bloom click-through, matching the other /explore endpoints.
  */
 export async function GET(
   _request: Request,
   { params }: { params: Promise<{ address: string }> }
 ) {
-  const authError = await requireSubscription();
-  if (authError) return authError;
-
   const { address } = await params;
 
   const fq = (table: string) => `\`${projectId}.${dataset}.${table}\``;

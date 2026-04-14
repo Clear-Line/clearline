@@ -72,6 +72,14 @@ interface RendererOpts {
   watchlistedMarketIds?: Set<string>;
   /** Orbit bubbles around the selected node (one per wallet active in that market). */
   orbitBubbles?: OrbitBubble[];
+  /** Market id currently expanded in bloom mode. Others dim to 0.15. */
+  expandedNodeId?: string | null;
+  /** 0 → 1 spring value for the parent's radius scale during bloom. */
+  bloomProgress?: number;
+  /** When a bubble is clicked, these are the wallet's *other* market positions. */
+  walletPositionIds?: Set<string>;
+  /** The clicked bubble — we draw wallet-thesis lines from it in its color. */
+  focusedBubble?: OrbitBubble | null;
 }
 
 export function useMapRenderer() {
@@ -90,7 +98,17 @@ export function useMapRenderer() {
         heldMarketIds,
         watchlistedMarketIds,
         orbitBubbles,
+        expandedNodeId,
+        bloomProgress = 0,
+        walletPositionIds,
+        focusedBubble,
       } = opts;
+      // During bloom we pull focus sharply onto the expanded node and dim the
+      // rest of the map. 0.15 roughly matches what Bubblemaps does — still
+      // visible enough to see neighbors, quiet enough that the expanded
+      // cluster reads as the subject.
+      const bloomActive = !!expandedNodeId && bloomProgress > 0.01;
+      const bloomDim = bloomActive ? 1 - 0.85 * bloomProgress : 1; // → 0.15 at full bloom
       const { width, height } = ctx.canvas;
       const dpr = window.devicePixelRatio || 1;
       const w = width / dpr;
@@ -137,6 +155,12 @@ export function useMapRenderer() {
         const srcId = src.id;
         const tgtId = tgt.id;
         const isConnected = focusId && (connectedSet.has(srcId) && connectedSet.has(tgtId));
+        // In bloom mode, only edges that touch the expanded node stay lit.
+        const edgeBloomMul = bloomActive
+          ? srcId === expandedNodeId || tgtId === expandedNodeId
+            ? 1
+            : bloomDim
+          : 1;
 
         let alpha: number;
         let lineWidth: number;
@@ -151,6 +175,8 @@ export function useMapRenderer() {
           alpha = RENDER.edgeCrossCategoryAlpha;
           lineWidth = RENDER.edgeMinWidth;
         }
+
+        alpha *= edgeBloomMul;
 
         // Use source category color for same-category, white for cross
         let edgeColor: string;
@@ -169,6 +195,23 @@ export function useMapRenderer() {
         ctx.stroke();
       }
 
+      // ─── Wallet-thesis lines (drawn before nodes so nodes overdraw them) ───
+      if (focusedBubble && walletPositionIds && walletPositionIds.size > 0) {
+        ctx.strokeStyle = focusedBubble.color;
+        ctx.globalAlpha = 0.5 * Math.max(0.3, bloomProgress);
+        ctx.lineWidth = 1 / viewState.scale;
+        for (const node of nodes) {
+          if (node.x == null || node.y == null) continue;
+          if (node.id === expandedNodeId) continue;
+          if (!walletPositionIds.has(node.id)) continue;
+          ctx.beginPath();
+          ctx.moveTo(focusedBubble.x, focusedBubble.y);
+          ctx.lineTo(node.x, node.y);
+          ctx.stroke();
+        }
+        ctx.globalAlpha = 1;
+      }
+
       // ─── Nodes ───
       for (const node of nodes) {
         if (node.x == null || node.y == null) continue;
@@ -176,9 +219,11 @@ export function useMapRenderer() {
         const active = isActive(node);
         const isHovered = node.id === hoveredNodeId;
         const isSelected = node.id === selectedNodeId;
+        const isExpanded = node.id === expandedNodeId;
         const isConnectedToFocus = focusId ? connectedSet.has(node.id) : false;
+        const isWalletPosition = !!(walletPositionIds && walletPositionIds.has(node.id));
 
-        const baseAlpha = active
+        let baseAlpha = active
           ? isHovered || isSelected
             ? 1.0
             : isConnectedToFocus
@@ -188,8 +233,16 @@ export function useMapRenderer() {
                 : RENDER.nodeFillAlpha
           : RENDER.filteredOutAlpha;
 
+        // Bloom overrides: expanded node + wallet-thesis markets stay lit,
+        // everyone else dims. This layers on top of the normal focus logic.
+        if (bloomActive) {
+          if (isExpanded) baseAlpha = 1;
+          else if (isWalletPosition) baseAlpha = Math.max(baseAlpha, 0.7);
+          else baseAlpha *= bloomDim;
+        }
+
         const [r, g, b] = hexToRgb(CATEGORY_COLORS[node.category]);
-        const radius = node.radius;
+        const radius = isExpanded ? node.radius * (1 + bloomProgress) : node.radius;
 
         // Glow halo (skip for filtered-out nodes)
         if (active && baseAlpha > 0.15) {
@@ -257,6 +310,16 @@ export function useMapRenderer() {
           ctx.stroke();
         }
 
+        // Wallet-thesis ring — highlight the markets where the focused wallet
+        // also has a position, in the wallet bubble's color.
+        if (bloomActive && isWalletPosition && !isExpanded && focusedBubble) {
+          ctx.beginPath();
+          ctx.arc(node.x, node.y, radius + 2, 0, Math.PI * 2);
+          ctx.strokeStyle = focusedBubble.color;
+          ctx.lineWidth = 1.5 / viewState.scale;
+          ctx.stroke();
+        }
+
         // ─── Personal portfolio overlay: green ring for held markets ───
         if (heldMarketIds && heldMarketIds.has(node.id)) {
           const ringWidth = Math.max(HELD_RING_WIDTH_MIN, radius * 0.25);
@@ -309,13 +372,18 @@ export function useMapRenderer() {
 
       // ─── Orbit bubbles (wallets active in selected market) ───
       if (orbitBubbles && orbitBubbles.length > 0) {
+        const focusedAddr = focusedBubble?.address ?? null;
         for (const bubble of orbitBubbles) {
+          if (bubble.radius < 0.5) continue; // mid-collapse; skip
           ctx.beginPath();
           ctx.arc(bubble.x, bubble.y, bubble.radius, 0, Math.PI * 2);
           ctx.fillStyle = bubble.color;
           ctx.fill();
-          ctx.strokeStyle = 'rgba(255,255,255,0.18)';
-          ctx.lineWidth = 1 / viewState.scale;
+          const isFocused = focusedAddr && bubble.address === focusedAddr;
+          ctx.strokeStyle = isFocused
+            ? 'rgba(255,255,255,0.95)'
+            : 'rgba(255,255,255,0.18)';
+          ctx.lineWidth = (isFocused ? 2 : 1) / viewState.scale;
           ctx.stroke();
         }
       }
