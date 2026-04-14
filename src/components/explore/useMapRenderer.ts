@@ -1,5 +1,5 @@
 import { useCallback, useRef } from 'react';
-import type { MapNode, MapEdge, Category, MapViewState } from './mapTypes';
+import type { MapNode, MapEdge, Category, MapViewState, OrbitBubble } from './mapTypes';
 import {
   CATEGORY_COLORS,
   CATEGORY_SHAPES,
@@ -70,6 +70,8 @@ interface RendererOpts {
   heldMarketIds?: Set<string>;
   /** Market ids the signed-in user has watchlisted. Drawn as star markers. */
   watchlistedMarketIds?: Set<string>;
+  /** Orbit bubbles around the selected node (one per wallet active in that market). */
+  orbitBubbles?: OrbitBubble[];
 }
 
 export function useMapRenderer() {
@@ -87,6 +89,7 @@ export function useMapRenderer() {
         viewState,
         heldMarketIds,
         watchlistedMarketIds,
+        orbitBubbles,
       } = opts;
       const { width, height } = ctx.canvas;
       const dpr = window.devicePixelRatio || 1;
@@ -301,6 +304,19 @@ export function useMapRenderer() {
           const maxLen = Math.min(24, Math.max(12, Math.floor(radius * 0.7)));
           const text = node.label.length > maxLen ? node.label.slice(0, maxLen) + '...' : node.label;
           ctx.fillText(text, node.x, node.y + radius + 10 / viewState.scale);
+        }
+      }
+
+      // ─── Orbit bubbles (wallets active in selected market) ───
+      if (orbitBubbles && orbitBubbles.length > 0) {
+        for (const bubble of orbitBubbles) {
+          ctx.beginPath();
+          ctx.arc(bubble.x, bubble.y, bubble.radius, 0, Math.PI * 2);
+          ctx.fillStyle = bubble.color;
+          ctx.fill();
+          ctx.strokeStyle = 'rgba(255,255,255,0.18)';
+          ctx.lineWidth = 1 / viewState.scale;
+          ctx.stroke();
         }
       }
 

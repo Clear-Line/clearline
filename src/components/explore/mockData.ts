@@ -1,4 +1,4 @@
-import type { Category, MapNode, MapEdge, MapGraph, SidebarWallet, ConnectedMarket } from './mapTypes';
+import type { Category, MapNode, MapEdge, MapGraph, ConnectedMarket } from './mapTypes';
 import { computeRadius } from './mapConstants';
 
 // Seeded pseudo-random for deterministic data
@@ -254,23 +254,6 @@ export function getMockGraph(): MapGraph {
   const edges = generateEdges(nodes);
   cachedGraph = { nodes, edges };
   return cachedGraph;
-}
-
-// Mock wallet data for sidebar
-export function getMockWallets(nodeId: string): SidebarWallet[] {
-  const r = mulberry32(hashCode(nodeId));
-  const count = Math.floor(r() * 8) + 5;
-  const wallets: SidebarWallet[] = [];
-  for (let i = 0; i < count; i++) {
-    const hex = Math.floor(r() * 0xffffff).toString(16).padStart(6, '0');
-    wallets.push({
-      address: `0x${hex}${Math.floor(r() * 0xffff).toString(16).padStart(4, '0')}...${hex.slice(0, 4)}`,
-      side: r() > 0.45 ? 'BUY' : 'SELL',
-      volume: Math.round(r() * 50000 + 500),
-      accuracy: Math.round(r() * 40 + 45),
-    });
-  }
-  return wallets.sort((a, b) => b.volume - a.volume);
 }
 
 export function getMockConnected(nodeId: string, graph: MapGraph): ConnectedMarket[] {

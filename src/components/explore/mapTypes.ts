@@ -54,11 +54,13 @@ export interface HoveredNode {
   screenY: number;
 }
 
-export interface SidebarWallet {
+export interface OrbitBubble {
   address: string;
+  x: number;
+  y: number;
+  radius: number;
+  color: string;
   side: 'BUY' | 'SELL';
-  volume: number;
-  accuracy: number;
 }
 
 export interface ConnectedMarket {
