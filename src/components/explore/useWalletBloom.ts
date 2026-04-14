@@ -58,6 +58,13 @@ export function useWalletBloom({
   const rafRef = useRef<number>(0);
   const parentRef = useRef<MapNode | null>(parent);
   parentRef.current = parent;
+  // Last known parent position — kept fresh while parent is live so the
+  // collapse animation can still ease bubbles home after deselection nulls
+  // parentRef.
+  const lastParentPosRef = useRef<{ x: number; y: number } | null>(null);
+  if (parent && parent.x != null && parent.y != null) {
+    lastParentPosRef.current = { x: parent.x, y: parent.y };
+  }
   const collapsingRef = useRef(false);
 
   // Seed bubbles when the expansion target changes OR wallets load in.
@@ -149,41 +156,46 @@ export function useWalletBloom({
         bloomProgressRef.current = 0;
       }
 
-      if (bubbles.length > 0 && p) {
-        const px = p.x ?? 0;
-        const py = p.y ?? 0;
-
-        // Retarget the radial/X/Y forces to the live parent position so bubbles
-        // track the market node if it drifts in the main sim.
-        const sim = simRef.current;
-        if (sim) {
-          const radial = sim.force('radial') as ReturnType<typeof forceRadial<OrbitBubble>> | undefined;
-          radial?.x(px).y(py);
-          const fx = sim.force('x') as ReturnType<typeof forceX<OrbitBubble>> | undefined;
-          fx?.x(px);
-          const fy = sim.force('y') as ReturnType<typeof forceY<OrbitBubble>> | undefined;
-          fy?.y(py);
-        }
-
-        let anyAlive = false;
-        for (const b of bubbles) {
-          if (collapsingRef.current) {
-            // Ease toward parent center as we shrink
-            b.x += (px - b.x) * COLLAPSE_EASE;
-            b.y += (py - b.y) * COLLAPSE_EASE;
+      if (bubbles.length > 0) {
+        if (collapsingRef.current) {
+          // Collapse doesn't need a live parent — fall back to the last known
+          // position so deselection still animates the shrink.
+          const home = lastParentPosRef.current;
+          let anyAlive = false;
+          for (const b of bubbles) {
+            if (home) {
+              b.x += (home.x - b.x) * COLLAPSE_EASE;
+              b.y += (home.y - b.y) * COLLAPSE_EASE;
+            }
             b.radius += (0 - b.radius) * COLLAPSE_EASE;
             if (b.radius > COLLAPSE_FLOOR) anyAlive = true;
-          } else {
-            b.radius += (b.targetRadius - b.radius) * GROW_EASE;
-            anyAlive = true;
           }
-        }
+          if (!anyAlive) {
+            bubblesRef.current = [];
+            simRef.current?.stop();
+            simRef.current = null;
+            collapsingRef.current = false;
+            lastParentPosRef.current = null;
+          }
+        } else if (p) {
+          const px = p.x ?? 0;
+          const py = p.y ?? 0;
 
-        if (collapsingRef.current && !anyAlive) {
-          bubblesRef.current = [];
-          simRef.current?.stop();
-          simRef.current = null;
-          collapsingRef.current = false;
+          // Retarget the radial/X/Y forces to the live parent position so
+          // bubbles track the market node if it drifts in the main sim.
+          const sim = simRef.current;
+          if (sim) {
+            const radial = sim.force('radial') as ReturnType<typeof forceRadial<OrbitBubble>> | undefined;
+            radial?.x(px).y(py);
+            const fx = sim.force('x') as ReturnType<typeof forceX<OrbitBubble>> | undefined;
+            fx?.x(px);
+            const fy = sim.force('y') as ReturnType<typeof forceY<OrbitBubble>> | undefined;
+            fy?.y(py);
+          }
+
+          for (const b of bubbles) {
+            b.radius += (b.targetRadius - b.radius) * GROW_EASE;
+          }
         }
       }
 
