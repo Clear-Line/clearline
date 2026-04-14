@@ -58,9 +58,24 @@ export interface OrbitBubble {
   address: string;
   x: number;
   y: number;
+  vx: number;
+  vy: number;
+  /** Live render radius. Animates from 0 → targetRadius during bloom, → 0 on collapse. */
   radius: number;
+  targetRadius: number;
   color: string;
   side: 'BUY' | 'SELL';
+  outcome: 'YES' | 'NO' | null;
+  volume: number;
+  accuracyScore: number | null;
+  totalMarketsTraded: number | null;
+  username: string | null;
+}
+
+export interface HoveredBubble {
+  bubble: OrbitBubble;
+  screenX: number;
+  screenY: number;
 }
 
 export interface ConnectedMarket {

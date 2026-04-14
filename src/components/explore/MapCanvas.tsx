@@ -1,7 +1,15 @@
 'use client';
 
 import { useRef, useEffect, useCallback, useState } from 'react';
-import type { MapGraph, MapNode, MapViewState, HoveredNode, Category, OrbitBubble } from './mapTypes';
+import type {
+  MapGraph,
+  MapNode,
+  MapViewState,
+  HoveredNode,
+  HoveredBubble,
+  Category,
+  OrbitBubble,
+} from './mapTypes';
 import { useForceSimulation } from './useForceSimulation';
 import { useMapRenderer } from './useMapRenderer';
 import { useMapInteraction } from './useMapInteraction';
@@ -17,7 +25,14 @@ interface MapCanvasProps {
   selectedNodeId: string | null;
   heldMarketIds?: Set<string>;
   watchlistedMarketIds?: Set<string>;
-  orbitBubbles?: OrbitBubble[];
+  /** Live wallet orbit bubbles (ref-driven — mutates in place each RAF tick). */
+  bubblesRef?: React.MutableRefObject<OrbitBubble[]>;
+  bloomProgressRef?: React.MutableRefObject<number>;
+  expandedNodeId?: string | null;
+  walletPositionIds?: Set<string>;
+  focusedBubble?: OrbitBubble | null;
+  onBubbleHover?: (h: HoveredBubble | null) => void;
+  onSelectWallet?: (address: string) => void;
 }
 
 export function MapCanvas({
@@ -31,7 +46,13 @@ export function MapCanvas({
   selectedNodeId,
   heldMarketIds,
   watchlistedMarketIds,
-  orbitBubbles,
+  bubblesRef,
+  bloomProgressRef,
+  expandedNodeId,
+  walletPositionIds,
+  focusedBubble,
+  onBubbleHover,
+  onSelectWallet,
 }: MapCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const hoveredIdRef = useRef<string | null>(null);
@@ -66,7 +87,11 @@ export function MapCanvas({
       viewState,
       heldMarketIds,
       watchlistedMarketIds,
-      orbitBubbles,
+      orbitBubbles: bubblesRef?.current,
+      expandedNodeId,
+      bloomProgress: bloomProgressRef?.current ?? 0,
+      walletPositionIds,
+      focusedBubble,
     });
 
     rafRef.current = requestAnimationFrame(drawFrame);
@@ -79,7 +104,11 @@ export function MapCanvas({
     render,
     heldMarketIds,
     watchlistedMarketIds,
-    orbitBubbles,
+    bubblesRef,
+    bloomProgressRef,
+    expandedNodeId,
+    walletPositionIds,
+    focusedBubble,
   ]);
 
   // Force simulation
@@ -97,6 +126,11 @@ export function MapCanvas({
   });
 
   // Interaction handlers
+  const getBubbles = useCallback(
+    () => bubblesRef?.current ?? [],
+    [bubblesRef],
+  );
+
   const {
     handleMouseDown,
     handleMouseMove,
@@ -111,6 +145,9 @@ export function MapCanvas({
     onNodeClick,
     pinNode,
     unpinNode,
+    getBubbles,
+    onBubbleHover,
+    onSelectWallet,
   });
 
   // Resize handler

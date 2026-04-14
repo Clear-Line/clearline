@@ -3,7 +3,16 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Loader2, Wallet } from 'lucide-react';
 import { useUser } from '@clerk/nextjs';
-import type { Category, MapNode, MapEdge, MapGraph, HoveredNode, MapViewState, OrbitBubble } from './mapTypes';
+import type {
+  Category,
+  MapNode,
+  MapEdge,
+  MapGraph,
+  HoveredNode,
+  HoveredBubble,
+  MapViewState,
+  OrbitBubble,
+} from './mapTypes';
 import { ALL_CATEGORIES, computeRadius } from './mapConstants';
 import { MapCanvas } from './MapCanvas';
 import { MapTopBar } from './MapTopBar';
@@ -14,7 +23,12 @@ import { PortfolioHud } from './PortfolioHud';
 import { LinkWalletModal } from './LinkWalletModal';
 import { useOwnedPositions } from './useOwnedPositions';
 import { useWatchlist } from './useWatchlist';
-import { MarketWallet, layoutWalletOrbits } from './lib/wallets';
+import { MarketWallet } from './lib/wallets';
+import { useWalletBloom } from './useWalletBloom';
+
+// Bubblemaps-style bloom caps the visible wallet count. Beyond ~30 the orbit
+// packs too tight for the physics sim to read — sidebar still lists all 50.
+const BLOOM_BUBBLE_CAP = 30;
 
 // ─── API response types ───
 
@@ -152,15 +166,26 @@ export function ConstellationMap() {
     return () => controller.abort();
   }, [selectedNode]);
 
-  const orbitBubbles: OrbitBubble[] = useMemo(() => {
-    if (!selectedNode || selectedNode.x == null || selectedNode.y == null) return [];
-    if (marketWallets.length === 0) return [];
-    return layoutWalletOrbits({
-      parent: { x: selectedNode.x, y: selectedNode.y },
-      parentRadius: selectedNode.radius,
-      wallets: marketWallets,
-    });
-  }, [selectedNode, marketWallets]);
+  // Bloom state — separate from selectedNode so collapse can unwind in two steps:
+  // focused wallet unwinds first (Escape 1), then the bloom itself (Escape 2).
+  const [focusedWallet, setFocusedWallet] = useState<string | null>(null);
+  const [focusedBubble, setFocusedBubble] = useState<OrbitBubble | null>(null);
+  const [walletPositionIds, setWalletPositionIds] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const [hoveredBubble, setHoveredBubble] = useState<HoveredBubble | null>(null);
+
+  const bloomWallets = useMemo(
+    () => marketWallets.slice(0, BLOOM_BUBBLE_CAP),
+    [marketWallets],
+  );
+  const overflowCount = Math.max(0, marketWallets.length - BLOOM_BUBBLE_CAP);
+
+  const { bubblesRef, bloomProgressRef } = useWalletBloom({
+    expandedNodeId: selectedNode?.id ?? null,
+    parent: selectedNode ?? null,
+    wallets: bloomWallets,
+  });
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -201,9 +226,54 @@ export function ConstellationMap() {
     setHoveredNode(hovered);
   }, []);
 
+  const clearFocusedWallet = useCallback(() => {
+    setFocusedWallet(null);
+    setFocusedBubble(null);
+    setWalletPositionIds(new Set());
+  }, []);
+
   const handleSidebarClose = useCallback(() => {
     setSelectedNode(null);
-  }, []);
+    clearFocusedWallet();
+  }, [clearFocusedWallet]);
+
+  const handleSelectWallet = useCallback(
+    async (address: string) => {
+      const bubble = bubblesRef.current.find((b) => b.address === address) ?? null;
+      setFocusedWallet(address);
+      setFocusedBubble(bubble);
+      try {
+        const res = await fetch(
+          `/api/constellation/wallet/${encodeURIComponent(address)}`,
+        );
+        if (!res.ok) {
+          setWalletPositionIds(new Set());
+          return;
+        }
+        const data = (await res.json()) as { positions?: { marketId: string }[] };
+        setWalletPositionIds(
+          new Set((data.positions ?? []).map((p) => p.marketId)),
+        );
+      } catch {
+        setWalletPositionIds(new Set());
+      }
+    },
+    [bubblesRef],
+  );
+
+  // Escape unwinds in two steps: focused wallet first, then selected node.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      if (focusedWallet) {
+        clearFocusedWallet();
+      } else if (selectedNode) {
+        setSelectedNode(null);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [focusedWallet, selectedNode, clearFocusedWallet]);
 
   // Loading state
   if (loading) {
@@ -263,7 +333,13 @@ export function ConstellationMap() {
         selectedNodeId={selectedNode?.id ?? null}
         heldMarketIds={heldSet}
         watchlistedMarketIds={watchlistedSet}
-        orbitBubbles={orbitBubbles}
+        bubblesRef={bubblesRef}
+        bloomProgressRef={bloomProgressRef}
+        expandedNodeId={selectedNode?.id ?? null}
+        walletPositionIds={walletPositionIds}
+        focusedBubble={focusedBubble}
+        onBubbleHover={setHoveredBubble}
+        onSelectWallet={handleSelectWallet}
       />
 
       <MapTopBar
@@ -315,7 +391,13 @@ export function ConstellationMap() {
         onChange={refetchPositions}
       />
 
-      <MapTooltip hovered={hoveredNode} />
+      <MapTooltip hovered={hoveredBubble ?? hoveredNode} />
+
+      {selectedNode && overflowCount > 0 && (
+        <div className="fixed top-20 left-1/2 -translate-x-1/2 z-20 text-[10px] font-mono tracking-[0.14em] uppercase text-[#94A3B8] bg-[#04040B]/85 border border-white/[0.08] rounded-full px-3 py-1 pointer-events-none">
+          +{overflowCount} more wallets in sidebar
+        </div>
+      )}
     </div>
   );
 }

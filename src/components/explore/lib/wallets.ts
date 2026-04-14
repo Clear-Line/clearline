@@ -2,6 +2,7 @@ export interface MarketWalletApiRow {
   wallet_address: string;
   buy_volume: number;
   sell_volume: number;
+  outcome: 'YES' | 'NO' | null;
   accuracy_score: number | null;
   total_markets_traded: number | null;
   username: string | null;
@@ -11,6 +12,7 @@ export interface MarketWallet {
   address: string;
   addressShort: string;
   side: 'BUY' | 'SELL';
+  outcome: 'YES' | 'NO' | null;
   volume: number;
   accuracyScore: number | null;
   totalMarketsTraded: number | null;
@@ -26,11 +28,17 @@ export function shortenAddress(address: string): string {
   return `${address.slice(0, 6)}…${address.slice(-4)}`;
 }
 
+function normalizeOutcome(raw: unknown): 'YES' | 'NO' | null {
+  if (raw === 'YES' || raw === 'NO') return raw;
+  return null;
+}
+
 export function toWalletRow(row: MarketWalletApiRow): MarketWallet {
   return {
     address: row.wallet_address,
     addressShort: shortenAddress(row.wallet_address),
     side: deriveSide(row),
+    outcome: normalizeOutcome(row.outcome),
     volume: Math.max(row.buy_volume, row.sell_volume),
     accuracyScore: row.accuracy_score,
     totalMarketsTraded: row.total_markets_traded,
@@ -61,21 +69,13 @@ export const ORBIT = {
   orbitGap: 10,
 } as const;
 
-export const COLOR_DIM = '#3B3F4A';
-export const COLOR_NEUTRAL = '#94A3B8';
-export const COLOR_STRONG = '#10B981';
-
-export function partitionBySide(
-  wallets: MarketWallet[],
-): { buys: MarketWallet[]; sells: MarketWallet[] } {
-  const buys: MarketWallet[] = [];
-  const sells: MarketWallet[] = [];
-  for (const w of wallets) {
-    if (w.side === 'BUY') buys.push(w);
-    else sells.push(w);
-  }
-  return { buys, sells };
-}
+// Side-aware bubble color. YES outcome = green ramp, NO = red ramp.
+// When outcome is null we fall back to side (BUY→YES, SELL→NO) so older
+// rows without the `outcome` column still render coherently.
+export const YES_DIM = '#064E3B';
+export const YES_BRIGHT = '#10B981';
+export const NO_DIM = '#7F1D1D';
+export const NO_BRIGHT = '#EF4444';
 
 export function walletBubbleRadius(input: { volume: number; volumeMax: number }): number {
   const { volume, volumeMax } = input;
@@ -102,57 +102,22 @@ function lerpHex(a: string, b: string, t: number): string {
   return `#${toHex(r)}${toHex(g)}${toHex(bl)}`.toUpperCase();
 }
 
-export function walletBubbleColor(score: number | null): string {
-  if (score === null) return COLOR_DIM;
-  if (score <= 0) return COLOR_DIM;
-  if (score >= 1) return COLOR_STRONG;
-  if (score === 0.5) return COLOR_NEUTRAL;
-  if (score < 0.5) return lerpHex(COLOR_DIM, COLOR_NEUTRAL, score / 0.5);
-  return lerpHex(COLOR_NEUTRAL, COLOR_STRONG, (score - 0.5) / 0.5);
-}
-
-export interface OrbitBubble {
-  address: string;
-  x: number;
-  y: number;
-  radius: number;
-  color: string;
+export function walletBubbleColor(input: {
   side: 'BUY' | 'SELL';
+  outcome: 'YES' | 'NO' | null;
+  accuracyScore: number | null;
+}): string {
+  const yes =
+    input.outcome === 'YES' ||
+    (input.outcome === null && input.side === 'BUY');
+  const [dim, bright] = yes ? [YES_DIM, YES_BRIGHT] : [NO_DIM, NO_BRIGHT];
+  const raw = input.accuracyScore;
+  const t = raw == null ? 0 : Math.max(0, Math.min(1, raw));
+  return lerpHex(dim, bright, t);
 }
 
-export function layoutWalletOrbits(input: {
-  parent: { x: number; y: number };
-  parentRadius: number;
-  wallets: MarketWallet[];
-}): OrbitBubble[] {
-  const { parent, parentRadius, wallets } = input;
-  if (wallets.length === 0) return [];
-
-  const { buys, sells } = partitionBySide(sortWalletRows(wallets));
-  const volumeMax = Math.max(1, ...wallets.map((w) => w.volume));
-
-  const maxChildRadius = ORBIT.maxBubbleR;
-  const orbitR = parentRadius + maxChildRadius + ORBIT.orbitGap;
-
-  const place = (
-    list: MarketWallet[],
-    angleStart: number,
-  ): OrbitBubble[] => {
-    const n = list.length;
-    if (n === 0) return [];
-    const span = Math.PI;
-    return list.map((w, i) => {
-      const theta = angleStart + ((i + 1) * span) / (n + 1);
-      return {
-        address: w.address,
-        x: parent.x + orbitR * Math.cos(theta),
-        y: parent.y + orbitR * Math.sin(theta),
-        radius: walletBubbleRadius({ volume: w.volume, volumeMax }),
-        color: walletBubbleColor(w.accuracyScore),
-        side: w.side,
-      };
-    });
-  };
-
-  return [...place(buys, -Math.PI), ...place(sells, 0)];
+export function formatVolume2dp(v: number): string {
+  if (v >= 1e6) return `$${(v / 1e6).toFixed(2)}M`;
+  if (v >= 1e3) return `$${(v / 1e3).toFixed(2)}K`;
+  return `$${v.toFixed(2)}`;
 }

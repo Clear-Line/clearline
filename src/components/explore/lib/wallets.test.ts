@@ -6,15 +6,14 @@ import {
   formatAccuracy,
   formatMarketsTraded,
   shortenAddress,
-  partitionBySide,
   walletBubbleRadius,
   walletBubbleColor,
-  layoutWalletOrbits,
+  formatVolume2dp,
   ORBIT,
-  COLOR_DIM,
-  COLOR_NEUTRAL,
-  COLOR_STRONG,
-  type MarketWallet,
+  YES_DIM,
+  YES_BRIGHT,
+  NO_DIM,
+  NO_BRIGHT,
 } from './wallets';
 
 describe('deriveSide', () => {
@@ -56,6 +55,7 @@ describe('toWalletRow', () => {
     wallet_address: '0x1234567890abcdef1234567890abcdef12345678',
     buy_volume: 2500,
     sell_volume: 400,
+    outcome: 'YES' as const,
     accuracy_score: 0.82,
     total_markets_traded: 14,
     username: 'alice',
@@ -101,6 +101,28 @@ describe('toWalletRow', () => {
     const row = toWalletRow({ ...apiRow, username: null });
     expect(row.username).toBeNull();
   });
+
+  it('passes through YES outcome', () => {
+    expect(toWalletRow({ ...apiRow, outcome: 'YES' }).outcome).toBe('YES');
+  });
+
+  it('passes through NO outcome', () => {
+    expect(toWalletRow({ ...apiRow, outcome: 'NO' }).outcome).toBe('NO');
+  });
+
+  it('normalizes null outcome to null', () => {
+    expect(toWalletRow({ ...apiRow, outcome: null }).outcome).toBeNull();
+  });
+
+  it('normalizes unknown outcome strings to null', () => {
+    // Guard against stray DB values (empty string, lowercase, etc.) leaking into the UI.
+    expect(
+      toWalletRow({
+        ...apiRow,
+        outcome: 'yes' as unknown as 'YES',
+      }).outcome,
+    ).toBeNull();
+  });
 });
 
 describe('sortWalletRows', () => {
@@ -108,6 +130,7 @@ describe('sortWalletRows', () => {
     address,
     addressShort: address,
     side: 'BUY' as const,
+    outcome: null,
     volume,
     accuracyScore: null,
     totalMarketsTraded: null,
@@ -166,43 +189,6 @@ describe('formatMarketsTraded', () => {
   });
 });
 
-const mkWallet = (overrides: Partial<MarketWallet> = {}): MarketWallet => ({
-  address: overrides.address ?? '0x' + '0'.repeat(40),
-  addressShort: '0x0000…0000',
-  side: 'BUY',
-  volume: 1000,
-  accuracyScore: null,
-  totalMarketsTraded: null,
-  username: null,
-  ...overrides,
-});
-
-describe('partitionBySide', () => {
-  it('splits wallets into buys and sells', () => {
-    const buys = [mkWallet({ address: '0xA', side: 'BUY' }), mkWallet({ address: '0xB', side: 'BUY' })];
-    const sells = [mkWallet({ address: '0xC', side: 'SELL' })];
-    const result = partitionBySide([...buys, ...sells]);
-    expect(result.buys.map((w) => w.address)).toEqual(['0xA', '0xB']);
-    expect(result.sells.map((w) => w.address)).toEqual(['0xC']);
-  });
-
-  it('returns empty arrays for empty input', () => {
-    expect(partitionBySide([])).toEqual({ buys: [], sells: [] });
-  });
-
-  it('preserves input order within each side', () => {
-    const input = [
-      mkWallet({ address: '0x1', side: 'SELL' }),
-      mkWallet({ address: '0x2', side: 'BUY' }),
-      mkWallet({ address: '0x3', side: 'SELL' }),
-      mkWallet({ address: '0x4', side: 'BUY' }),
-    ];
-    const { buys, sells } = partitionBySide(input);
-    expect(buys.map((w) => w.address)).toEqual(['0x2', '0x4']);
-    expect(sells.map((w) => w.address)).toEqual(['0x1', '0x3']);
-  });
-});
-
 describe('walletBubbleRadius', () => {
   it('returns max radius at full volume', () => {
     expect(walletBubbleRadius({ volume: 10000, volumeMax: 10000 })).toBe(ORBIT.maxBubbleR);
@@ -227,116 +213,121 @@ describe('walletBubbleRadius', () => {
 });
 
 describe('walletBubbleColor', () => {
-  it('returns DIM for null', () => {
-    expect(walletBubbleColor(null)).toBe(COLOR_DIM);
+  it('returns YES_BRIGHT at accuracy 1 when outcome is YES', () => {
+    expect(
+      walletBubbleColor({ side: 'BUY', outcome: 'YES', accuracyScore: 1 }),
+    ).toBe(YES_BRIGHT);
   });
 
-  it('returns STRONG at 1.0', () => {
-    expect(walletBubbleColor(1)).toBe(COLOR_STRONG);
+  it('returns NO_BRIGHT at accuracy 1 when outcome is NO', () => {
+    expect(
+      walletBubbleColor({ side: 'SELL', outcome: 'NO', accuracyScore: 1 }),
+    ).toBe(NO_BRIGHT);
   });
 
-  it('returns DIM at 0', () => {
-    expect(walletBubbleColor(0)).toBe(COLOR_DIM);
+  it('outcome overrides side — BUY with NO outcome paints red', () => {
+    // A BUY trade into NO shares is structurally a NO position. The wallet is
+    // betting against, regardless of which side the API surface calls BUY.
+    expect(
+      walletBubbleColor({ side: 'BUY', outcome: 'NO', accuracyScore: 1 }),
+    ).toBe(NO_BRIGHT);
   });
 
-  it('returns NEUTRAL at 0.5', () => {
-    expect(walletBubbleColor(0.5)).toBe(COLOR_NEUTRAL);
+  it('outcome overrides side — SELL with YES outcome paints green', () => {
+    expect(
+      walletBubbleColor({ side: 'SELL', outcome: 'YES', accuracyScore: 1 }),
+    ).toBe(YES_BRIGHT);
   });
 
-  it('clamps values > 1 to STRONG', () => {
-    expect(walletBubbleColor(1.5)).toBe(COLOR_STRONG);
+  it('falls back to side when outcome is null — BUY → green ramp', () => {
+    expect(
+      walletBubbleColor({ side: 'BUY', outcome: null, accuracyScore: 1 }),
+    ).toBe(YES_BRIGHT);
   });
 
-  it('clamps values < 0 to DIM', () => {
-    expect(walletBubbleColor(-0.2)).toBe(COLOR_DIM);
+  it('falls back to side when outcome is null — SELL → red ramp', () => {
+    expect(
+      walletBubbleColor({ side: 'SELL', outcome: null, accuracyScore: 1 }),
+    ).toBe(NO_BRIGHT);
   });
 
-  it('returns a hex string for mid-range values', () => {
-    const c = walletBubbleColor(0.75);
+  it('returns YES_DIM when accuracy is null on a YES bubble', () => {
+    expect(
+      walletBubbleColor({ side: 'BUY', outcome: 'YES', accuracyScore: null }),
+    ).toBe(YES_DIM);
+  });
+
+  it('returns YES_DIM when accuracy is 0 on a YES bubble', () => {
+    expect(
+      walletBubbleColor({ side: 'BUY', outcome: 'YES', accuracyScore: 0 }),
+    ).toBe(YES_DIM);
+  });
+
+  it('returns NO_DIM when accuracy is null on a NO bubble', () => {
+    expect(
+      walletBubbleColor({ side: 'SELL', outcome: 'NO', accuracyScore: null }),
+    ).toBe(NO_DIM);
+  });
+
+  it('is monotonic — higher accuracy means component-wise brighter hex on the YES ramp', () => {
+    const parse = (hex: string): [number, number, number] => {
+      const h = hex.replace('#', '');
+      return [
+        parseInt(h.slice(0, 2), 16),
+        parseInt(h.slice(2, 4), 16),
+        parseInt(h.slice(4, 6), 16),
+      ];
+    };
+    const low = parse(walletBubbleColor({ side: 'BUY', outcome: 'YES', accuracyScore: 0.2 }));
+    const high = parse(walletBubbleColor({ side: 'BUY', outcome: 'YES', accuracyScore: 0.8 }));
+    expect(high[0]).toBeGreaterThanOrEqual(low[0]);
+    expect(high[1]).toBeGreaterThanOrEqual(low[1]);
+    expect(high[2]).toBeGreaterThanOrEqual(low[2]);
+  });
+
+  it('clamps accuracy > 1 to bright', () => {
+    expect(
+      walletBubbleColor({ side: 'BUY', outcome: 'YES', accuracyScore: 1.5 }),
+    ).toBe(YES_BRIGHT);
+  });
+
+  it('clamps accuracy < 0 to dim', () => {
+    expect(
+      walletBubbleColor({ side: 'BUY', outcome: 'YES', accuracyScore: -0.4 }),
+    ).toBe(YES_DIM);
+  });
+
+  it('returns a 6-digit hex for mid-range values', () => {
+    const c = walletBubbleColor({
+      side: 'BUY',
+      outcome: 'YES',
+      accuracyScore: 0.5,
+    });
     expect(c).toMatch(/^#[0-9A-Fa-f]{6}$/);
   });
 });
 
-describe('layoutWalletOrbits', () => {
-  const parent = { x: 100, y: 200 };
-  const parentRadius = 20;
-
-  it('returns an empty array when no wallets', () => {
-    expect(
-      layoutWalletOrbits({ parent, parentRadius, wallets: [] }),
-    ).toEqual([]);
+describe('formatVolume2dp', () => {
+  it('formats millions with 2 decimals', () => {
+    expect(formatVolume2dp(1_234_567)).toBe('$1.23M');
   });
 
-  it('emits one bubble per wallet', () => {
-    const wallets = [
-      mkWallet({ address: '0xA', side: 'BUY', volume: 1000 }),
-      mkWallet({ address: '0xB', side: 'SELL', volume: 800 }),
-      mkWallet({ address: '0xC', side: 'BUY', volume: 600 }),
-    ];
-    const bubbles = layoutWalletOrbits({ parent, parentRadius, wallets });
-    expect(bubbles).toHaveLength(3);
-    expect(bubbles.map((b) => b.address).sort()).toEqual(['0xA', '0xB', '0xC']);
+  it('formats thousands with 2 decimals', () => {
+    expect(formatVolume2dp(12_345)).toBe('$12.35K');
   });
 
-  it('places BUYs in the top half (y < parent.y) and SELLs in the bottom half (y > parent.y)', () => {
-    const wallets = [
-      mkWallet({ address: '0xA', side: 'BUY', volume: 1000 }),
-      mkWallet({ address: '0xB', side: 'BUY', volume: 800 }),
-      mkWallet({ address: '0xC', side: 'SELL', volume: 600 }),
-      mkWallet({ address: '0xD', side: 'SELL', volume: 400 }),
-    ];
-    const bubbles = layoutWalletOrbits({ parent, parentRadius, wallets });
-    for (const b of bubbles) {
-      if (b.side === 'BUY') expect(b.y).toBeLessThan(parent.y);
-      if (b.side === 'SELL') expect(b.y).toBeGreaterThan(parent.y);
-    }
+  it('formats sub-thousand values with 2 decimals', () => {
+    expect(formatVolume2dp(42)).toBe('$42.00');
+    expect(formatVolume2dp(0)).toBe('$0.00');
   });
 
-  it('places a single BUY at top center (x = parent.x)', () => {
-    const wallets = [mkWallet({ address: '0xA', side: 'BUY', volume: 1000 })];
-    const [bubble] = layoutWalletOrbits({ parent, parentRadius, wallets });
-    expect(bubble.x).toBeCloseTo(parent.x, 5);
-    expect(bubble.y).toBeLessThan(parent.y);
+  it('uses K boundary at 1000', () => {
+    expect(formatVolume2dp(999)).toBe('$999.00');
+    expect(formatVolume2dp(1000)).toBe('$1.00K');
   });
 
-  it('places a single SELL at bottom center (x = parent.x)', () => {
-    const wallets = [mkWallet({ address: '0xA', side: 'SELL', volume: 1000 })];
-    const [bubble] = layoutWalletOrbits({ parent, parentRadius, wallets });
-    expect(bubble.x).toBeCloseTo(parent.x, 5);
-    expect(bubble.y).toBeGreaterThan(parent.y);
-  });
-
-  it('keeps every bubble outside parentRadius + childRadius (no overlap with parent)', () => {
-    const wallets = [
-      mkWallet({ address: '0xA', side: 'BUY', volume: 10000 }),
-      mkWallet({ address: '0xB', side: 'SELL', volume: 10000 }),
-    ];
-    const bubbles = layoutWalletOrbits({ parent, parentRadius, wallets });
-    for (const b of bubbles) {
-      const dist = Math.hypot(b.x - parent.x, b.y - parent.y);
-      expect(dist).toBeGreaterThanOrEqual(parentRadius + b.radius);
-    }
-  });
-
-  it('is deterministic — same input yields same output', () => {
-    const wallets = [
-      mkWallet({ address: '0xA', side: 'BUY', volume: 1000 }),
-      mkWallet({ address: '0xB', side: 'SELL', volume: 900 }),
-      mkWallet({ address: '0xC', side: 'BUY', volume: 500 }),
-    ];
-    const a = layoutWalletOrbits({ parent, parentRadius, wallets });
-    const b = layoutWalletOrbits({ parent, parentRadius, wallets });
-    expect(a).toEqual(b);
-  });
-
-  it('assigns a color from walletBubbleColor', () => {
-    const wallets = [
-      mkWallet({ address: '0xA', side: 'BUY', volume: 1000, accuracyScore: 1 }),
-      mkWallet({ address: '0xB', side: 'SELL', volume: 900, accuracyScore: null }),
-    ];
-    const bubbles = layoutWalletOrbits({ parent, parentRadius, wallets });
-    const byAddr = Object.fromEntries(bubbles.map((b) => [b.address, b]));
-    expect(byAddr['0xA'].color).toBe(COLOR_STRONG);
-    expect(byAddr['0xB'].color).toBe(COLOR_DIM);
+  it('uses M boundary at 1_000_000', () => {
+    expect(formatVolume2dp(999_999)).toBe('$1000.00K');
+    expect(formatVolume2dp(1_000_000)).toBe('$1.00M');
   });
 });

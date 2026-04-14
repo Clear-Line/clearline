@@ -32,9 +32,9 @@ interface MapSidebarProps {
 type Tab = 'wallets' | 'connected' | 'stats';
 
 function formatVolume(v: number): string {
-  if (v >= 1e6) return `$${(v / 1e6).toFixed(1)}M`;
-  if (v >= 1e3) return `$${(v / 1e3).toFixed(1)}K`;
-  return `$${v}`;
+  if (v >= 1e6) return `$${(v / 1e6).toFixed(2)}M`;
+  if (v >= 1e3) return `$${(v / 1e3).toFixed(2)}K`;
+  return `$${v.toFixed(2)}`;
 }
 
 function formatDate(iso: string | null): string {
