@@ -1,7 +1,7 @@
 'use client';
 
 import { useRef, useEffect, useCallback, useState } from 'react';
-import type { MapGraph, MapNode, MapViewState, HoveredNode, Category } from './mapTypes';
+import type { MapGraph, MapNode, MapViewState, HoveredNode, Category, OrbitBubble } from './mapTypes';
 import { useForceSimulation } from './useForceSimulation';
 import { useMapRenderer } from './useMapRenderer';
 import { useMapInteraction } from './useMapInteraction';
@@ -17,6 +17,7 @@ interface MapCanvasProps {
   selectedNodeId: string | null;
   heldMarketIds?: Set<string>;
   watchlistedMarketIds?: Set<string>;
+  orbitBubbles?: OrbitBubble[];
 }
 
 export function MapCanvas({
@@ -30,6 +31,7 @@ export function MapCanvas({
   selectedNodeId,
   heldMarketIds,
   watchlistedMarketIds,
+  orbitBubbles,
 }: MapCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const hoveredIdRef = useRef<string | null>(null);
@@ -64,6 +66,7 @@ export function MapCanvas({
       viewState,
       heldMarketIds,
       watchlistedMarketIds,
+      orbitBubbles,
     });
 
     rafRef.current = requestAnimationFrame(drawFrame);
@@ -76,6 +79,7 @@ export function MapCanvas({
     render,
     heldMarketIds,
     watchlistedMarketIds,
+    orbitBubbles,
   ]);
 
   // Force simulation
