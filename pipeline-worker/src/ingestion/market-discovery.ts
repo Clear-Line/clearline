@@ -9,6 +9,7 @@
 import { bq } from '../core/bigquery.js';
 import { fetchActiveMarkets, GammaMarket } from '../core/polymarket-client.js';
 import { dirtyTracker } from '../core/dirty-tracker.js';
+import { categorizeMarket } from '../intelligence/lib/categorize.js';
 
 function parseJsonField(raw: string | null | undefined): unknown {
   if (!raw) return [];
@@ -17,27 +18,6 @@ function parseJsonField(raw: string | null | undefined): unknown {
   } catch {
     return [];
   }
-}
-
-function categorizeMarket(question: string, tags?: string[]): string {
-  const q = question.toLowerCase();
-
-  if (tags?.includes('politics')) return 'politics';
-
-  // Political keywords
-  if (/president|gop|democrat|republican|election|senate|governor|congress|vote|primary|caucus|ballot/.test(q)) return 'politics';
-  // Geopolitics / current events / wars
-  if (/iran|israel|gaza|ukraine|russia|china|taiwan|war |conflict|sanctions|military|nato|ceasefire|invasion|missile|nuclear|north korea|houthi|hezbollah|syria|yemen|coup|terror/.test(q)) return 'geopolitics';
-  // Economics
-  if (/fed |interest rate|inflation|gdp|s&p|nasdaq|recession|unemployment|tariff|trade war|oil price|treasury|debt ceiling|stock market|dow jones/.test(q)) return 'economics';
-  // Crypto
-  if (/bitcoin|btc|ethereum|eth|crypto|token|defi|solana/.test(q)) return 'crypto';
-  // Sports
-  if (/nba|nfl|mlb|nhl|super bowl|championship|world cup|match/.test(q)) return 'sports';
-  // Weather
-  if (/hurricane|tornado|temperature|weather|climate/.test(q)) return 'weather';
-
-  return 'other';
 }
 
 export async function pollMarkets(): Promise<{ upserted: number; errors: string[] }> {
