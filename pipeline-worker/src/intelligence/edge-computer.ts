@@ -13,6 +13,7 @@
  */
 
 import { bq } from '../core/bigquery.js';
+import { buildSameUnderlyingPairs } from './lib/categorize.js';
 
 // ─── Types ───
 
@@ -54,6 +55,9 @@ const MIN_CORR_SAMPLES = 10;
 const MIN_COMBINED_WEIGHT = 0.15;
 const WALLET_WEIGHT = 0.4;
 const CORRELATION_WEIGHT = 0.6;
+// Crypto markets with the same underlying (BTC/ETH/SOL/…) move together structurally.
+// Pearson rarely qualifies them (bimodal/sticky prices) — this path auto-connects them.
+const CRYPTO_SAME_UNDERLYING_WEIGHT = 0.25;
 const BATCH_SIZE = 500;
 
 // ─── Main ───
@@ -234,6 +238,29 @@ export async function computeEdges(): Promise<{
     errors.push(`Price correlation query: ${err}`);
   }
 
+  // ─── Step 2.5: Same-underlying crypto auto-connect ───
+  // One small scan of `markets` (non-partitioned, ~5 MB), pairing in memory.
+  interface CryptoMarketRow { condition_id: string; question: string }
+  let cryptoPairs: { market_a: string; market_b: string; underlying: string }[] = [];
+  try {
+    const cryptoResult = await bq.rawQuery<CryptoMarketRow>(`
+      SELECT condition_id, question
+      FROM \`${dataset}.markets\`
+      WHERE category = 'crypto' AND is_active = true AND is_resolved = false
+    `);
+    if (cryptoResult.error) {
+      errors.push(`Crypto markets fetch: ${cryptoResult.error.message}`);
+    } else {
+      const cryptoMarkets = (cryptoResult.data ?? []).map((r) => ({
+        id: r.condition_id,
+        question: r.question,
+      }));
+      cryptoPairs = buildSameUnderlyingPairs(cryptoMarkets);
+    }
+  } catch (err) {
+    errors.push(`Crypto markets query failed: ${err}`);
+  }
+
   // ─── Step 3: Combine and write edges ───
 
   // Build correlation lookup
@@ -297,6 +324,7 @@ export async function computeEdges(): Promise<{
     const combined = CORRELATION_WEIGHT * corrScore; // no wallet overlap
 
     if (combined >= MIN_COMBINED_WEIGHT) {
+      seenPairs.add(key);
       edges.push({
         market_a: row.market_a,
         market_b: row.market_b,
@@ -305,6 +333,32 @@ export async function computeEdges(): Promise<{
         price_corr: row.price_corr,
         corr_samples: row.corr_samples,
         combined_weight: Math.round(combined * 1000) / 1000,
+        updated_at: now,
+      });
+    }
+  }
+
+  // Merge in same-underlying crypto pairs — if the pair already exists, only
+  // raise its weight to the floor; otherwise add a new edge at the floor.
+  const edgeByKey = new Map<string, MarketEdge>();
+  for (const edge of edges) edgeByKey.set(`${edge.market_a}|${edge.market_b}`, edge);
+
+  for (const pair of cryptoPairs) {
+    const key = `${pair.market_a}|${pair.market_b}`;
+    const existing = edgeByKey.get(key);
+    if (existing) {
+      if (existing.combined_weight < CRYPTO_SAME_UNDERLYING_WEIGHT) {
+        existing.combined_weight = CRYPTO_SAME_UNDERLYING_WEIGHT;
+      }
+    } else {
+      edges.push({
+        market_a: pair.market_a,
+        market_b: pair.market_b,
+        wallet_overlap: 0,
+        shared_wallets: 0,
+        price_corr: null,
+        corr_samples: null,
+        combined_weight: CRYPTO_SAME_UNDERLYING_WEIGHT,
         updated_at: now,
       });
     }
