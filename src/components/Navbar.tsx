@@ -21,8 +21,7 @@ export function Navbar() {
   if (pathname.startsWith('/explore')) return null;
 
   const navigation = [
-    { name: 'Dashboard', href: '/terminal' },
-    { name: 'Wallets', href: '/wallets' },
+    { name: 'Explore', href: '/explore' },
     { name: 'Alerts', href: '/alerts' },
     { name: 'Crypto', href: '/crypto' },
     { name: 'Pricing', href: '/pricing' },

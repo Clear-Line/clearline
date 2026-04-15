@@ -41,7 +41,7 @@ export async function POST() {
     customer: customerId,
     mode: 'subscription',
     line_items: [{ price: process.env.STRIPE_PRICE_ID!, quantity: 1 }],
-    success_url: `${appUrl}/terminal?checkout=success`,
+    success_url: `${appUrl}/explore?checkout=success`,
     cancel_url: `${appUrl}/pricing?checkout=canceled`,
   });
 

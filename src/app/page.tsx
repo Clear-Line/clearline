@@ -48,10 +48,10 @@ export default function HomePage() {
               <ArrowRight className="h-4 w-4" />
             </Link>
             <Link
-              href="/terminal"
+              href="/pricing"
               className="inline-flex items-center gap-2 rounded-md border border-white/15 bg-white/5 px-7 py-3 text-sm font-medium uppercase tracking-wider text-white transition hover:bg-white/10"
             >
-              Open Terminal
+              View Pricing
             </Link>
           </div>
         </div>
@@ -131,10 +131,10 @@ export default function HomePage() {
               Live dashboard scanning volume, price momentum, and wallet concentration across every active Polymarket contract. Filter, sort, and act.
             </p>
             <Link
-              href="/terminal"
+              href="/explore"
               className="mt-5 inline-flex items-center gap-2 text-sm font-semibold text-[#00d4ff] hover:text-[#48e3ff] transition"
             >
-              Open Terminal
+              Open Map
               <ArrowRight className="h-4 w-4" />
             </Link>
           </div>
@@ -163,7 +163,7 @@ export default function HomePage() {
                   Research layer for understanding who drives flow. Rank wallets by accuracy, inspect recent trades, and use wallet quality as conviction context before you act.
                 </p>
                 <Link
-                  href="/wallets"
+                  href="/explore"
                   className="mt-5 inline-flex items-center gap-2 text-sm font-semibold text-[#00d4ff] hover:text-[#48e3ff] transition"
                 >
                   Browse Wallets

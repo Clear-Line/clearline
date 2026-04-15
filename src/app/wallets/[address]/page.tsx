@@ -134,8 +134,8 @@ export default function WalletDetailPage() {
     <div className="min-h-screen">
       <div className="max-w-[1400px] mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {/* Back */}
-        <Link href="/wallets" className="inline-flex items-center gap-2 text-sm text-[#64748b] hover:text-white mb-6 transition-colors">
-          <ArrowLeft className="h-4 w-4" /> All Wallets
+        <Link href="/explore" className="inline-flex items-center gap-2 text-sm text-[#64748b] hover:text-white mb-6 transition-colors">
+          <ArrowLeft className="h-4 w-4" /> Back to Explore
         </Link>
 
         {/* Profile header */}
