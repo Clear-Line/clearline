@@ -21,7 +21,7 @@ export function MapTopBar({
   return (
     <div className="fixed top-0 inset-x-0 z-10 h-16 flex items-center px-6 gap-5 bg-[#04040B]/85 backdrop-blur-2xl border-b border-white/[0.08]">
       {/* Logo */}
-      <Link href="/terminal" className="flex items-center gap-2.5 shrink-0 group">
+      <Link href="/" className="flex items-center gap-2.5 shrink-0 group">
         <Activity className="h-5 w-5 text-[#00D4FF]" />
         <span className="text-[12px] tracking-[0.25em] uppercase text-[#E2E8F0] font-semibold group-hover:text-white transition-colors">
           Clearline
@@ -73,7 +73,7 @@ export function MapTopBar({
 
       {/* Back button */}
       <Link
-        href="/terminal"
+        href="/"
         className="h-10 w-10 flex items-center justify-center rounded-lg text-[#94A3B8] hover:text-white hover:bg-white/[0.06] transition-colors shrink-0"
       >
         <ArrowLeft className="h-4 w-4" />

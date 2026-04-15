@@ -9,8 +9,6 @@ export function AppFooter() {
   if (pathname.startsWith('/sign-in')) return null;
   if (pathname.startsWith('/explore')) return null;
 
-  const isMarketingPage = pathname === '/';
-
   return (
     <footer className="bg-[#0a0e17] border-t border-[rgba(255,255,255,0.06)] mt-0">
       <div className="max-w-[1400px] mx-auto px-4 sm:px-6 lg:px-8 py-8">
@@ -22,7 +20,7 @@ export function AppFooter() {
               </div>
               <span className="font-bold text-white text-sm tracking-tight">CLEARLINE</span>
               <span className="text-[#64748b] text-xs tracking-widest uppercase">
-                {isMarketingPage ? 'Intelligence' : 'Terminal'}
+                Intelligence
               </span>
             </div>
             <p className="mt-3 text-sm leading-6 text-[#64748b]">
@@ -32,9 +30,9 @@ export function AppFooter() {
 
           <div className="flex flex-wrap gap-5 text-xs uppercase tracking-[0.16em] text-[#64748b]">
             <Link href="/" className="hover:text-white transition-colors">Home</Link>
-            <Link href="/terminal" className="hover:text-white transition-colors">Terminal</Link>
+            <Link href="/explore" className="hover:text-white transition-colors">Explore</Link>
             <Link href="/alerts" className="hover:text-white transition-colors">Alerts</Link>
-            <Link href="/wallets" className="hover:text-white transition-colors">Wallets</Link>
+            <Link href="/case-studies" className="hover:text-white transition-colors">Case Studies</Link>
           </div>
         </div>
 
