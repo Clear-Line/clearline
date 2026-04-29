@@ -79,8 +79,9 @@ export async function GET() {
     bq.rawQuery<EdgeRow>(`
       SELECT market_a, market_b, wallet_overlap, shared_wallets, price_corr, corr_samples, combined_weight
       FROM ${fq('market_edges')}
-      WHERE combined_weight > 0.05
-      LIMIT 200000
+      WHERE combined_weight > 0.10
+      ORDER BY combined_weight DESC
+      LIMIT 30000
     `),
   ]);
 
