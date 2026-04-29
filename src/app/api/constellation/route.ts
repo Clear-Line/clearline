@@ -3,7 +3,7 @@ import { bq } from '@/lib/bigquery';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
-export const revalidate = 3600;
+export const dynamic = 'force-dynamic';
 
 const projectId = process.env.GCP_PROJECT_ID!;
 const dataset = process.env.BQ_DATASET || 'polymarket';
