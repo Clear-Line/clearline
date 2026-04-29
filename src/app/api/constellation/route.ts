@@ -74,12 +74,12 @@ export async function GET() {
         AND s.volume_24h > 0
         AND s.yes_price > 0.01 AND s.yes_price < 0.99
       ORDER BY s.volume_24h DESC
-      LIMIT 300
+      LIMIT 500
     `),
     bq.rawQuery<EdgeRow>(`
       SELECT market_a, market_b, wallet_overlap, shared_wallets, price_corr, corr_samples, combined_weight
       FROM ${fq('market_edges')}
-      WHERE combined_weight > 0.15
+      WHERE combined_weight > 0.05
       LIMIT 200000
     `),
   ]);
