@@ -16,4 +16,5 @@ CLAUDE.md
 scripts/
 !pipeline-worker/src/scripts/
 pipeline-worker/dist/
+pipeline-worker/out/
 tsconfig.tsbuildinfo

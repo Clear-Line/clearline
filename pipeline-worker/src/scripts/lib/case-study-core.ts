@@ -144,6 +144,37 @@ export async function loadEdgeNeighbors(marketId: string): Promise<string[]> {
   return (data ?? []).map((r) => r.neighbor);
 }
 
+// ─── Wide universe (for external-event --universe wide) ───
+
+/**
+ * Load every market with meaningful snapshot activity inside the study window.
+ * Used when we want to discover connections fresh from price co-movement
+ * instead of reading them from `market_edges`. `minAvgVolume` filters out
+ * dead books so we don't correlate against flat-priced dust markets.
+ */
+export async function loadActiveMarketsInWindow(
+  windowStart: string,
+  windowEnd: string,
+  minAvgVolume: number,
+  maxMarkets: number = 5000,
+): Promise<string[]> {
+  const dataset = `${process.env.GCP_PROJECT_ID}.${process.env.BQ_DATASET || 'polymarket'}`;
+  const { data, error } = await bq.rawQuery<{ market_id: string }>(
+    `
+    SELECT market_id, AVG(volume_24h) AS avg_volume
+    FROM \`${dataset}.market_snapshots\`
+    WHERE timestamp BETWEEN TIMESTAMP(@start) AND TIMESTAMP(@end)
+    GROUP BY market_id
+    HAVING avg_volume >= @minVol
+    ORDER BY avg_volume DESC
+    LIMIT @maxMarkets
+    `,
+    { start: windowStart, end: windowEnd, minVol: minAvgVolume, maxMarkets },
+  );
+  if (error) throw new Error(`loadActiveMarketsInWindow: ${error.message}`);
+  return (data ?? []).map((r) => r.market_id);
+}
+
 // ─── Top calendar candidates (for calendar mode) ───
 
 export async function loadTopMarketsInWindow(

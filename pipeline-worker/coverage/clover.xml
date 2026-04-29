@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<coverage generated="1776187845810" clover="3.2.0">
+  <project timestamp="1776187845810" name="All files">
+    <metrics statements="36" coveredstatements="36" conditionals="28" coveredconditionals="26" methods="3" coveredmethods="3" elements="67" coveredelements="65" complexity="0" loc="36" ncloc="36" packages="1" files="1" classes="1"/>
+    <file name="categorize.ts" path="/Users/raphaelhaytene/Desktop/Spring2026/CSB310/clearline/pipeline-worker/src/intelligence/lib/categorize.ts">
+      <metrics statements="36" coveredstatements="36" conditionals="28" coveredconditionals="26" methods="3" coveredmethods="3"/>
+      <line num="15" count="1" type="stmt"/>
+      <line num="18" count="1" type="stmt"/>
+      <line num="21" count="1" type="stmt"/>
+      <line num="24" count="1" type="stmt"/>
+      <line num="27" count="1" type="stmt"/>
+      <line num="29" count="1" type="stmt"/>
+      <line num="33" count="26" type="cond" truecount="2" falsecount="0"/>
+      <line num="34" count="24" type="cond" truecount="2" falsecount="0"/>
+      <line num="35" count="23" type="cond" truecount="2" falsecount="0"/>
+      <line num="37" count="22" type="cond" truecount="1" falsecount="1"/>
+      <line num="38" count="26" type="cond" truecount="2" falsecount="0"/>
+      <line num="39" count="11" type="cond" truecount="2" falsecount="0"/>
+      <line num="40" count="10" type="cond" truecount="2" falsecount="0"/>
+      <line num="41" count="9" type="cond" truecount="2" falsecount="0"/>
+      <line num="42" count="8" type="cond" truecount="2" falsecount="0"/>
+      <line num="43" count="4" type="cond" truecount="2" falsecount="0"/>
+      <line num="44" count="3" type="stmt"/>
+      <line num="49" count="1" type="stmt"/>
+      <line num="60" count="27" type="cond" truecount="1" falsecount="1"/>
+      <line num="61" count="27" type="stmt"/>
+      <line num="62" count="77" type="cond" truecount="2" falsecount="0"/>
+      <line num="64" count="4" type="stmt"/>
+      <line num="76" count="6" type="stmt"/>
+      <line num="77" count="6" type="stmt"/>
+      <line num="78" count="14" type="stmt"/>
+      <line num="79" count="14" type="cond" truecount="2" falsecount="0"/>
+      <line num="80" count="13" type="cond" truecount="2" falsecount="0"/>
+      <line num="81" count="14" type="stmt"/>
+      <line num="82" count="14" type="stmt"/>
+      <line num="85" count="6" type="stmt"/>
+      <line num="86" count="6" type="stmt"/>
+      <line num="87" count="8" type="stmt"/>
+      <line num="88" count="8" type="stmt"/>
+      <line num="89" count="13" type="stmt"/>
+      <line num="90" count="6" type="stmt"/>
+      <line num="94" count="6" type="stmt"/>
+    </file>
+  </project>
+</coverage>

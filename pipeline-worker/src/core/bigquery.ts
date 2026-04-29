@@ -251,7 +251,7 @@ class QueryBuilder<T = any> {
     const client = getClient();
     const fq = fqTable(this._table);
     const allCols = Object.keys(rows[0]);
-    const INSERT_BATCH = 500;
+    const INSERT_BATCH = 5000;
 
     for (let i = 0; i < rows.length; i += INSERT_BATCH) {
       const batch = rows.slice(i, i + INSERT_BATCH);

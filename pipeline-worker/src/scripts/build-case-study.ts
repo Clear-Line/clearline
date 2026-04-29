@@ -21,6 +21,7 @@ import {
   loadMarketMetadata,
   loadEdgeNeighbors,
   loadTopMarketsInWindow,
+  loadActiveMarketsInWindow,
   computeLaggedCorrelation,
   computeImpact,
   rankAffected,
@@ -95,6 +96,12 @@ interface BuildParams {
   anchorIds?: string[];      // for external_event, these are "role: anchor"
   skipLagLoop?: boolean;     // calendar mode uses straight pre/post impact
   pivotIso: string;          // where to split pre vs post (trigger for most, window start for calendar)
+  minAbsPriceDelta?: number; // drop non-trigger/anchor markets with tiny price moves
+  minAbsCorr?: number;       // drop non-trigger/anchor markets below this correlation
+  minSnapshots?: number;     // drop markets with fewer snapshots than this in the window
+  titleKeywordsRe?: RegExp;  // optional post-filter: only keep affected markets whose title matches
+  excludeCategories?: Set<string>;     // drop markets whose category is in this set
+  excludeTitleRe?: RegExp;             // drop markets whose title matches (intraday/weather noise)
 }
 
 async function buildStudy(params: BuildParams): Promise<void> {
@@ -102,6 +109,8 @@ async function buildStudy(params: BuildParams): Promise<void> {
     slug, title, type, triggerIso, triggerMarketId,
     externalHeadline, externalSourceUrl, calendarEventName,
     windowStart, windowEnd, candidateIds, anchorIds, skipLagLoop, pivotIso,
+    minAbsPriceDelta = 0, minAbsCorr = 0, minSnapshots = 0, titleKeywordsRe,
+    excludeCategories, excludeTitleRe,
   } = params;
 
   if (candidateIds.length === 0) {
@@ -171,11 +180,22 @@ async function buildStudy(params: BuildParams): Promise<void> {
       }
     }
 
+    const isAnchor = anchorSet.has(candidateId);
+    if (!isAnchor) {
+      // Filter non-anchor "affected" markets — anchors always survive.
+      if (minSnapshots > 0 && candidateSeries.length < minSnapshots) continue;
+      if (minAbsCorr > 0 && (correlation == null || Math.abs(correlation) < minAbsCorr)) continue;
+      if (minAbsPriceDelta > 0 && (impact.priceDelta == null || Math.abs(impact.priceDelta) < minAbsPriceDelta)) continue;
+      if (titleKeywordsRe && !titleKeywordsRe.test(candidateMeta?.question ?? '')) continue;
+      if (excludeCategories && excludeCategories.has(candidateMeta?.category ?? '')) continue;
+      if (excludeTitleRe && excludeTitleRe.test(candidateMeta?.question ?? '')) continue;
+    }
+
     affected.push({
       market_id: candidateId,
       market_title: candidateMeta?.question ?? '(unknown)',
       category: candidateMeta?.category ?? 'other',
-      role: anchorSet.has(candidateId) ? 'anchor' : 'affected',
+      role: isAnchor ? 'anchor' : 'affected',
       lag_hours: bestLag,
       price_delta: impact.priceDelta,
       volume_delta_pct: impact.volumeDeltaPct,
@@ -185,8 +205,16 @@ async function buildStudy(params: BuildParams): Promise<void> {
     });
   }
 
-  const ranked = rankAffected(affected, 60);
+  // Always preserve trigger + all anchors; rank only true 'affected' rows.
   const triggerRow = affected.find((a) => a.role === 'trigger');
+  const anchorRows = affected.filter((a) => a.role === 'anchor');
+  const affectedOnly = affected.filter((a) => a.role === 'affected');
+  const topAffected = 60;
+  const rankedAffected = rankAffected(affectedOnly, topAffected);
+  // Re-rank numbering so anchors are rank 1..N and affected continue after
+  const anchorRanked = anchorRows.map((a, i) => ({ ...a, rank: i + 1 }));
+  const affectedRanked = rankedAffected.map((a, i) => ({ ...a, rank: anchorRows.length + i + 1 }));
+  const ranked = [...anchorRanked, ...affectedRanked];
   const finalMarkets = triggerRow ? [triggerRow, ...ranked] : ranked;
 
   // Evidence stats
@@ -278,22 +306,48 @@ async function runExternalEvent(flags: Flags): Promise<void> {
     process.exit(1);
   }
 
-  // Expand: anchors + their edge neighbors (small expansion)
-  const neighborLists = await Promise.all(anchorIds.map((id) => loadEdgeNeighbors(id)));
-  const candidateIds = Array.from(new Set([...anchorIds, ...neighborLists.flat()]));
-  console.log(`[external-event] ${anchorIds.length} anchors + ${candidateIds.length - anchorIds.length} neighbors`);
-
   const windowStart = addHours(triggerIso, -windowBefore);
   const windowEnd = addHours(triggerIso, windowAfter);
 
-  // Use the highest-volume anchor as the "trigger series" for correlation
-  // (external events don't have a single market as trigger; pick the biggest one)
+  // --universe: "edges" (default — anchors + pre-computed market_edges neighbors)
+  //             "wide"  (every market with activity in the window — discovers
+  //                      connections fresh instead of reading them from the graph)
+  const universe = optional(flags, 'universe') ?? 'edges';
+  let candidateIds: string[];
+  if (universe === 'wide') {
+    const minVol = Number(optional(flags, 'min-volume') ?? '500');
+    const active = await loadActiveMarketsInWindow(windowStart, windowEnd, minVol);
+    candidateIds = Array.from(new Set([...anchorIds, ...active]));
+    console.log(`[external-event] wide universe: ${anchorIds.length} anchors + ${active.length} active markets (min avg vol $${minVol})`);
+  } else {
+    const neighborLists = await Promise.all(anchorIds.map((id) => loadEdgeNeighbors(id)));
+    candidateIds = Array.from(new Set([...anchorIds, ...neighborLists.flat()]));
+    console.log(`[external-event] edge universe: ${anchorIds.length} anchors + ${candidateIds.length - anchorIds.length} neighbors`);
+  }
+
+  const minAbsPriceDelta = Number(optional(flags, 'min-price-delta') ?? '0');
+  const minAbsCorr = Number(optional(flags, 'min-corr') ?? '0');
+  const minSnapshots = Number(optional(flags, 'min-snapshots') ?? '0');
+  const titleKeywords = optional(flags, 'title-keywords');
+  const titleKeywordsRe = titleKeywords ? new RegExp(titleKeywords, 'i') : undefined;
+  const excludeCatsRaw = optional(flags, 'exclude-categories');
+  const excludeCategories = excludeCatsRaw
+    ? new Set(excludeCatsRaw.split(',').map((s) => s.trim().toLowerCase()))
+    : undefined;
+  // Default block for intraday/weather/sports-schedule style noise titles
+  const excludeTitlePattern = optional(flags, 'exclude-title-pattern')
+    ?? 'highest temperature|lowest temperature|Up or Down on|O/U \\d|FC vs\\.|Spread:|Game \\d Winner|NHL|NBA|NFL|EPL|Premier League|MLB|vs\\. [A-Z]';
+  const excludeTitleRe = excludeTitlePattern ? new RegExp(excludeTitlePattern, 'i') : undefined;
+
+  // Optional: pick a non-first anchor as the correlation reference via --trigger-anchor <id>
+  const triggerAnchor = optional(flags, 'trigger-anchor') ?? anchorIds[0];
+
   await buildStudy({
     slug,
     title,
     type: 'external_event',
     triggerIso,
-    triggerMarketId: anchorIds[0],
+    triggerMarketId: triggerAnchor,
     externalHeadline: headline,
     externalSourceUrl: source,
     calendarEventName: null,
@@ -302,6 +356,12 @@ async function runExternalEvent(flags: Flags): Promise<void> {
     candidateIds,
     anchorIds,
     pivotIso: triggerIso,
+    minAbsPriceDelta,
+    minAbsCorr,
+    minSnapshots,
+    titleKeywordsRe,
+    excludeCategories,
+    excludeTitleRe,
   });
 }
 

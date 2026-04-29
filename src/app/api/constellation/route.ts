@@ -80,8 +80,7 @@ export async function GET() {
       SELECT market_a, market_b, wallet_overlap, shared_wallets, price_corr, corr_samples, combined_weight
       FROM ${fq('market_edges')}
       WHERE combined_weight > 0.15
-      ORDER BY combined_weight DESC
-      LIMIT 5000
+      LIMIT 200000
     `),
   ]);
 
