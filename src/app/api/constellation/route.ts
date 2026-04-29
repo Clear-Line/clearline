@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import { bq } from '@/lib/bigquery';
 
 export const runtime = 'nodejs';
+export const maxDuration = 60;
+export const revalidate = 3600;
 
 const projectId = process.env.GCP_PROJECT_ID!;
 const dataset = process.env.BQ_DATASET || 'polymarket';
@@ -63,6 +65,7 @@ export async function GET() {
         SELECT market_id, price_change, smart_wallet_count, signal,
           ROW_NUMBER() OVER (PARTITION BY market_id ORDER BY computed_at DESC) AS rn
         FROM ${fq('market_cards')}
+        WHERE computed_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 2 DAY)
       ) c ON c.market_id = m.condition_id AND c.rn = 1
       LEFT JOIN ${fq('market_insiders')} i ON i.market_id = m.condition_id
       WHERE m.is_active = true
@@ -73,9 +76,13 @@ export async function GET() {
       ORDER BY s.volume_24h DESC
       LIMIT 300
     `),
-    bq.from('market_edges')
-      .select('market_a, market_b, wallet_overlap, shared_wallets, price_corr, corr_samples, combined_weight')
-      .gt('combined_weight', 0.15),
+    bq.rawQuery<EdgeRow>(`
+      SELECT market_a, market_b, wallet_overlap, shared_wallets, price_corr, corr_samples, combined_weight
+      FROM ${fq('market_edges')}
+      WHERE combined_weight > 0.15
+      ORDER BY combined_weight DESC
+      LIMIT 5000
+    `),
   ]);
 
   if (nodesResult.error) {
