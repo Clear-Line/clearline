@@ -22,6 +22,10 @@ interface NodeRow {
   signal: string | null;
 }
 
+function pairKey(a: string, b: string): string {
+  return a < b ? `${a}|${b}` : `${b}|${a}`;
+}
+
 interface EdgeRow {
   market_a: string;
   market_b: string;
@@ -132,7 +136,17 @@ export async function GET() {
     }
   }
 
-  const edges = rawEdges
+  const edges: Array<{
+    source: string;
+    target: string;
+    weight: number;
+    walletOverlap?: number;
+    sharedWallets?: number;
+    priceCorrelation?: number | null;
+    corrSamples?: number | null;
+    synthetic?: boolean;
+    reason?: string;
+  }> = rawEdges
     .filter((e) => kept.has(`${e.market_a}|${e.market_b}`))
     .map((e) => ({
       source: e.market_a,
@@ -143,6 +157,99 @@ export async function GET() {
       priceCorrelation: e.price_corr,
       corrSamples: e.corr_samples,
     }));
+
+  // ─── Synthetic overlay: fill out non-crypto categories + topic links ───
+  // Real edges are too sparse outside crypto to make the map feel connected.
+  // We add (a) intra-category nearest-neighbor edges by volume rank, and
+  // (b) shared-keyword cross-category edges (Iran, Trump, Fed, election, …).
+  const existingPair = new Set(edges.map((e) => pairKey(e.source, e.target)));
+  const syntheticEdges: typeof edges = [];
+
+  // (a) intra-category: connect each market to its top-K same-category neighbors by volume
+  const byCategory = new Map<string, typeof nodes>();
+  for (const n of nodes) {
+    const arr = byCategory.get(n.category) ?? [];
+    arr.push(n);
+    byCategory.set(n.category, arr);
+  }
+  const INTRA_K = 5;
+  for (const [, list] of byCategory) {
+    const sorted = [...list].sort((a, b) => b.volume - a.volume);
+    for (let i = 0; i < sorted.length; i++) {
+      const a = sorted[i];
+      for (let j = i + 1; j < Math.min(sorted.length, i + 1 + INTRA_K); j++) {
+        const b = sorted[j];
+        const key = pairKey(a.id, b.id);
+        if (existingPair.has(key)) continue;
+        existingPair.add(key);
+        syntheticEdges.push({
+          source: a.id,
+          target: b.id,
+          weight: 0.18,
+          synthetic: true,
+          reason: `same-category:${a.category}`,
+        });
+      }
+    }
+  }
+
+  // (b) cross-category by shared keyword in question title
+  const TOPICS: Array<{ key: string; pattern: RegExp }> = [
+    { key: 'iran', pattern: /\biran(?:ian)?\b/i },
+    { key: 'israel', pattern: /\bisrael(?:i)?\b|\bgaza\b|\bhamas\b/i },
+    { key: 'russia', pattern: /\brussia(?:n)?\b|\bputin\b|\bukraine\b/i },
+    { key: 'china', pattern: /\bchina\b|\bchinese\b|\btaiwan\b|\bxi jinping\b/i },
+    { key: 'trump', pattern: /\btrump\b/i },
+    { key: 'biden', pattern: /\bbiden\b/i },
+    { key: 'republicans', pattern: /\brepublican(?:s)?\b|\bgop\b/i },
+    { key: 'democrats', pattern: /\bdemocrat(?:s|ic)?\b/i },
+    { key: 'election', pattern: /\belection\b|\bprimary\b|\bvotes?\b|\bsenate\b|\bhouse\b/i },
+    { key: 'fed-rates', pattern: /\bfed\b|\binterest rate\b|\brate cut\b|\brate hike\b|\bfomc\b/i },
+    { key: 'inflation', pattern: /\binflation\b|\bcpi\b|\bppi\b/i },
+    { key: 'recession', pattern: /\brecession\b|\bgdp\b/i },
+    { key: 'oil', pattern: /\boil\b|\bopec\b|\bcrude\b/i },
+    { key: 'bitcoin', pattern: /\bbitcoin\b|\bbtc\b/i },
+    { key: 'ethereum', pattern: /\bethereum\b|\beth\b/i },
+    { key: 'ai', pattern: /\b(ai|artificial intelligence|openai|gpt|chatgpt|anthropic|claude)\b/i },
+    { key: 'spacex', pattern: /\bspacex\b|\belon musk\b|\btesla\b/i },
+  ];
+  const topicBuckets = new Map<string, typeof nodes>();
+  for (const n of nodes) {
+    const title = n.title ?? '';
+    for (const t of TOPICS) {
+      if (t.pattern.test(title)) {
+        const arr = topicBuckets.get(t.key) ?? [];
+        arr.push(n);
+        topicBuckets.set(t.key, arr);
+      }
+    }
+  }
+  const PER_TOPIC_CAP = 60; // max pairs per topic
+  for (const [topic, bucket] of topicBuckets) {
+    if (bucket.length < 2) continue;
+    const sorted = [...bucket].sort((a, b) => b.volume - a.volume);
+    let added = 0;
+    outer: for (let i = 0; i < sorted.length; i++) {
+      for (let j = i + 1; j < sorted.length; j++) {
+        if (added >= PER_TOPIC_CAP) break outer;
+        const a = sorted[i];
+        const b = sorted[j];
+        const key = pairKey(a.id, b.id);
+        if (existingPair.has(key)) continue;
+        existingPair.add(key);
+        syntheticEdges.push({
+          source: a.id,
+          target: b.id,
+          weight: a.category === b.category ? 0.22 : 0.28,
+          synthetic: true,
+          reason: `topic:${topic}`,
+        });
+        added++;
+      }
+    }
+  }
+
+  edges.push(...syntheticEdges);
 
   const response = NextResponse.json({
     nodes,
