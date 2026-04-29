@@ -251,9 +251,14 @@ export async function GET() {
 
   edges.push(...syntheticEdges);
 
+  // Keep only top 800 edges by weight (real edges win on ties — higher weight)
+  const topEdges = edges
+    .sort((a, b) => b.weight - a.weight)
+    .slice(0, 800);
+
   const response = NextResponse.json({
     nodes,
-    edges,
+    edges: topEdges,
     generatedAt: new Date().toISOString(),
   });
 
